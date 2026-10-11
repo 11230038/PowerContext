@@ -64,8 +64,11 @@
               padding: 6px 12px; cursor: pointer; font: inherit; font-weight: 600;
               text-decoration: none; transition: border-color .15s; }
   a.starbtn:hover { border-color: var(--warm); }
-  .starline { text-align: center; }
+  .starbox { display: flex; align-items: center; gap: 14px; justify-content: center; }
+  .starline { text-align: left; }
   .starline a, .footnote a { color: var(--accent); }
+  img.qrcode { background: #fff; border-radius: 8px; padding: 6px; flex: none; }
+  img.qrcode.small { margin-top: 10px; display: block; }
   #toasts { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 30;
             display: flex; flex-direction: column; gap: 8px; align-items: center; }
   .toast { background: var(--card); border: 1px solid var(--accent); color: var(--text);
@@ -145,7 +148,10 @@
     <input id="nickname" placeholder="昵称（中文或字母）" maxlength="32" autocomplete="off">
     <button type="submit" class="primary" id="gateSubmit">进入</button>
     <p id="gateError" style="color: var(--bad)"></p>
-    <p class="starline">觉得有意思？欢迎去 GitHub 给 <a href="https://github.com/oceanbase/powercontext" target="_blank" rel="noopener">oceanbase/powercontext</a> 点个 ⭐</p>
+    <div class="starbox">
+      <img class="qrcode" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQgAAAEIAQAAAACLjVdSAAABFElEQVR42u2ZQRKFMAhDM97/zvyvhYDjwr2v7ai101UmhEAVb0P7BPuE1jjX//e1EWP30Nv40gkVaEo4FDUTLiAeWigsduTjfy4eDcPGI4Uk/8TGo6S3cAi2fsiMmBObX5x6TZe5C863F0kqyZSeIPXUObaAsBkhxkuJRcTwZDa3RD2d8pEKa0CA/Bghkijkmus/bDwsqkUWpJ4WBJMpGUdEPR3lv9qsBtOvmwz+2qJC88siQ9d2I4Cg+db1SjfIsq6D6mlVMNUtbFEh5lv3CaMzDTZe7vVtM0bC+vVe3Nyq0PW+bZg1JKj1vqqb/Mw1YDzs3NunsfvrNulTbcn99XkzJyw/LBbqSwfHENd/7Pv9feIxfiBeH83q4xaZAAAAAElFTkSuQmCC" alt="GitHub 仓库二维码" width="120" height="120">
+      <p class="starline">扫码或点击 <a href="https://github.com/oceanbase/powercontext" target="_blank" rel="noopener">oceanbase/powercontext</a><br>给 PowerContext 点个 ⭐，回去再点也行</p>
+    </div>
   </form>
 </div>
 
@@ -175,7 +181,7 @@
       <div id="entries"><p class="empty">还没有记忆，先跟小O聊聊你自己吧</p></div>
       <h3>写入日志</h3>
       <div id="writeLog"><p class="empty">暂无</p></div>
-      <p class="footnote">真实接入：PowerContext 提供 MCP / CLI / SDK 集成，任何 Agent 都能直接调用这些记忆能力。开源地址 <a href="https://github.com/oceanbase/powercontext" target="_blank" rel="noopener">github.com/oceanbase/powercontext</a>，欢迎 ⭐。</p>
+      <p class="footnote">真实接入：PowerContext 提供 MCP / CLI / SDK 集成，任何 Agent 都能直接调用这些记忆能力。开源地址 <a href="https://github.com/oceanbase/powercontext" target="_blank" rel="noopener">github.com/oceanbase/powercontext</a>，欢迎 ⭐。<br><img class="qrcode small" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQgAAAEIAQAAAACLjVdSAAABFElEQVR42u2ZQRKFMAhDM97/zvyvhYDjwr2v7ai101UmhEAVb0P7BPuE1jjX//e1EWP30Nv40gkVaEo4FDUTLiAeWigsduTjfy4eDcPGI4Uk/8TGo6S3cAi2fsiMmBObX5x6TZe5C863F0kqyZSeIPXUObaAsBkhxkuJRcTwZDa3RD2d8pEKa0CA/Bghkijkmus/bDwsqkUWpJ4WBJMpGUdEPR3lv9qsBtOvmwz+2qJC88siQ9d2I4Cg+db1SjfIsq6D6mlVMNUtbFEh5lv3CaMzDTZe7vVtM0bC+vVe3Nyq0PW+bZg1JKj1vqqb/Mw1YDzs3NunsfvrNulTbcn99XkzJyw/LBbqSwfHENd/7Pv9feIxfiBeH83q4xaZAAAAAElFTkSuQmCC" alt="GitHub 仓库二维码" width="96" height="96"></p>
     </aside>
   </div>
 </div>
