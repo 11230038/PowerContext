@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>小忆 · PowerContext 记忆体验</title>
+<title>小O · PowerContext 记忆体验</title>
 <style>
   :root {
     --bg: #0f1115; --panel: #161a22; --card: #1c212c; --line: #2a3040;
@@ -132,7 +132,7 @@
 
 <div id="gate">
   <form class="gatebox" id="gateForm">
-    <h2>小忆 · 记忆体验</h2>
+    <h2>小O · 记忆体验</h2>
     <p>输入现场公布的口令和一个昵称开始。你的记忆会保存在昵称名下，换个昵称就是换个新用户。</p>
     <input id="passphrase" type="password" placeholder="口令" autocomplete="off">
     <input id="nickname" placeholder="昵称（中文或字母）" maxlength="32" autocomplete="off">
@@ -143,7 +143,7 @@
 
 <div id="main" hidden>
   <header>
-    <h1>小忆<small>PowerContext 记忆体验</small></h1>
+    <h1>小O<small>PowerContext 记忆体验</small></h1>
     <span class="chip" id="nickChip"></span>
     <span class="spacer"></span>
     <label class="switch" id="switchLabel">
@@ -157,13 +157,13 @@
     <section id="chat">
       <div id="messages"></div>
       <form id="composer">
-        <textarea id="input" placeholder="跟小忆聊聊你自己，比如你的口味、爱好、工作……"></textarea>
+        <textarea id="input" placeholder="跟小O聊聊你自己，比如你的口味、爱好、工作……"></textarea>
         <button id="send" type="submit" class="primary">发送</button>
       </form>
     </section>
     <aside id="panel">
       <h3>我的记忆</h3>
-      <div id="entries"><p class="empty">还没有记忆，先跟小忆聊聊你自己吧</p></div>
+      <div id="entries"><p class="empty">还没有记忆，先跟小O聊聊你自己吧</p></div>
       <h3>写入日志</h3>
       <div id="writeLog"><p class="empty">暂无</p></div>
       <p class="footnote">真实接入：PowerContext 提供 MCP / CLI / SDK 集成，任何 Agent 都能直接调用这些记忆能力。</p>
@@ -254,22 +254,22 @@ $("memorySwitch").addEventListener("change", (event) => {
   setSwitch(on);
   const divider = el("div", "divider");
   divider.append(on ? "记忆已开启 " : "记忆已关闭 ");
-  divider.append(el("span", on ? "on" : "off", on ? "🔥 小忆可以想起你" : "❄️ 小忆不认识你"));
+  divider.append(el("span", on ? "on" : "off", on ? "🔥 小O可以想起你" : "❄️ 小O不认识你"));
   $("messages").append(divider);
   scrollBottom();
 });
 
 $("newSession").addEventListener("click", () => {
-  if (state.busy) { toast("等小忆说完再开新会话"); return; }
+  if (state.busy) { toast("等小O说完再开新会话"); return; }
   state.messages = [];
   $("messages").innerHTML = "";
-  const divider = el("div", "divider", "—— 新会话：聊天记录已清空，但小忆的记忆还在 ——");
+  const divider = el("div", "divider", "—— 新会话：聊天记录已清空，但小O的记忆还在 ——");
   $("messages").append(divider);
   scrollBottom();
   $("input").focus();
 });
 
-// 召回命中不在界面上展示: 记忆效果由小忆的回答自己体现, 减少现场解释成本
+// 召回命中不在界面上展示: 记忆效果由小O的回答自己体现, 减少现场解释成本
 
 // 永不抛错: flushed 触发的刷新失败不能把已完成回合的气泡改写成错误;
 // 返回 false 让调用方(如 retire/revise 之后)恢复按钮状态
@@ -281,7 +281,7 @@ async function refreshEntries() {
     const holder = $("entries");
     holder.innerHTML = "";
     if (!entries.length) {
-      holder.append(el("p", "empty", "还没有记忆，先跟小忆聊聊你自己吧"));
+      holder.append(el("p", "empty", "还没有记忆，先跟小O聊聊你自己吧"));
       return true;
     }
     const added = [];
@@ -355,7 +355,7 @@ function renderCard(entry, fresh) {
   const retireBtn = el("button", "mini", "遗忘");
   const reviseBtn = el("button", "mini", "修改");
   retireBtn.addEventListener("click", async () => {
-    if (!confirm("让小忆忘掉这条记忆？")) return;
+    if (!confirm("让小O忘掉这条记忆？")) return;
     await applyMemoryOp("/api/memory/retire", entry, retireBtn, reviseBtn);
   });
   reviseBtn.addEventListener("click", async () => {
