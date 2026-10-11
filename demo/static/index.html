@@ -278,7 +278,11 @@ $("newSession").addEventListener("click", () => {
   if (state.busy) { toast("等小O说完再开新会话"); return; }
   state.messages = [];
   $("messages").innerHTML = "";
-  const divider = el("div", "divider", "—— 新会话：聊天记录已清空，但小O的记忆还在 ——");
+  const divider = el(
+    "div",
+    "divider",
+    state.memoryOn ? "—— 新会话：聊天记录已清空，但小O的记忆还在 ——" : "—— 新会话：聊天记录已清空 ——"
+  );
   $("messages").append(divider);
   scrollBottom();
   $("input").focus();
