@@ -1,5 +1,5 @@
 {
-  "contractSha256": "ef5c0241478473ca80df934044acc90226df539a9b8a9f4ae18de0fb1d8c67b8",
+  "contractSha256": "c711f6ad060f390c3aa8a8f53d6b08884aa18f11a26d021b0c2ca34f8feb08f9",
   "operations": {
     "get_liveness": {
       "method": "GET",
@@ -33,9 +33,9 @@
       "method": "POST",
       "path": "/v1/memory/search"
     },
-    "get_memory_entry": {
-      "method": "POST",
-      "path": "/v1/memory/entries/get"
+    "get_artifact_revision": {
+      "method": "GET",
+      "path": "/v1/scopes/{scope_id}/artifacts/{family}/{artifact_id}/revisions/{revision}"
     },
     "get_access_principal": {
       "method": "GET",
