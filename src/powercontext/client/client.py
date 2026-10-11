@@ -181,6 +181,7 @@ from powercontext.http import (
     SearchMemoryResponse,
     SearchTopicMemoryRequest,
     SearchTopicMemoryResponse,
+    ServerInfo,
     SetDefaultScopeRequest,
     SetScopeBindingRequest,
     SkillArtifact,
@@ -253,6 +254,7 @@ from powercontext.http._generated.operations import (
     GET_PROMPT_CONFIGURATION,
     GET_READINESS,
     GET_SCOPE,
+    GET_SERVER_INFO,
     GET_SKILL,
     GET_SKILL_PACKAGE_MANIFEST,
     GET_SOURCE,
@@ -399,6 +401,11 @@ class PowerContextClient:
         """Read behavior enabled by the assembled runtime."""
 
         return await self._request(GET_CAPABILITIES)
+
+    async def get_server_info(self) -> ServerInfo:
+        """Read stable deployment identity and protocol compatibility metadata."""
+
+        return await self._request(GET_SERVER_INFO)
 
     async def list_scopes(
         self,

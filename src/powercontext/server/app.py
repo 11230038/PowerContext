@@ -543,6 +543,7 @@ from powercontext.http import (
     SearchTopicMemoryRequest,
     SearchTopicMemoryResponse,
     ServerAccessResource,
+    ServerInfo,
     SetDefaultScopeRequest,
     SetScopeBindingRequest,
     SkillArtifact,
@@ -689,6 +690,7 @@ from powercontext.http._generated.operations import (
     GET_PROMPT_CONFIGURATION,
     GET_READINESS,
     GET_SCOPE,
+    GET_SERVER_INFO,
     GET_SKILL,
     GET_SKILL_PACKAGE_MANIFEST,
     GET_SOURCE,
@@ -1288,6 +1290,7 @@ def create_app(
         search_modes=[],
         context_versions=[],
     )
+    app.state.server_info = None
 
     @app.middleware("http")
     async def attach_request_id(request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -1353,6 +1356,7 @@ def create_app(
     _add_route(app, LIST_DREAM_RUNS, list_dream_runs)
     _add_route(app, GET_LIVENESS, get_liveness)
     _add_route(app, GET_READINESS, get_readiness)
+    _add_route(app, GET_SERVER_INFO, get_server_info)
     _add_route(app, GET_CAPABILITIES, get_capabilities)
     _add_route(app, LIST_SCOPES, list_scopes)
     _add_route(app, CREATE_SCOPE, create_scope)
@@ -1557,6 +1561,13 @@ async def get_capabilities(request: Request) -> Capabilities:
     if capability_provider is not None:
         return capability_provider()
     return request.app.state.capabilities
+
+
+async def get_server_info(request: Request) -> ServerInfo:
+    info: ServerInfo | None = request.app.state.server_info
+    if info is None:
+        raise _RuntimeNotReadyError
+    return info
 
 
 async def get_access_principal(request: Request) -> AccessMeResponse:
