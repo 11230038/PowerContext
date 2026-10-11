@@ -101,20 +101,75 @@ async def stream_llm_reply(
                 yield delta
 
 
-async def _recall_for_query(
-    client: PowerContextClient, scope_id: str, query: str
-) -> tuple[list[SearchMemoryHit], bool, dict[str, Any] | None]:
-    """Search memories for the query; on miss, fall back to the most recent entries.
+_REWRITE_SYSTEM = (
+    "你是检索查询改写器。把用户的最新发言改写成一个适合检索长期记忆的独立查询："
+    '保留实体、偏好、事实等关键词；把"我是谁""上次说的"等指代结合上下文展开成具体对象；'
+    "只输出查询词本身（不超过30字），不要解释、不要引号、不要句号。"
+)
 
-    Returns (hits, fallback, error_event). Identity-style questions ("你知道我是谁吗")
-    share no tokens with the stored text, so the fallback keeps the agent oriented.
+
+async def _rewrite_query(
+    http: httpx.AsyncClient,
+    cfg: DemoConfig,
+    messages: list[dict[str, str]],
+    last_user: str,
+) -> str:
+    """Rewrite the latest message (with conversation context) into a retrieval query.
+
+    Any failure returns the original message: rewriting must never break the chat.
     """
+    context = "\n".join(f"{'用户' if m['role'] == 'user' else '助手'}：{m['content'][:200]}" for m in messages[-6:-1])
+    user_content = (
+        f"对话上下文：\n{context}\n\n最新发言：{last_user}\n\n检索查询："
+        if context
+        else f"最新发言：{last_user}\n\n检索查询："
+    )
+    payload = {
+        "model": cfg.llm_model,
+        "stream": False,
+        "temperature": 0.0,
+        "max_tokens": 64,
+        "messages": [
+            {"role": "system", "content": _REWRITE_SYSTEM},
+            {"role": "user", "content": user_content},
+        ],
+    } | cfg.llm_extra_body
+    resp = await http.post(
+        f"{cfg.llm_base_url}/chat/completions",
+        json=payload,
+        headers={"Authorization": f"Bearer {cfg.llm_api_key}"},
+    )
+    resp.raise_for_status()
+    choices = resp.json().get("choices") or []
+    text = str(choices[0].get("message", {}).get("content", "") if choices else "").strip()
+    text = text.strip("\"'“”«»").strip()
+    return text or last_user
+
+
+async def _recall_for_query(
+    client: PowerContextClient,
+    http: httpx.AsyncClient,
+    cfg: DemoConfig,
+    scope_id: str,
+    messages: list[dict[str, str]],
+    last_user: str,
+) -> tuple[list[SearchMemoryHit], bool, dict[str, Any] | None, str]:
+    """Rewrite the query, search memories; on miss, fall back to the most recent entries.
+
+    Returns (hits, fallback, error_event, effective_query). Identity-style questions
+    ("你知道我是谁吗") share no tokens with the stored text, so the rewrite expands
+    pronouns into entities first and the fallback keeps the agent oriented on a miss.
+    """
+    try:
+        query = await _rewrite_query(http, cfg, messages, last_user)
+    except Exception:  # rewrite failure must not block recall or the chat
+        query = last_user
     try:
         resp = await client.search_memory(SearchMemoryRequest(scope_id=scope_id, query=query, limit=5))
         if resp.hits:
-            return resp.hits, False, None
+            return resp.hits, False, None, query
     except Exception as exc:  # recall failure must not block the chat
-        return [], False, {"type": "recall_error", "message": str(exc)}
+        return [], False, {"type": "recall_error", "message": str(exc)}, query
     try:
         listed = await client.list_memory_entries(ListMemoryEntriesRequest(scope_id=scope_id))
         return (
@@ -124,9 +179,10 @@ async def _recall_for_query(
             ],
             True,
             None,
+            query,
         )
     except Exception as exc:
-        return [], False, {"type": "recall_error", "message": str(exc)}
+        return [], False, {"type": "recall_error", "message": str(exc)}, query
 
 
 async def run_chat_turn(
@@ -142,13 +198,16 @@ async def run_chat_turn(
 
     hits: list[SearchMemoryHit] = []
     if memory_on and last_user:
-        hits, fallback, error_event = await _recall_for_query(client, scope_id, last_user)
+        hits, fallback, error_event, effective_query = await _recall_for_query(
+            client, http, cfg, scope_id, messages, last_user
+        )
         if error_event:
             yield error_event
         if hits:
             yield {
                 "type": "recall",
                 "fallback": fallback,
+                "query": effective_query,
                 "hits": [{"text": hit.text, "score": hit.score} for hit in hits],
             }
 

@@ -37,11 +37,19 @@ from demo.config import DemoConfig
 _TAIL_EVENT_TYPES = {"flushed", "write_error"}
 
 
-def make_llm_transport(captured: list[dict[str, Any]]) -> httpx.MockTransport:
-    """Fake LLM: record requests, return fixed SSE chunks."""
+def make_llm_transport(captured: list[dict[str, Any]], rewrite: str = "") -> httpx.MockTransport:
+    """Fake LLM: record requests; non-streaming calls (query rewrite) get the
+    configured text (empty string forces the raw-query fallback), streaming
+    chat calls get fixed SSE chunks."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured.append(json.loads(request.content))
+        body = json.loads(request.content)
+        captured.append(body)
+        if not body.get("stream"):
+            return httpx.Response(
+                200,
+                content=json.dumps({"choices": [{"message": {"content": rewrite}}]}, ensure_ascii=False).encode(),
+            )
         chunks = []
         for text in ("你好呀", "，我记得你！"):
             chunks.append(
@@ -147,10 +155,10 @@ async def _post_chat(
     return events
 
 
-async def _swap_in_fake_llm(app: Any, captured: list[dict[str, Any]]) -> None:
+async def _swap_in_fake_llm(app: Any, captured: list[dict[str, Any]], rewrite: str = "") -> None:
     """替换外部 LLM 客户端前先关掉 startup 建的原客户端, 避免泄漏连接池。"""
     await app.state.http.aclose()
-    app.state.http = httpx.AsyncClient(transport=make_llm_transport(captured))
+    app.state.http = httpx.AsyncClient(transport=make_llm_transport(captured, rewrite=rewrite))
 
 
 def test_chat_off_has_no_recall_and_plain_system_prompt(tmp_path: Path) -> None:
@@ -316,3 +324,39 @@ def test_chat_on_falls_back_to_recent_memories_when_search_misses(tmp_path: Path
     assert recall_events[0]["fallback"] is True
     assert any("OceanBase" in hit["text"] for hit in recall_events[0]["hits"])
     assert "OceanBase" in captured[-1]["messages"][0]["content"]
+
+
+def test_chat_on_rewrites_identity_question_into_matching_query(tmp_path: Path) -> None:
+    """The rewrite step expands an identity question into entity keywords that
+    hit the stored memory directly (no recent-entries fallback needed)."""
+    from powercontext.http import RememberMemoryRequest
+
+    captured: list[dict[str, Any]] = []
+    cfg = make_config(tmp_path)
+
+    async def body() -> list[dict[str, Any]]:
+        app = create_demo_app(cfg)
+        await startup(app)
+        await _swap_in_fake_llm(app, captured, rewrite="OceanBase 开发工程师 身份")
+        try:
+            scope = await ensure_scope(app.state.client, "张三")
+            await app.state.client.remember_memory(
+                RememberMemoryRequest(
+                    scope_id=scope, kind="fact", text="用户是OceanBase的开发工程师，平时主要写分布式存储代码"
+                )
+            )
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+                await client.post("/api/enter", json={"passphrase": "open-sesame", "nickname": "张三"})
+                return await _post_chat(client, [{"role": "user", "content": "你知道我是谁吗"}], memory_on=True)
+        finally:
+            await shutdown(app)
+
+    events = asyncio.run(body())
+    recall_events = [event for event in events if event["type"] == "recall"]
+    assert recall_events, "expected recall via rewritten query"
+    assert recall_events[0]["fallback"] is False
+    assert recall_events[0]["query"] == "OceanBase 开发工程师 身份"
+    assert any("OceanBase" in hit["text"] for hit in recall_events[0]["hits"])
+    # 改写请求应先于聊天请求发出, 且聊天请求的 system 仍是人设+记忆
+    assert captured[0]["stream"] is False
+    assert captured[-1]["messages"][0]["role"] == "system"
