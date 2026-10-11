@@ -59,6 +59,13 @@
   button.mini { padding: 2px 10px; font-size: 12px; }
   button.primary { background: #2b3a5e; border-color: #3d5185; }
   button.primary:hover:not(:disabled) { background: #33456f; border-color: var(--accent); }
+  a.starbtn { display: inline-flex; align-items: center; gap: 4px; background: var(--card);
+              color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+              padding: 6px 12px; cursor: pointer; font: inherit; font-weight: 600;
+              text-decoration: none; transition: border-color .15s; }
+  a.starbtn:hover { border-color: var(--warm); }
+  .starline { text-align: center; }
+  .starline a, .footnote a { color: var(--accent); }
   #toasts { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 30;
             display: flex; flex-direction: column; gap: 8px; align-items: center; }
   .toast { background: var(--card); border: 1px solid var(--accent); color: var(--text);
@@ -138,6 +145,7 @@
     <input id="nickname" placeholder="昵称（中文或字母）" maxlength="32" autocomplete="off">
     <button type="submit" class="primary" id="gateSubmit">进入</button>
     <p id="gateError" style="color: var(--bad)"></p>
+    <p class="starline">觉得有意思？欢迎去 GitHub 给 <a href="https://github.com/oceanbase/powercontext" target="_blank" rel="noopener">oceanbase/powercontext</a> 点个 ⭐</p>
   </form>
 </div>
 
@@ -146,6 +154,7 @@
     <h1>小O<small>PowerContext 记忆体验</small></h1>
     <span class="chip" id="nickChip"></span>
     <span class="spacer"></span>
+    <a class="starbtn" href="https://github.com/oceanbase/powercontext" target="_blank" rel="noopener" title="去 GitHub 点个星">⭐ Star</a>
     <label class="switch" id="switchLabel">
       <input type="checkbox" id="memorySwitch" checked>
       <span class="track"><span class="knob"></span></span>
@@ -166,7 +175,7 @@
       <div id="entries"><p class="empty">还没有记忆，先跟小O聊聊你自己吧</p></div>
       <h3>写入日志</h3>
       <div id="writeLog"><p class="empty">暂无</p></div>
-      <p class="footnote">真实接入：PowerContext 提供 MCP / CLI / SDK 集成，任何 Agent 都能直接调用这些记忆能力。</p>
+      <p class="footnote">真实接入：PowerContext 提供 MCP / CLI / SDK 集成，任何 Agent 都能直接调用这些记忆能力。开源地址 <a href="https://github.com/oceanbase/powercontext" target="_blank" rel="noopener">github.com/oceanbase/powercontext</a>，欢迎 ⭐。</p>
     </aside>
   </div>
 </div>
