@@ -75,7 +75,7 @@ PARAMETERS = {
     "cursor": ("分页游标", "Complete next_cursor from the previous candidate page; do not invent or rewrite it."),
     "candidate_id": ("候选 ID", "Exact candidate ID returned by generation or candidate listing."),
     "rollover_reasons": (
-        "Rollover reason",
+        "轮换原因",
         "Optional advisory rollover reasons for this preparation; they do not authorize commit or execution.",
     ),
 }
