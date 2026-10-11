@@ -17,9 +17,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal, Protocol, TypeAlias
+from typing import Annotated, Literal, Protocol, TypeAlias
 
-from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError, model_validator
 
 from powercontext.artifacts import Artifact
 from powercontext.builtin.artifacts.handoff.models import (
@@ -56,9 +56,19 @@ class HandoffGenerationInput(BaseModel):
     """Caller-owned objective, bounded evidence, and output budget."""
 
     objective: str
-    rollover_reasons: tuple[HandoffRolloverReason, ...] = ()
+    rollover_reasons: Annotated[
+        tuple[HandoffRolloverReason, ...],
+        Field(max_length=6),
+    ] = ()
     evidence: tuple[HandoffGenerationEvidenceInput, ...]
     max_bytes: int
+
+    @model_validator(mode="after")
+    def require_unique_rollover_reasons(self) -> HandoffGenerationInput:
+        for index, reason in enumerate(self.rollover_reasons):
+            if reason in self.rollover_reasons[:index]:
+                raise ValueError("Handoff rollover reasons must be unique")  # noqa: TRY003
+        return self
 
 
 class HandoffGenerationStatement(BaseModel):

@@ -184,6 +184,27 @@ def test_valid_demonstrations_preserve_their_original_json(key: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "rollover_reasons",
+    [
+        ["user_requested", "user_requested"],
+        ["manual_checkpoint"] * 7,
+    ],
+)
+def test_custom_handoff_demonstrations_reject_invalid_rollover_reasons(
+    rollover_reasons: list[str],
+) -> None:
+    case = deepcopy(_case("handoff.generate"))
+    case["input"]["rollover_reasons"] = rollover_reasons
+    definition = PromptRegistry(builtin_prompt_definitions()).get("handoff.generate")
+
+    with pytest.raises(PromptError) as caught:
+        definition.validate(_content(case))
+
+    assert caught.value.code == "prompt_definition_incompatible"
+    assert not caught.value.during_inference
+
+
+@pytest.mark.parametrize(
     ("key", "path", "invalid"),
     [
         ("memory.extract", ("expected_output", "candidates", 0, "evidence_ids"), ["source:99"]),

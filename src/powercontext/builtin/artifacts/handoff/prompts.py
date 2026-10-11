@@ -26,6 +26,7 @@ Rules:
 - Use only facts present in the supplied evidence.
 - Every state statement and next action must cite one or more supplied evidence IDs.
 - Describe the current work state needed to continue the caller-owned objective.
+- Treat rollover_reasons as advisory preparation context only; do not claim they are committed Handoff content.
 - When rollover_reasons is non-empty, draft a fresh-session checkpoint: do not depend on the old transcript,
   avoid "continue above" wording, and make the next participant's first safe action explicit.
 - Keep observed state separate from the proposed next action.

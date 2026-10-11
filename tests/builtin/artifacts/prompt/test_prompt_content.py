@@ -97,6 +97,15 @@ def test_custom_handoff_prompt_retains_rollover_requirements() -> None:
     assert "first safe action explicit" in resolved.compiled_instructions
 
 
+def test_auto_handoff_prompt_marks_rollover_reasons_as_advisory() -> None:
+    definition = PromptRegistry(builtin_prompt_definitions()).get("handoff.generate")
+
+    resolved = definition.resolve("scope-a", None)
+
+    assert "advisory preparation context only" in resolved.compiled_instructions
+    assert "do not claim they are committed Handoff content" in resolved.compiled_instructions
+
+
 def test_demonstrations_validate_without_inserting_defaults() -> None:
     registry = PromptRegistry(builtin_prompt_definitions(), supported=frozenset({"memory.extract"}))
     content = _with_demonstration({
