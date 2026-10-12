@@ -212,7 +212,14 @@ def create_demo_app(cfg: DemoConfig) -> FastAPI:
         yield
         await shutdown(app)
 
-    app = FastAPI(title="PowerContext Memory Demo", lifespan=lifespan)
+    # 文档端点对外暴露会泄露 API 面, 活动机直接关掉
+    app = FastAPI(
+        title="PowerContext Memory Demo",
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
     app.state.cfg = cfg
 
     # 前端单页: 单文件无构建, 与 API 同源部署, 随 demo/ 目录一起分发

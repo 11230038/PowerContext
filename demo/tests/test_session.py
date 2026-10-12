@@ -161,3 +161,14 @@ def test_ensure_scope_installs_language_following_extraction_prompt(
         assert again.json()["scope_id"] == scope_id
 
     run_with_app(body)
+
+
+def test_docs_endpoints_are_disabled() -> None:
+    """API 文档(Swagger/ReDoc/OpenAPI)不得暴露, 否则公网可见完整接口面。"""
+
+    async def body(client: httpx.AsyncClient, app: Any) -> None:
+        assert (await client.get("/docs")).status_code == 404
+        assert (await client.get("/redoc")).status_code == 404
+        assert (await client.get("/openapi.json")).status_code == 404
+
+    run_with_app(body)
