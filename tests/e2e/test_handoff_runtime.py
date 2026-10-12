@@ -45,7 +45,6 @@ from powercontext.builtin.runtime import (
     HandoffStatement,
     InferenceConfig,
     PreparedHandoff,
-    RememberMemoryRequest,
     WorkingNoteKind,
     open_builtin_runtime,
 )

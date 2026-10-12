@@ -44,7 +44,7 @@ from powercontext.builtin.runtime import (
     open_builtin_runtime,
 )
 from powercontext.builtin.scope import ScopeDraft, ScopeMutation, ScopeNotFoundError
-from powercontext.builtin.sources import CONTENT_SOURCE_DEFINITION, ContentCapture, ContentSource
+from powercontext.builtin.sources import CONTENT_SOURCE_DEFINITION, ContentCapture
 from powercontext.errors import SourceConflictError
 from powercontext.sources import ConnectorBinding, SourceDefinitionRegistry, project_source_for_transport
 from tests.e2e.dream_support import atomic_memory_pipeline, memory_source_text
@@ -178,7 +178,7 @@ def test_working_note_capture_does_not_promote_into_memory() -> None:
     async def scenario() -> None:
         async with open_builtin_runtime(
             BuiltinConfig(database=SQLiteConfig()),
-            candidate_pipeline=_ContentCandidatePipeline(),
+            candidate_pipeline=atomic_memory_pipeline(_ContentCandidatePipeline()),
         ) as runtime:
             assert runtime.scopes is not None
             scope = await runtime.scopes.create(
@@ -249,7 +249,8 @@ def test_working_note_capture_does_not_promote_into_memory() -> None:
                         )
                     )
 
-            flushed = await runtime.memory.for_scope(scope.scope_id).flush()
+            assert runtime.atomic_memory is not None
+            flushed = await runtime.atomic_memory.for_scope(scope.scope_id).flush()
 
             assert replayed == captured
             assert expired_replay == captured

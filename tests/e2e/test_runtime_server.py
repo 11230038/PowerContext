@@ -286,7 +286,7 @@ def test_server_databases_share_source_to_memory_search_behavior(
 def test_working_note_http_and_sdk_capture_stays_out_of_memory(tmp_path: Path) -> None:
     app = create_server_app(
         settings=_server_settings(tmp_path / "working-note.db"),
-        candidate_pipeline=ContentCandidatePipeline(),
+        candidate_pipeline=atomic_memory_pipeline(ContentCandidatePipeline()),
     )
 
     async def scenario() -> None:

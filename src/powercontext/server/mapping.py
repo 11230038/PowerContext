@@ -132,8 +132,8 @@ from powercontext.builtin.runtime import (
 from powercontext.builtin.runtime import (
     SubmitSourceObservation as RuntimeSubmitSourceObservation,
 )
-from powercontext.builtin.runtime.atomic_memory import AtomicMemoryPage, AtomicMemorySearchPage
 from powercontext.builtin.runtime import WorkingNoteKind as RuntimeWorkingNoteKind
+from powercontext.builtin.runtime.atomic_memory import AtomicMemoryPage, AtomicMemorySearchPage
 from powercontext.builtin.sources import ExternalSkillImportMode as RuntimeExternalSkillImportMode
 from powercontext.builtin.work import (
     AcknowledgeHandoff as RuntimeAcknowledgeHandoff,
