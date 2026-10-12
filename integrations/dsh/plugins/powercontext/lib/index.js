@@ -4053,8 +4053,7 @@ const HANDOFF_ROLLOVER_REASONS = {
 			"delegation",
 			"manual_checkpoint"
 		]
-	},
-	maxItems: 6
+	}
 };
 function handoffTools(runtime, defineTool) {
 	return [

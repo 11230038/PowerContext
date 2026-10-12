@@ -257,7 +257,6 @@ const HANDOFF_ROLLOVER_REASONS = {
     type: 'string',
     enum: ['user_requested', 'host_context_budget', 'host_compaction', 'context_quality', 'delegation', 'manual_checkpoint'],
   },
-  maxItems: 6,
 }
 
 function handoffTools(runtime: PluginRuntime, defineTool: DefineTool): unknown[] {

@@ -159,8 +159,16 @@ describe('agent tool surface', () => {
     const boundarySource = { name: 'content', source_id: 'turn-1' }
     const reasons = ['host_context_budget', 'context_quality']
 
-    expect(activate.parameters.rollover_reasons).toMatchObject({ type: 'array' })
-    expect(prepare.parameters.rollover_reasons).toMatchObject({ type: 'array' })
+    expect(activate.parameters.rollover_reasons).toMatchObject({
+      type: 'array',
+      items: { type: 'string', enum: ['user_requested', 'host_context_budget', 'host_compaction', 'context_quality', 'delegation', 'manual_checkpoint'] },
+    })
+    expect(prepare.parameters.rollover_reasons).toMatchObject({
+      type: 'array',
+      items: { type: 'string', enum: ['user_requested', 'host_context_budget', 'host_compaction', 'context_quality', 'delegation', 'manual_checkpoint'] },
+    })
+    expect(activate.parameters.rollover_reasons).not.toHaveProperty('maxItems')
+    expect(prepare.parameters.rollover_reasons).not.toHaveProperty('maxItems')
     await activate.execute({
       boundary_source: boundarySource,
       objective: 'Continue in a fresh session.',
