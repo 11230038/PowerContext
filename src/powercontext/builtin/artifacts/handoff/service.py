@@ -473,7 +473,7 @@ def _all_citations(content: HandoffContent) -> Iterable[HandoffCitation]:
             yield omission.citation
 
 
-_ROLLOVER_TRANSCRIPT_PHRASES = ("continue the previous work", "see the conversation above")
+_ROLLOVER_TRANSCRIPT_PHRASES = ("continue the previous work", "continue above", "see the conversation above")
 
 
 def _validate_rollover_draft(draft: HandoffDraft) -> None:

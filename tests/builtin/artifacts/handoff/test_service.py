@@ -29,6 +29,7 @@ from powercontext.builtin.artifacts.handoff import (
     HandoffEvidenceUnavailableError,
     HandoffGenerationUnavailableError,
     HandoffOmission,
+    HandoffRolloverReason,
     HandoffService,
     HandoffSourceCitation,
     HandoffSourceEvidence,
@@ -345,13 +346,19 @@ def test_prepare_requires_a_configured_generation_pipeline() -> None:
             "rollover_quality",
             ("host_compaction",),
         ),
+        (
+            _draft("Error mapping changed.", next_action="Continue above."),
+            4096,
+            "rollover_quality",
+            ("user_requested",),
+        ),
     ],
 )
 def test_prepare_rejects_pipeline_contract_violations(
     draft: HandoffDraft,
     max_bytes: int,
     code: str,
-    rollover_reasons: tuple[str, ...],
+    rollover_reasons: tuple[HandoffRolloverReason, ...],
 ) -> None:
     async def scenario() -> None:
         service, _, _ = _service(_GenerationPipeline(draft))
@@ -360,7 +367,7 @@ def test_prepare_rejects_pipeline_contract_violations(
             await service.prepare(
                 PrepareHandoff(
                     objective="Complete parser error handling.",
-                    rollover_reasons=rollover_reasons,  # type: ignore[arg-type]
+                    rollover_reasons=rollover_reasons,
                     evidence=(_citation(),),
                     max_bytes=max_bytes,
                 )
