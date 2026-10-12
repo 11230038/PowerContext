@@ -171,6 +171,7 @@ from powercontext.builtin.runtime.extraction_diagnostics import ExtractionDiagno
 from powercontext.builtin.runtime.models import (
     ApproveArtifactCandidateRequest,
     CaptureSource,
+    CaptureWorkingNote,
     CommitConnectorCheckpoint,
     ConnectorCheckpointState,
     ExperienceCandidate,
@@ -246,7 +247,9 @@ from powercontext.builtin.runtime.topic_memory_search import TopicMemorySearcher
 from powercontext.builtin.scope import ScopeApplication, ScopeDescriptor, ScopeSelection
 from powercontext.builtin.scope.subject_sources import SubjectSourceService
 from powercontext.builtin.sources import (
+    CONTENT_SOURCE_ADAPTER,
     CONTENT_SOURCE_NAME,
+    WORKING_NOTE_SOURCE_KIND,
     ContentCapture,
     ContentSource,
     ExternalSkillImportMode,
@@ -327,6 +330,7 @@ _CONTEXT_MEMORY_EMBEDDING_TIMEOUT_SECONDS = 0.25
 
 _MEMORY_CAPTURE_STAGE = "memory.capture"
 _MEMORY_CAPTURE_SOURCE_COUNT = "powercontext.memory.capture.source_count"
+_WORKING_NOTE_RESERVED_METADATA = frozenset({"kind", "session_id", "note_kind", "expires_at"})
 _MEMORY_SEARCH_STAGE = "memory.search"
 _MEMORY_SEARCH_REQUESTED_MODE = "powercontext.memory.search.requested_mode"
 _MEMORY_SEARCH_LIMIT = "powercontext.memory.search.limit"
@@ -467,9 +471,61 @@ class ScopedSourceApplication:
         self.scope_id = validate_scope_id(scope_id)
 
     async def capture(self, value: CaptureSource, /) -> SourceReceipt:
+        if value.metadata.get("kind") == WORKING_NOTE_SOURCE_KIND:
+            raise InvalidRuntimeRequestError("working-note-dedicated-api")
         return await self._capture(value)
 
-    async def _capture(self, value: CaptureSource, /, *, handoff_receipt: bool = False) -> SourceReceipt:
+    async def capture_working_note(self, value: CaptureWorkingNote, /) -> SourceReceipt:
+        """Capture explicit session-local work state without Memory promotion."""
+
+        if _WORKING_NOTE_RESERVED_METADATA.intersection(value.metadata):
+            raise InvalidRuntimeRequestError("working-note-metadata")
+        if not value.session_id.strip():
+            raise ValueError("session_id must not be blank")  # noqa: TRY003
+        if not value.note_kind.strip():
+            raise ValueError("note_kind must not be blank")  # noqa: TRY003
+        if value.expires_at is not None and (value.expires_at.tzinfo is None or value.expires_at.utcoffset() is None):
+            raise InvalidRuntimeRequestError("working-note-expiry")
+        metadata = dict(value.metadata)
+        metadata.update({
+            "kind": WORKING_NOTE_SOURCE_KIND,
+            "session_id": value.session_id,
+            "note_kind": value.note_kind,
+        })
+        if value.expires_at is not None:
+            metadata["expires_at"] = value.expires_at.astimezone(UTC).isoformat()
+        capture = CaptureSource(source_id=value.source_id, content=value.content, metadata=metadata)
+        if value.expires_at is not None and value.expires_at <= datetime.now(UTC):
+            replay = await self._replay_working_note(capture)
+            if replay is not None:
+                return replay
+            raise InvalidRuntimeRequestError("working-note-expiry")
+        return await self._capture(capture, working_note=True)
+
+    async def _replay_working_note(self, value: CaptureSource, /) -> SourceReceipt | None:
+        capture = ContentCapture(
+            source_id=value.source_id,
+            content=value.content,
+            metadata=value.model_dump(mode="json")["metadata"],
+        )
+        proposed = (await CONTENT_SOURCE_ADAPTER.resolve(capture)).model_copy(update={"working_note": True})
+        ref = SourceRef(source_type=CONTENT_SOURCE_NAME, source_id=value.source_id)
+        async with self._runtime._context(self.scope_id) as context, self._runtime._locked(self.scope_id):
+            existing = await context.sources.journal.entry(ref)
+            if existing is None:
+                return None
+            if existing.source != proposed:
+                raise SourceConflictError("identity", (self.scope_id, ref))
+            return SourceReceipt(source_ref=ref, sequence=existing.position)
+
+    async def _capture(
+        self,
+        value: CaptureSource,
+        /,
+        *,
+        handoff_receipt: bool = False,
+        working_note: bool = False,
+    ) -> SourceReceipt:
         if self._runtime._record_service is not None:
             try:
                 async with self._runtime._scope_operation(self.scope_id), self._runtime._locked(self.scope_id):
@@ -481,6 +537,7 @@ class ScopedSourceApplication:
                             value.content,
                             value.metadata,
                             handoff_receipt=handoff_receipt,
+                            working_note=working_note,
                         )
                         if span is not None:
                             span.set_attributes({_MEMORY_CAPTURE_SOURCE_COUNT: 1})
@@ -499,6 +556,7 @@ class ScopedSourceApplication:
                         metadata=value.model_dump(mode="json")["metadata"],
                     ),
                     handoff_receipt=handoff_receipt,
+                    working_note=working_note,
                 )
                 if span is not None:
                     span.set_attributes({_MEMORY_CAPTURE_SOURCE_COUNT: 1})

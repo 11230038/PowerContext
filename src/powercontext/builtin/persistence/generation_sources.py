@@ -21,7 +21,12 @@ from collections.abc import Sequence
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.builtin.persistence.sources import SourceRepository, StoredSource
-from powercontext.builtin.source_eligibility import is_generation_eligible, require_source_eligible
+from powercontext.builtin.source_eligibility import (
+    WorkingNoteUnavailableError,
+    is_generation_eligible,
+    require_source_eligible,
+)
+from powercontext.builtin.sources import ContentSource
 from powercontext.sources import SourceRef
 
 
@@ -37,11 +42,17 @@ class GenerationSourceAccess:
         scope_id: str,
         refs: Sequence[SourceRef],
         /,
+        *,
+        allow_working_notes: bool = False,
     ) -> tuple[StoredSource, ...]:
         """Resolve explicit references, rejecting the whole request if any is ineligible."""
 
         rows = await self._repository.get_many(connection, scope_id, refs)
         for row in rows:
+            if allow_working_notes and isinstance(row.value, ContentSource) and row.value.is_working_note:
+                if row.value.is_working_note_active():
+                    continue
+                raise WorkingNoteUnavailableError(row.ref)
             require_source_eligible(row.ref, row.value)
         return rows
 

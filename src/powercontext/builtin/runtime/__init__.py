@@ -138,6 +138,7 @@ from powercontext.builtin.runtime.memory_write_gate import (
 from powercontext.builtin.runtime.models import (
     ApproveArtifactCandidateRequest,
     CaptureSource,
+    CaptureWorkingNote,
     CommitConnectorCheckpoint,
     ConnectorCheckpointState,
     ContextAssembly,
@@ -181,6 +182,7 @@ from powercontext.builtin.runtime.models import (
     SourceReceipt,
     SubmitSourceObservation,
     TopicMemoryFlushResult,
+    WorkingNoteKind,
 )
 from powercontext.builtin.runtime.protocols import PowerContextProvider, RemoteIngestion
 from powercontext.builtin.runtime.readiness import (
@@ -243,6 +245,7 @@ __all__ = [
     "CandidateFamilyCount",
     "CandidateInventoryStatistics",
     "CaptureSource",
+    "CaptureWorkingNote",
     "CommitConnectorCheckpoint",
     "ConnectorCheckpointState",
     "ContextAssembly",
@@ -399,6 +402,7 @@ __all__ = [
     "UsageStatistics",
     "WorkApplication",
     "assess_decision_result",
+    "WorkingNoteKind",
     "build_memory_write_gate",
     "dependency_readiness_probe",
     "open_builtin_contexts",

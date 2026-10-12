@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import time_machine
 
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.atomic_memory import AtomicMemoryContent
@@ -35,6 +37,7 @@ from powercontext.builtin.runtime import (
     ActivateHandoff,
     BuiltinConfig,
     CaptureSource,
+    CaptureWorkingNote,
     HandoffArtifactCitation,
     HandoffDraft,
     HandoffOmission,
@@ -42,6 +45,8 @@ from powercontext.builtin.runtime import (
     HandoffStatement,
     InferenceConfig,
     PreparedHandoff,
+    RememberMemoryRequest,
+    WorkingNoteKind,
     open_builtin_runtime,
 )
 from powercontext.builtin.runtime.relational import RelationalContexts
@@ -69,6 +74,74 @@ class _EchoHandoffPipeline:
                 citations=(citation,),
             ),
         )
+
+
+def test_handoff_can_use_an_explicit_working_note_citation() -> None:
+    async def scenario() -> None:
+        async with open_builtin_runtime(
+            BuiltinConfig(database=SQLiteConfig()),
+            handoff_pipeline=_EchoHandoffPipeline(),
+        ) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Working note", summary="Handoff evidence", idempotency_key="working-note-handoff")
+            )
+            note = await runtime.sources.for_scope(scope.scope_id).capture_working_note(
+                CaptureWorkingNote(
+                    source_id="note-1",
+                    content="The malformed-input regression passed locally.",
+                    session_id="session-1",
+                    note_kind=WorkingNoteKind.VALIDATION,
+                )
+            )
+            citation = HandoffSourceCitation(source_ref=note.source_ref)
+
+            draft = await runtime.handoff.for_scope(scope.scope_id).prepare(
+                PrepareHandoff(objective="Continue parser validation.", evidence=(citation,))
+            )
+
+            assert draft.state[0].citations == (citation,)
+            assert draft.next_action is not None
+            assert draft.next_action.citations == (citation,)
+
+    asyncio.run(scenario())
+
+
+def test_handoff_rejects_an_expired_working_note_citation() -> None:
+    async def scenario() -> None:
+        async with open_builtin_runtime(
+            BuiltinConfig(database=SQLiteConfig()),
+            handoff_pipeline=_EchoHandoffPipeline(),
+        ) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Expired note", summary="Handoff evidence", idempotency_key="expired-note-handoff")
+            )
+            with time_machine.travel(datetime(2030, 1, 1, tzinfo=UTC)):
+                note = await runtime.sources.for_scope(scope.scope_id).capture_working_note(
+                    CaptureWorkingNote(
+                        source_id="expired-note",
+                        content="This validation result is no longer current.",
+                        session_id="session-1",
+                        note_kind=WorkingNoteKind.VALIDATION,
+                        expires_at=datetime(2030, 1, 2, tzinfo=UTC),
+                    )
+                )
+            citation = HandoffSourceCitation(source_ref=note.source_ref)
+
+            with (
+                time_machine.travel(datetime(2030, 1, 3, tzinfo=UTC)),
+                pytest.raises(HandoffEvidenceUnavailableError) as error,
+            ):
+                await runtime.handoff.for_scope(scope.scope_id).prepare(
+                    PrepareHandoff(objective="Continue parser validation.", evidence=(citation,))
+                )
+
+            assert error.value.citation == citation
+            stored = await runtime.records.for_scope(scope.scope_id).get_source("content", "expired-note")
+            assert stored.content == "This validation result is no longer current."
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("family", ["unregistered-family", "experience"])
