@@ -241,6 +241,9 @@ from powercontext.builtin.runtime import (
     ApproveArtifactCandidateRequest as RuntimeApproveArtifactCandidateRequest,
 )
 from powercontext.builtin.runtime import (
+    CaptureWorkingNote as RuntimeCaptureWorkingNote,
+)
+from powercontext.builtin.runtime import (
     CommitConnectorCheckpoint as RuntimeCommitConnectorCheckpoint,
 )
 from powercontext.builtin.runtime import (
@@ -406,6 +409,7 @@ from powercontext.http import (
     Capabilities,
     CaptureContentSourceRequest,
     CaptureContentSourceResponse,
+    CaptureWorkingNoteRequest,
     ClearScopeBindingRequest,
     ClearScopeBindingResponse,
     CodeQueryRequest,
@@ -648,6 +652,7 @@ from powercontext.http._generated.operations import (
     API_VERSION,
     APPROVE_ARTIFACT_CANDIDATE,
     CAPTURE_CONTENT_SOURCE,
+    CAPTURE_WORKING_NOTE,
     CHECK_ACCESS,
     CLEAR_SCOPE_BINDING,
     COMMIT_CONNECTOR_CHECKPOINT,
@@ -833,6 +838,8 @@ _ScopePathId = Annotated[str, PathParameter(min_length=1, max_length=256, patter
 
 class _ScopedSourceApplication(Protocol):
     async def capture(self, value: CaptureSource, /) -> SourceReceipt: ...
+
+    async def capture_working_note(self, value: RuntimeCaptureWorkingNote, /) -> SourceReceipt: ...
 
 
 class _SourceApplication(Protocol):
@@ -1402,6 +1409,7 @@ def create_app(
     _add_route(app, GET_PROMPT_CONFIGURATION, get_prompt_configuration)
     _add_route(app, REPLACE_ARTIFACT, replace_artifact)
     _add_route(app, CAPTURE_CONTENT_SOURCE, capture_content_source)
+    _add_route(app, CAPTURE_WORKING_NOTE, capture_working_note)
     add_atomic_memory_routes(
         app,
         application_dependency=_require_application,
@@ -2837,6 +2845,16 @@ async def capture_content_source(
 ) -> CaptureContentSourceResponse:
     _reject_reserved_handoff_receipt_content(request.content)
     result = await application.sources.for_scope(request.scope_id).capture(mapping.capture_request(request))
+    return mapping.capture_response(result)
+
+
+async def capture_working_note(
+    request: CaptureWorkingNoteRequest,
+    application: Annotated[ServerApplication, Depends(_require_application)],
+) -> CaptureContentSourceResponse:
+    result = await application.sources.for_scope(request.scope_id).capture_working_note(
+        mapping.working_note_capture_request(request)
+    )
     return mapping.capture_response(result)
 
 

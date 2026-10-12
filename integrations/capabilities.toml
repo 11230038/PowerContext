@@ -100,6 +100,9 @@ capabilities = ["memory_write"]
 id = "capture_content_source"
 capabilities = ["source_capture"]
 [[toolsets.tools]]
+id = "capture_working_note"
+capabilities = ["source_capture"]
+[[toolsets.tools]]
 id = "create_work_contract"
 capabilities = ["work_contract"]
 [[toolsets.tools]]

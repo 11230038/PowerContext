@@ -85,6 +85,9 @@ from powercontext.builtin.runtime import (
     ApproveArtifactCandidateRequest as RuntimeApproveArtifactCandidateRequest,
 )
 from powercontext.builtin.runtime import (
+    CaptureWorkingNote as RuntimeCaptureWorkingNote,
+)
+from powercontext.builtin.runtime import (
     CommitConnectorCheckpoint as RuntimeCommitConnectorCheckpoint,
 )
 from powercontext.builtin.runtime import (
@@ -130,6 +133,7 @@ from powercontext.builtin.runtime import (
     SubmitSourceObservation as RuntimeSubmitSourceObservation,
 )
 from powercontext.builtin.runtime.atomic_memory import AtomicMemoryPage, AtomicMemorySearchPage
+from powercontext.builtin.runtime import WorkingNoteKind as RuntimeWorkingNoteKind
 from powercontext.builtin.sources import ExternalSkillImportMode as RuntimeExternalSkillImportMode
 from powercontext.builtin.work import (
     AcknowledgeHandoff as RuntimeAcknowledgeHandoff,
@@ -166,6 +170,7 @@ from powercontext.http import (
     CaptureContentSourceRequest,
     CaptureContentSourceResponse,
     CaptureStatus,
+    CaptureWorkingNoteRequest,
     CommitConnectorCheckpointRequest,
     CommittedHandoff,
     ConnectorCheckpointState,
@@ -343,6 +348,16 @@ def capture_request(value: CaptureContentSourceRequest) -> CaptureSource:
         source_id=value.source_id,
         content=value.content,
         metadata={} if value.metadata is None else value.metadata,
+    )
+
+
+def working_note_capture_request(value: CaptureWorkingNoteRequest) -> RuntimeCaptureWorkingNote:
+    return RuntimeCaptureWorkingNote(
+        source_id=value.source_id,
+        content=value.content,
+        session_id=value.session_id,
+        note_kind=RuntimeWorkingNoteKind(value.note_kind.value),
+        expires_at=value.expires_at,
     )
 
 
