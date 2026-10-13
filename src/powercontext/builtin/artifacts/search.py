@@ -25,11 +25,14 @@ from dataclasses import dataclass
 from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import jieba
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
 from powercontext.artifacts.search import ChannelScore
+
+if TYPE_CHECKING:
+    import jieba
 
 _FTS_MIN_QUERY_COVERAGE = 0.25
 _FTS_MIN_MATCHED_TERMS = 2
@@ -100,6 +103,8 @@ def _query_stopwords() -> frozenset[str]:
 
 @lru_cache(maxsize=1)
 def _tokenizer() -> jieba.Tokenizer:
+    import jieba
+
     jieba.default_logger.setLevel(logging.WARNING)
     return jieba.Tokenizer()
 
