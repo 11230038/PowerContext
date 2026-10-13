@@ -315,6 +315,23 @@ def test_custom_handoff_demonstrations_reject_invalid_rollover_reasons(
     assert not caught.value.during_inference
 
 
+def test_custom_handoff_demonstrations_reject_rollover_outputs_that_prepare_would_reject() -> None:
+    case = deepcopy(_case("handoff.generate"))
+    case["input"]["rollover_reasons"] = ["user_requested"]
+    case["expected_output"] = {
+        "state": [{"text": "The smoke tests passed.", "evidence_ids": ["source:1"]}],
+        "disposition": "continuable",
+        "next_action": {"text": "Continue above.", "evidence_ids": ["source:1"]},
+    }
+    definition = PromptRegistry(builtin_prompt_definitions()).get("handoff.generate")
+
+    with pytest.raises(PromptError) as caught:
+        definition.validate(_content(case))
+
+    assert caught.value.code == "prompt_definition_incompatible"
+    assert not caught.value.during_inference
+
+
 @pytest.mark.parametrize(
     ("key", "path", "invalid"),
     [

@@ -160,6 +160,27 @@ def _validated_output(result: GenerationResult[HandoffGenerationOutput]) -> Hand
         raise InvalidInferenceOutputError("handoff-generate", "generator returned an invalid output tree") from error
 
 
+_ROLLOVER_TRANSCRIPT_PHRASES = ("continue the previous work", "continue above", "see the conversation above")
+
+
+def rollover_draft_violation(draft: HandoffDraft) -> str | None:
+    """Return the deterministic RFC 1783 rollover violation, if any.
+
+    The caller owns ``objective`` and the generator must preserve it exactly, so this checks
+    only generated checkpoint content. A blocked checkpoint may have no next action because
+    the blocker itself explains why the fresh session cannot continue safely.
+    """
+
+    if draft.next_action is None and draft.disposition == "continuable":
+        return "rollover_next_action"
+    texts = [*(statement.text for statement in draft.state)]
+    if draft.next_action is not None:
+        texts.append(draft.next_action.text)
+    if any(phrase in text.casefold() for text in texts for phrase in _ROLLOVER_TRANSCRIPT_PHRASES):
+        return "rollover_quality"
+    return None
+
+
 def _generation_input(
     request: HandoffGenerationRequest,
     projector: HandoffEvidenceProjector,

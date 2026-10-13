@@ -27,6 +27,7 @@ from powercontext.builtin.artifacts.handoff.errors import (
     InvalidHandoffGenerationError,
     InvalidHandoffReferenceError,
 )
+from powercontext.builtin.artifacts.handoff.generation import rollover_draft_violation
 from powercontext.builtin.artifacts.handoff.generation_metadata import HandoffGenerationReceipts
 from powercontext.builtin.artifacts.handoff.hints import render_handoff_hint
 from powercontext.builtin.artifacts.handoff.models import (
@@ -401,8 +402,8 @@ class HandoffService:
         content_bytes = len(draft.as_content().model_dump_json(by_alias=True, indent=2).encode())
         if content_bytes > action.max_bytes:
             raise InvalidHandoffGenerationError("budget")
-        if action.rollover_reasons:
-            _validate_rollover_draft(draft)
+        if action.rollover_reasons and (violation := rollover_draft_violation(draft)):
+            raise InvalidHandoffGenerationError(violation)
 
     async def _evidence_checks(
         self,
@@ -471,21 +472,6 @@ def _all_citations(content: HandoffContent) -> Iterable[HandoffCitation]:
     for omission in content.omissions:
         if omission.citation is not None:
             yield omission.citation
-
-
-_ROLLOVER_TRANSCRIPT_PHRASES = ("continue the previous work", "continue above", "see the conversation above")
-
-
-def _validate_rollover_draft(draft: HandoffDraft) -> None:
-    """Enforce the deterministic quality floor for rollover preparation (RFC 1783)."""
-
-    if draft.next_action is None and draft.disposition != "complete":
-        raise InvalidHandoffGenerationError("rollover_next_action")
-    texts = [draft.objective, *(statement.text for statement in draft.state)]
-    if draft.next_action is not None:
-        texts.append(draft.next_action.text)
-    if any(phrase in text.casefold() for text in texts for phrase in _ROLLOVER_TRANSCRIPT_PHRASES):
-        raise InvalidHandoffGenerationError("rollover_quality")
 
 
 def _generation_lineage(content: HandoffContent) -> tuple[ArtifactRef, ...]:

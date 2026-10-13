@@ -383,6 +383,13 @@ def test_prepare_allows_transcript_free_rollover_and_unaffected_plain_drafts() -
         rollover = _draft("Error mapping changed.")
         plain = _draft("Blocked on review.", disposition="blocked", next_action=None)
         checkpoint = _draft("Error mapping changed.", disposition="complete", next_action=None)
+        blocked_rollover = _draft(
+            "Repository access must be granted before work can continue.", disposition="blocked", next_action=None
+        )
+        quoted_objective = 'Reject "continue above" wording in rollover handoffs.'
+        quoted_rollover = _draft("The rollover validator needs a quoted-phrase regression.").model_copy(
+            update={"objective": quoted_objective}
+        )
 
         prepared = await _service(_GenerationPipeline(rollover))[0].prepare(
             PrepareHandoff(
@@ -403,10 +410,28 @@ def test_prepare_allows_transcript_free_rollover_and_unaffected_plain_drafts() -
                 max_bytes=4096,
             )
         )
+        blocked_rollover_draft = await _service(_GenerationPipeline(blocked_rollover))[0].prepare(
+            PrepareHandoff(
+                objective=blocked_rollover.objective,
+                rollover_reasons=("user_requested",),
+                evidence=(_citation(),),
+                max_bytes=4096,
+            )
+        )
+        quoted_rollover_draft = await _service(_GenerationPipeline(quoted_rollover))[0].prepare(
+            PrepareHandoff(
+                objective=quoted_objective,
+                rollover_reasons=("user_requested",),
+                evidence=(_citation(),),
+                max_bytes=4096,
+            )
+        )
 
         assert prepared == rollover
         assert plain_draft == plain
         assert checkpoint_draft == checkpoint
+        assert blocked_rollover_draft == blocked_rollover
+        assert quoted_rollover_draft == quoted_rollover
 
     asyncio.run(scenario())
 
