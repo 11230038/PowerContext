@@ -83,6 +83,18 @@ The existing retrieval page does not retain every raw channel score, so `include
 with `artifact_search_not_supported` and field `include_scores`. Other Family-specific controls such as
 `admission`, `fusion`, `min_score`, and `rerank` are not accepted by this adapter.
 
+## Shared word analysis
+
+All built-in searchable Families use Jieba's packaged dictionary for Chinese with `HMM=False`, while Latin words
+and identifiers remain whole. SQLite, seekdb and OceanBase rank the same backend-safe terms. Unquoted queries use
+bundled Snowball English and stopwords-iso Chinese stopwords; negations remain evidence. Documents retain all words,
+and quotations retain stopwords without requesting phrase matching. Admission and ranking controls keep their defaults.
+
+Record and projection formats remain v1. Stop old Server and Worker processes before upgrading. Normal initialization
+compares derived words and updates changed rows, preserving content, history, identities and vectors. Compatible
+projections and FTS helpers are reused; no extra database table or maintenance command is needed. Startup comparison
+reads current searchable projections, with cost proportional to their text size.
+
 ## Experience and Skill text search
 
 Both Families search one `text` channel. Their admission fields are:

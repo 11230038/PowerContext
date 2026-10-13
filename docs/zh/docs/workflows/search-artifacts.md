@@ -80,6 +80,17 @@ Atomic 接受 `query`、`limit`、`mode`、`filters` 和 `include_scores: false`
 `artifact_search_not_supported`，字段为 `include_scores`。此适配层不接受 `admission`、`fusion`、
 `min_score`、`rerank` 等其他 Family 参数。
 
+## 统一分词
+
+内置可检索 Family 通过 Jieba 随包词典对中文分词，关闭 HMM，保留完整的拉丁词和标识符。
+SQLite、seekdb 和 OceanBase 对相同的后端安全词元排序。未加引号的查询使用随包的 Snowball 英文和
+stopwords-iso 中文停止词表，但保留否定词。文档保留所有词；引号保留停止词，不表示短语匹配。
+准入和排序参数沿用现有默认值。
+
+记录和投影格式保持 v1。升级前停止旧 Server 和 Worker 进程。正常初始化比较派生词元，只更新变化的行，
+保留正文、历史、身份和向量。已兼容的投影和 FTS 辅助索引直接沿用，无需新增数据库表或维护命令。
+初始化会读取当前可检索投影，成本随正文规模增长。
+
 ## Experience 和 Skill 文本检索
 
 这两个 Family 都使用一个 `text` 通道，支持以下准入字段：

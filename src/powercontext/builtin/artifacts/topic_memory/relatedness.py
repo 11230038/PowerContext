@@ -20,7 +20,7 @@ from collections import Counter
 from dataclasses import dataclass
 from math import sqrt
 
-from powercontext.builtin.artifacts.search import admits_fts_text, analyze_text
+from powercontext.builtin.artifacts.search import admits_fts_text, lexical_query_words
 from powercontext.builtin.artifacts.topic_memory.fusion import admits_topic_memory_vector_distance
 from powercontext.builtin.artifacts.topic_memory.generation import MAX_TOPIC_MEMORY_STAGE_ITEMS, TopicMemoryProposal
 from powercontext.builtin.artifacts.topic_memory.models import (
@@ -45,7 +45,7 @@ def topic_memory_lexical_signature(content: TopicMemoryContent, /) -> str:
     weighted: Counter[str] = Counter()
     first: dict[str, tuple[int, int]] = {}
     for field_order, (weight, value) in enumerate(((8, content.title), (4, content.summary), (1, content.detail))):
-        for position, term in enumerate(analyze_text(value).split()):
+        for position, term in enumerate(lexical_query_words(value)):
             weighted[term] += weight
             first.setdefault(term, (field_order, position))
     ordered = sorted(weighted, key=lambda term: (-weighted[term], first[term], term.encode()))

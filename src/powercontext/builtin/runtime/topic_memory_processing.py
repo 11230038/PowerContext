@@ -35,7 +35,7 @@ from typing_extensions import override
 from powercontext._logging import log_safely
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.artifacts.prompt.service import current_prompt
-from powercontext.builtin.artifacts.search import analyze_text
+from powercontext.builtin.artifacts.search import lexical_terms_with_spans
 from powercontext.builtin.artifacts.topic_memory import (
     MAX_TOPIC_MEMORY_QUERY_LENGTH,
     MAX_TOPIC_MEMORY_QUERY_TERMS,
@@ -1444,7 +1444,7 @@ def _bounded_probe_query(probe: TopicMemoryProbe) -> str:
     """Close model-authored probes over the R4 query contract before I/O."""
 
     raw = " ".join(value.strip() for value in (probe.query, *probe.keywords) if value.strip())
-    terms = tuple(dict.fromkeys(analyze_text(raw).split()))
+    terms = tuple(dict.fromkeys(word for word, _start, _end in lexical_terms_with_spans(raw)))
     selected: list[str] = []
     characters = 0
     for term in terms[:MAX_TOPIC_MEMORY_QUERY_TERMS]:

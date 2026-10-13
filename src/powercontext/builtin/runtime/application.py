@@ -80,7 +80,12 @@ from powercontext.builtin.artifacts.prompt import (
     PromptError,
 )
 from powercontext.builtin.artifacts.prompt.service import PromptService
-from powercontext.builtin.artifacts.search import AdmissionCounts, AdmissionFloor, analyze_text
+from powercontext.builtin.artifacts.search import (
+    AdmissionCounts,
+    AdmissionFloor,
+    analyze_text,
+    lexical_terms_with_spans,
+)
 from powercontext.builtin.artifacts.skill import (
     AgentKind,
     AgentSkillTarget,
@@ -3530,7 +3535,7 @@ def _bounded_topic_memory_recall_query(query: str) -> str:
     """Focus internal Prepared Context recall without weakening the public search contract."""
 
     trimmed = query.strip()
-    terms = tuple(dict.fromkeys(analyze_text(trimmed).split()))
+    terms = tuple(dict.fromkeys(word for word, _start, _end in lexical_terms_with_spans(trimmed)))
     if len(terms) <= MAX_TOPIC_MEMORY_QUERY_TERMS:
         return trimmed
 
