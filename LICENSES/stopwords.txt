@@ -1,3 +1,18 @@
+Bundled stopword lists
+======================
+
+The following files are redistributed under the MIT license below:
+
+- src/powercontext/builtin/artifacts/lexical_data/en.txt
+  Source: stopwords-iso/stopwords-en, raw/snowball-tartarus.txt
+  Revision: ccc8898188850d8fb019d5f69c14a6635c3bd115
+  https://github.com/stopwords-iso/stopwords-en/tree/ccc8898188850d8fb019d5f69c14a6635c3bd115
+
+- src/powercontext/builtin/artifacts/lexical_data/zh.txt
+  Source: stopwords-iso/stopwords-zh, stopwords-zh.txt
+  Revision: 0f62ec9b9061b9142ed87fa6b39d386945c7cf47
+  https://github.com/stopwords-iso/stopwords-zh/tree/0f62ec9b9061b9142ed87fa6b39d386945c7cf47
+
 The MIT License (MIT)
 
 Copyright (c) 2016 Gene Diaz
