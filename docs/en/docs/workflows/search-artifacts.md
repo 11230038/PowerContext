@@ -85,15 +85,12 @@ with `artifact_search_not_supported` and field `include_scores`. Other Family-sp
 
 ## Shared word analysis
 
-All built-in searchable Families use Jieba's packaged dictionary for Chinese with `HMM=False`, while Latin words
-and identifiers remain whole. SQLite, seekdb and OceanBase rank the same backend-safe terms. Unquoted queries use
-bundled Snowball English and stopwords-iso Chinese stopwords; negations remain evidence. Documents retain all words,
-and quotations retain stopwords without requesting phrase matching. Admission and ranking controls keep their defaults.
+Chinese text is segmented into words; Latin words and identifiers remain whole. Unquoted queries omit common English
+and Chinese stopwords while retaining negations. Quote a stopword to search for it; quotations do not request phrase matching.
 
-Record and projection formats remain v1. Stop old Server and Worker processes before upgrading. Normal initialization
-compares derived words and updates changed rows, preserving content, history, identities and vectors. Compatible
-projections and FTS helpers are reused; no extra database table or maintenance command is needed. Startup comparison
-reads current searchable projections, with cost proportional to their text size.
+Record formats remain v1. Before upgrading, stop existing Server and Worker processes. Initialization refreshes
+searchable text for existing records without changing their content, history or vectors. This check runs at each startup
+and can take longer as stored data grows.
 
 ## Experience and Skill text search
 

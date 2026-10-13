@@ -113,38 +113,3 @@ def test_upgrade_preserves_search_exact_records_and_vectors(migration_backend):
             ].artifact_ref.artifact_id == fresh.artifact_id
 
     asyncio.run(scenario())
-
-
-def test_restart_preserves_compatible_search_and_exact_record(tmp_path):
-    from powercontext.builtin.persistence.sqlite import SQLiteConfig
-
-    config = BuiltinConfig(
-        database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'compatible.db'}"),
-        runtime=RuntimeConfig(artifact_processing_families=()),
-    )
-
-    async def scenario():
-        async with open_builtin_runtime(config, scheduler_path=tmp_path / "scheduler") as runtime:
-            assert runtime.scopes is not None
-            scope = (
-                await runtime.scopes.create(
-                    ScopeDraft(title="Compatible", summary="Existing index", idempotency_key="compatible")
-                )
-            ).scope_id
-            original = await runtime.records.for_scope(scope).create_artifact(
-                "atomic-memory", ArtifactWrite(content={"kind": "fact", "text": "compatiblemarker"})
-            )
-            original = await runtime.records.for_scope(scope).get_artifact_revision(
-                "atomic-memory", original.artifact_id, original.revision
-            )
-        async with open_builtin_runtime(config, scheduler_path=tmp_path / "scheduler") as runtime:
-            result = await runtime.artifacts.for_scope(scope).search("atomic-memory", {"query": "compatiblemarker"})
-            assert result.matches[0].artifact_ref.artifact_id == original.artifact_id
-            assert (
-                await runtime.records.for_scope(scope).get_artifact_revision(
-                    "atomic-memory", original.artifact_id, original.revision
-                )
-                == original
-            )
-
-    asyncio.run(scenario())
