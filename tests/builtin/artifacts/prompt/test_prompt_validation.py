@@ -332,6 +332,26 @@ def test_custom_handoff_demonstrations_reject_rollover_outputs_that_prepare_woul
     assert not caught.value.during_inference
 
 
+def test_custom_handoff_demonstrations_allow_descriptive_rollover_mentions() -> None:
+    case = deepcopy(_case("handoff.generate"))
+    case["input"]["rollover_reasons"] = ["user_requested"]
+    case["expected_output"] = {
+        "state": [
+            {
+                "text": 'The validator now rejects "continue above" wording; focused tests passed.',
+                "evidence_ids": ["source:1"],
+            }
+        ],
+        "disposition": "continuable",
+        "next_action": {
+            "text": 'Document why "continue above" wording is invalid, then run tests.',
+            "evidence_ids": ["source:1"],
+        },
+    }
+
+    PromptRegistry(builtin_prompt_definitions()).get("handoff.generate").validate(_content(case))
+
+
 @pytest.mark.parametrize(
     ("key", "path", "invalid"),
     [

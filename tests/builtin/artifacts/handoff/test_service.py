@@ -352,6 +352,12 @@ def test_prepare_requires_a_configured_generation_pipeline() -> None:
             "rollover_quality",
             ("user_requested",),
         ),
+        (
+            _draft("Error mapping changed.", next_action="Run tests, then continue above."),
+            4096,
+            "rollover_quality",
+            ("user_requested",),
+        ),
     ],
 )
 def test_prepare_rejects_pipeline_contract_violations(
@@ -390,6 +396,13 @@ def test_prepare_allows_transcript_free_rollover_and_unaffected_plain_drafts() -
         quoted_rollover = _draft("The rollover validator needs a quoted-phrase regression.").model_copy(
             update={"objective": quoted_objective}
         )
+        descriptive_state_rollover = _draft(
+            'The validator now rejects "continue above" wording; focused tests passed.', next_action="Run tests."
+        )
+        quoted_next_action_rollover = _draft(
+            "The rollover validator needs a descriptive-action regression.",
+            next_action='Document why "continue above" wording is invalid, then run tests.',
+        )
 
         prepared = await _service(_GenerationPipeline(rollover))[0].prepare(
             PrepareHandoff(
@@ -426,12 +439,30 @@ def test_prepare_allows_transcript_free_rollover_and_unaffected_plain_drafts() -
                 max_bytes=4096,
             )
         )
+        descriptive_state_rollover_draft = await _service(_GenerationPipeline(descriptive_state_rollover))[0].prepare(
+            PrepareHandoff(
+                objective=descriptive_state_rollover.objective,
+                rollover_reasons=("user_requested",),
+                evidence=(_citation(),),
+                max_bytes=4096,
+            )
+        )
+        quoted_next_action_rollover_draft = await _service(_GenerationPipeline(quoted_next_action_rollover))[0].prepare(
+            PrepareHandoff(
+                objective=quoted_next_action_rollover.objective,
+                rollover_reasons=("user_requested",),
+                evidence=(_citation(),),
+                max_bytes=4096,
+            )
+        )
 
         assert prepared == rollover
         assert plain_draft == plain
         assert checkpoint_draft == checkpoint
         assert blocked_rollover_draft == blocked_rollover
         assert quoted_rollover_draft == quoted_rollover
+        assert descriptive_state_rollover_draft == descriptive_state_rollover
+        assert quoted_next_action_rollover_draft == quoted_next_action_rollover
 
     asyncio.run(scenario())
 

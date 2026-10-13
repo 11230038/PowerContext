@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Annotated, Literal, Protocol, TypeAlias
 
@@ -160,15 +161,20 @@ def _validated_output(result: GenerationResult[HandoffGenerationOutput]) -> Hand
         raise InvalidInferenceOutputError("handoff-generate", "generator returned an invalid output tree") from error
 
 
-_ROLLOVER_TRANSCRIPT_PHRASES = ("continue the previous work", "continue above", "see the conversation above")
+_ROLLOVER_TRANSCRIPT_INSTRUCTION = re.compile(
+    r"\b(?:continue\s+(?:the\s+previous\s+work|above)|see\s+the\s+conversation\s+above)\s*[.!?]*\s*\Z",
+    re.IGNORECASE,
+)
 
 
 def rollover_draft_violation(draft: HandoffDraft) -> str | None:
     """Return the deterministic RFC 1783 rollover violation, if any.
 
     The caller owns ``objective`` and the generator must preserve it exactly, so this checks
-    only generated checkpoint content. A blocked checkpoint may have no next action because
-    the blocker itself explains why the fresh session cannot continue safely.
+    only generated checkpoint content. It rejects a direct instruction to rely on an old
+    transcript, not a descriptive or quoted mention of that instruction. A blocked checkpoint
+    may have no next action because the blocker itself explains why the fresh session cannot
+    continue safely.
     """
 
     if draft.next_action is None and draft.disposition == "continuable":
@@ -176,7 +182,7 @@ def rollover_draft_violation(draft: HandoffDraft) -> str | None:
     texts = [*(statement.text for statement in draft.state)]
     if draft.next_action is not None:
         texts.append(draft.next_action.text)
-    if any(phrase in text.casefold() for text in texts for phrase in _ROLLOVER_TRANSCRIPT_PHRASES):
+    if any(_ROLLOVER_TRANSCRIPT_INSTRUCTION.search(text) for text in texts):
         return "rollover_quality"
     return None
 
