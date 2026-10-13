@@ -212,6 +212,17 @@ const OPERATIONS = {
 		successStatuses: [200],
 		emptyStatuses: []
 	},
+	get_server_info: {
+		method: "GET",
+		path: "/v1/server-info",
+		location: null,
+		scopeMode: "none",
+		pathParameters: [],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [200],
+		emptyStatuses: []
+	},
 	get_capabilities: {
 		method: "GET",
 		path: "/v1/capabilities",
@@ -356,6 +367,17 @@ const OPERATIONS = {
 	capture_content_source: {
 		method: "POST",
 		path: "/v1/sources/content",
+		location: "body",
+		scopeMode: "current",
+		pathParameters: [],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [202],
+		emptyStatuses: []
+	},
+	capture_working_note: {
+		method: "POST",
+		path: "/v1/sources/working-notes",
 		location: "body",
 		scopeMode: "current",
 		pathParameters: [],
@@ -1789,6 +1811,7 @@ function containsSecret(text) {
 const WRITE_OPERATIONS = new Set([
 	"remember_memory",
 	"capture_content_source",
+	"capture_working_note",
 	"revise_memory_entry",
 	"retire_memory_entry",
 	"replace_artifact",

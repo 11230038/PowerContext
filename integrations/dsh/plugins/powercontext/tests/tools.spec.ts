@@ -51,6 +51,7 @@ describe('agent tool surface', () => {
       'pc_memory_retire',
       'pc_prepare_context',
       'pc_capture_source',
+      'pc_capture_working_note',
       'pc_handoff_activate',
       'pc_handoff_prepare',
       'pc_handoff_finalize',
@@ -95,6 +96,10 @@ describe('agent tool surface', () => {
       reason: 'PowerContext tool "pc_remember" changes durable project context.',
     })
     expect(next).not.toHaveBeenCalled()
+    await expect(preExecute?.({ name: 'pc_capture_working_note' }, next)).resolves.toEqual({
+      kind: 'ask',
+      reason: 'PowerContext tool "pc_capture_working_note" changes durable project context.',
+    })
     await expect(preExecute?.({ name: 'pc_search' }, next)).resolves.toEqual({ kind: 'allow' })
     expect(next).toHaveBeenCalledOnce()
   })
@@ -126,5 +131,53 @@ describe('agent tool surface', () => {
       ok: false,
       code: 'unscoped',
     })
+  })
+
+  it('routes Working Note capture through the scoped operation', async () => {
+    const registered: Array<{
+      name: string
+      execute: (args: Record<string, unknown>, exec: unknown) => Promise<unknown>
+    }> = []
+    const request = vi.fn(async () => ({
+      kind: 'json' as const,
+      value: { status: 'accepted', source: { name: 'content', source_id: 'note-1' }, position: 1 },
+      status: 202,
+      requestId: undefined,
+    }))
+    registerTools(
+      {
+        tools: { register: (tool) => registered.push(tool as never) },
+        on: () => undefined,
+      },
+      {
+        client: { request } as never,
+        config: { maxBytes: 8000 },
+        resolveScope: vi.fn(async () => 'project:demo'),
+        log: vi.fn(),
+      } as unknown as PluginRuntime,
+      (definition) => definition,
+    )
+
+    const capture = registered.find((tool) => tool.name === 'pc_capture_working_note')
+    const result = await capture?.execute({
+      source_id: 'note-1',
+      content: 'Parser validation is still in progress.',
+      session_id: 'session-1',
+      note_kind: 'validation',
+      expires_at: '2030-01-02T00:00:00Z',
+    }, {
+      signal: AbortSignal.timeout(1000),
+      agent: { session: { header: { cwd: '/workspace/repo' } } },
+    })
+
+    expect(result).toMatchObject({ ok: true, status: 202 })
+    expect(request).toHaveBeenCalledWith('capture_working_note', {
+      source_id: 'note-1',
+      content: 'Parser validation is still in progress.',
+      session_id: 'session-1',
+      note_kind: 'validation',
+      expires_at: '2030-01-02T00:00:00Z',
+      scope_id: 'project:demo',
+    }, expect.any(AbortSignal))
   })
 })

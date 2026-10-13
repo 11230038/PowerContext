@@ -47,6 +47,7 @@ export interface ToolResult extends BodyFailureDetails {
 const WRITE_OPS = new Set<OperationId>([
   'remember_memory',
   'capture_content_source',
+  'capture_working_note',
   'revise_memory_entry',
   'replace_artifact',
   'change_atomic_memory_lifecycle',
