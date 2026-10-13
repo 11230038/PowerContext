@@ -282,6 +282,9 @@ capabilities = ["context_injection"]
 id = "pc_capture_source:capture_content_source"
 capabilities = ["source_capture"]
 [[toolsets.tools]]
+id = "pc_capture_working_note:capture_working_note"
+capabilities = ["source_capture"]
+[[toolsets.tools]]
 id = "pc_handoff_activate:activate_handoff"
 capabilities = ["handoff"]
 [[toolsets.tools]]
@@ -553,6 +556,9 @@ capabilities = ["context_injection"]
 id = "pc_capture_source:capture_content_source"
 capabilities = ["source_capture"]
 [[toolsets.tools]]
+id = "pc_capture_working_note:capture_working_note"
+capabilities = ["source_capture"]
+[[toolsets.tools]]
 id = "pc_handoff_activate:activate_handoff"
 capabilities = ["handoff"]
 [[toolsets.tools]]
@@ -618,6 +624,9 @@ id = "pc_prepare_context:prepare_context"
 capabilities = ["context_injection"]
 [[toolsets.tools]]
 id = "pc_capture_source:capture_content_source"
+capabilities = ["source_capture"]
+[[toolsets.tools]]
+id = "pc_capture_working_note:capture_working_note"
 capabilities = ["source_capture"]
 [[toolsets.tools]]
 id = "pc_handoff_activate:activate_handoff"

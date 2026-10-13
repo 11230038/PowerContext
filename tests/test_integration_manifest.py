@@ -106,10 +106,13 @@ def test_tool_surface_probe_handles_long_descriptions_without_borrowing_operatio
         assert errors == ()
 
 
-def test_dify_declares_the_dsh_tool_surface_without_host_lifecycle_claims() -> None:
+def test_dify_declares_the_dsh_tool_surface_except_working_notes_without_host_lifecycle_claims() -> None:
     manifest = load_integration_manifest()
     toolsets = {item.id: item for item in manifest.toolsets}
-    assert {tool.id for tool in toolsets["dify-tools"].tools} == {tool.id for tool in toolsets["dsh-tools"].tools}
+    dify_tools = {tool.id for tool in toolsets["dify-tools"].tools}
+    dsh_tools = {tool.id for tool in toolsets["dsh-tools"].tools}
+    assert dsh_tools - dify_tools == {"pc_capture_working_note:capture_working_note"}
+    assert dify_tools - dsh_tools == set()
     dify = next(item for item in manifest.integrations if item.id == "dify")
     assert dify.availability is IntegrationAvailability.EXPERIMENTAL
     assert dify.profiles == ()
