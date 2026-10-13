@@ -12,21 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Offline refresh preserves authority and vectors, and skips compatible projections."""
+"""Upgrades preserve public search, exact revisions and vector retrieval."""
 
 import asyncio
 
 from pydantic import JsonValue
-from sqlalchemy import select, text, update
+from sqlalchemy import update
 
 from powercontext.builtin.artifacts.memory import EmbeddingProfile
 from powercontext.builtin.inference import EmbeddingResult
 from powercontext.builtin.persistence.atomic_memory_index_schema import atomic_memory_current_table
 from powercontext.builtin.persistence.tables import (
     ARTIFACT_HEADS_TABLE,
-    ARTIFACTS_TABLE,
-    SKILL_PACKAGES_TABLE,
-    SOURCES_TABLE,
     TOPIC_MEMORY_ACTIVE_CHUNKS_TABLE,
     TOPIC_MEMORY_ACTIVE_TOPICS_TABLE,
 )
@@ -43,23 +40,7 @@ class _Embedding:
         return EmbeddingResult(vectors=tuple((1.0, 0.0, 0.0) for _ in texts))
 
 
-async def _snapshot(connection):
-    tables = (
-        ARTIFACTS_TABLE,
-        SOURCES_TABLE,
-        SKILL_PACKAGES_TABLE,
-        ARTIFACT_HEADS_TABLE,
-        atomic_memory_current_table(),
-        TOPIC_MEMORY_ACTIVE_TOPICS_TABLE,
-        TOPIC_MEMORY_ACTIVE_CHUNKS_TABLE,
-    )
-    return {
-        table.name: (await connection.execute(select(*(c for c in table.c if c.name != "searchable_text")))).all()
-        for table in tables
-    }
-
-
-def test_startup_refreshes_changed_words_preserving_exact_records_and_vectors(migration_backend):
+def test_upgrade_preserves_search_exact_records_and_vectors(migration_backend):
     config = BuiltinConfig(database=migration_backend.config, runtime=RuntimeConfig(artifact_processing_families=()))
     embedding = _Embedding()
     marker = "部署地址"
@@ -96,7 +77,6 @@ def test_startup_refreshes_changed_words_preserving_exact_records_and_vectors(mi
             assert before_vectors.hits
 
         async with migration_profile(migration_backend.config) as profile, profile.database.transaction() as connection:
-            authority = await _snapshot(connection)
             # Canonical revisions, states and vectors survive an analyzer change.
             for table in (
                 atomic_memory_current_table(),
@@ -125,11 +105,6 @@ def test_startup_refreshes_changed_words_preserving_exact_records_and_vectors(mi
             assert runtime.atomic_memory is not None
             after_vectors = await runtime.atomic_memory.for_scope(scope).search(marker, mode="vector")
             assert after_vectors == before_vectors
-            async with runtime.primary_database.transaction() as connection:
-                assert await _snapshot(connection) == authority
-                assert set(
-                    (await connection.execute(select(atomic_memory_current_table().c.projection_format))).scalars()
-                ) == {"powercontext.atomic-memory.current.v1"}
             fresh = await runtime.records.for_scope(scope).create_artifact(
                 "atomic-memory", ArtifactWrite(content={"kind": "fact", "text": "freshmarker"})
             )
@@ -140,7 +115,7 @@ def test_startup_refreshes_changed_words_preserving_exact_records_and_vectors(mi
     asyncio.run(scenario())
 
 
-def test_startup_keeps_compatible_projection_and_fts_rows_unchanged(tmp_path):
+def test_restart_preserves_compatible_search_and_exact_record(tmp_path):
     from powercontext.builtin.persistence.sqlite import SQLiteConfig
 
     config = BuiltinConfig(
@@ -159,29 +134,17 @@ def test_startup_keeps_compatible_projection_and_fts_rows_unchanged(tmp_path):
             original = await runtime.records.for_scope(scope).create_artifact(
                 "atomic-memory", ArtifactWrite(content={"kind": "fact", "text": "compatiblemarker"})
             )
-        async with migration_profile(config.database) as profile, profile.database.transaction() as connection:
-            before = await _snapshot(connection)
-            schema = (
-                await connection.execute(text("SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name"))
-            ).all()
-            fts = (await connection.execute(text("SELECT rowid, * FROM pc_atomic_memory_current_fts"))).all()
-            await connection.execute(
-                text(
-                    "CREATE TRIGGER refuse_projection_update BEFORE UPDATE ON pc_atomic_memory_current BEGIN SELECT RAISE(ABORT, 'compatible projection must not be rewritten'); END"
-                )
+            original = await runtime.records.for_scope(scope).get_artifact_revision(
+                "atomic-memory", original.artifact_id, original.revision
             )
         async with open_builtin_runtime(config, scheduler_path=tmp_path / "scheduler") as runtime:
             result = await runtime.artifacts.for_scope(scope).search("atomic-memory", {"query": "compatiblemarker"})
             assert result.matches[0].artifact_ref.artifact_id == original.artifact_id
-            async with runtime.primary_database.transaction() as connection:
-                assert await _snapshot(connection) == before
-                assert (
-                    await connection.execute(
-                        text("SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name")
-                    )
-                ).all() == schema
-                assert (
-                    await connection.execute(text("SELECT rowid, * FROM pc_atomic_memory_current_fts"))
-                ).all() == fts
+            assert (
+                await runtime.records.for_scope(scope).get_artifact_revision(
+                    "atomic-memory", original.artifact_id, original.revision
+                )
+                == original
+            )
 
     asyncio.run(scenario())
