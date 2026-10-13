@@ -60,8 +60,7 @@ ordinary work from available context. Inspect Server state before retrying an un
 
 Import `powercontext-cindy-hooks-0.1.0.cindy`, enable the plugin, and open its settings. Use the same Server URL
 and Scope as the native MCP connection, configure the hook credential if needed, and select **Enable automatic
-memory**. Users need no DSH installation, SDK, npm packages, or separate Node installation: the archive contains a
-standalone worker run by Cindy. Development build commands are in the integration README.
+memory**. Users do not need DSH or additional runtime packages.
 
 Select an explicit Scope in settings, or leave it empty and have an operator register the Host-issued session ID
 through `set_scope_binding` with `integration: "cindy"` and `kind: "session"`. The plugin `status` tool reports the
@@ -72,11 +71,10 @@ The `will-user-message` hook recalls bounded PreparedContext and independently c
 Source before dispatch. Capture is separately selectable and does not prove extraction or Memory production.
 The captured text is the input to this adapter before its rewrite; an earlier Ghost may already have rewritten it.
 Cindy does not supply a separate raw-draft field.
-Explicit writes, Handoffs, and review remain native MCP tools. The hook uses the shared HTTP protocol implementation
-for `prepare_context`, which is not currently an MCP tool; no business-tool catalog is duplicated.
+Explicit writes, Handoffs, and review use the native MCP tools.
 
 A ready snapshot is appended as untrusted historical evidence. Cindy's rewrite updates the message displayed,
-stored, and sent to the Agent. It is not hidden system context. Failed or empty recall leaves the original message
+stored, and sent to the Agent. Failed or empty recall leaves the original message
 available; late replies cannot rewrite it. Context obeys its UTF-8 budget and the complete message must fit Cindy's
 16,000-character rewrite limit. The adapter sends an allow verdict after a local timeout; Cindy independently
 enforces its three-second deadline for the complete hook dispatch.
@@ -84,19 +82,10 @@ enforces its three-second deadline for the complete hook dispatch.
 The same delivery reuses its Source ID; a newly submitted message has a new Host hook ID. Edited messages carrying
 the adapter's historical markers are allowed without recapture or reinjection. Flagged credentials are skipped.
 Uncertain writes are reported without automatic retry. Local user-message dispatch and steering are covered;
-remote, worker, scheduled, goal-continuation, and pre-compaction flows are not qualified. There is no forced flush
-or `/pc` command. Use the CLI for Server readiness checks.
+remote, worker, scheduled, goal-continuation, and pre-compaction flows are not qualified. Use the CLI for Server readiness checks.
 
-## Validation boundary
+## Experimental support
 
-The [integration README](https://github.com/oceanbase/powercontext/blob/master/integrations/cindy/README.md)
-provides reproducible provider-source acceptance commands. They exercise Cindy 0.1.104's unmodified native provider
-projections for Claude Code, Codex, and Pi against a real local TCP Server with fresh SQLite storage.
-
-Hook acceptance additionally extracts the archive into a directory without DSH, restricts the worker's filesystem
-access to that directory, and exercises the official subscription gateway source against the plugin and a real TCP
-Server. Credential/message bridges and unused Host storage dependencies are simulated. It verifies rewrite
-verdicts, original-prompt persistence, session isolation, and missing-binding behavior.
-
-These checks do not establish desktop installation, credential UI behavior, live harness routing, or model
-execution. Cindy remains outside the qualified host catalog until those desktop checks are completed.
+Cindy 0.1.104 provider and hook gateway tests cover MCP tools, session isolation, prompt persistence, and
+message rewrites against a real Server. Host credential/message bridges are simulated; desktop installation,
+credential UI, and model execution remain unverified. Cindy is outside the qualified host catalog.

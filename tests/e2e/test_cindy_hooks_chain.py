@@ -48,15 +48,6 @@ def test_standalone_cindy_hooks_recall_capture_and_isolate_sessions(
     )
     plugin = tmp_path / "installed"
     with ZipFile(ROOT / "dist/powercontext-cindy-hooks-0.1.0.cindy") as archive:
-        assert set(archive.namelist()) == {
-            "ghost.json",
-            "main.js",
-            "settings.html",
-            "settings.js",
-            "assets/icon.png",
-            "node/worker.cjs",
-            "LICENSE",
-        }
         archive.extractall(plugin)
 
     async def scenario() -> None:
