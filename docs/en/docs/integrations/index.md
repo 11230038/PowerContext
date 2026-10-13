@@ -45,6 +45,11 @@ powercontext setup select
 
 Use the same ref as the Server. ZCode uses its dedicated `powercontext setup zcode` command and is not in the selector; consult each Agent guide for its supported installation path.
 
+## Experimental MCP connections
+
+[Cindy](cindy.md) uses its native custom MCP client to access the shared Server tools. It is under evaluation and
+is not counted in the qualified Agent Host list. Automatic prompt capture and recall hooks are not included.
+
 ## Python Agent frameworks
 
 All 3 adapters are `community`. Install them in the application environment; do not use

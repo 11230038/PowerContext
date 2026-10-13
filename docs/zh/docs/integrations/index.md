@@ -42,6 +42,11 @@ powercontext setup select
 
 使用与 Server 相同的 ref。ZCode 使用独立的 `powercontext setup zcode` 命令，不在该选择器中；完整支持情况见各 Agent 文档。
 
+## 实验性 MCP 接入
+
+[Cindy](cindy.md)通过原生自定义 MCP 客户端访问统一 Server 工具，目前用于评估，不计入已验证 Agent Host 列表。
+该连接不包含自动 Prompt 采集或召回 Hook。
+
 ## Python Agent 框架
 
 这 3 个适配器均为 `community`，安装到应用环境中，不使用 `powercontext setup <host>`：

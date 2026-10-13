@@ -1,70 +1,98 @@
-# Cindy 集成
+# Cindy integration
 
-这是供本地调试的实验性 Ghost 插件，兼容目标为 Cindy 0.1.76 或更新版本。兼容依据是该正式版本源码中的
-Manifest v3、Node JSON-RPC worker、`node.secretBindings` 和 `sessionContext`；Electron 安装、保险库 UI
-及各 Harness 的实际可用性需要在目标桌面端验证。
+`experimental`
 
-插件源码位于 `plugins/powercontext/`。`main.js` 负责 Cindy 工具协议，`node/worker.cjs` 负责有界 HTTP 请求、
-Scope 绑定和响应校验；不依赖 npm 安装步骤或外部 Node 包。Cindy 使用自带的 Worker 运行时，本机无需另装 Node。
-开发检查脚本使用 Node 22+；集成冒烟检查还需要仓库的 `uv` 开发环境。
+Connect Cindy's native custom MCP client to PowerContext Server. The compatibility target is
+[Cindy 0.1.104](https://github.com/makecindy/cindy/releases/tag/v0.1.104), source commit
+`ebf092dc3fb9dfa3ad25b10258979c0bcd396634`.
 
-## 打包和安装
+The connection uses the same `/mcp` endpoint, Server tool schemas, authorization, and project-context guidance as
+the other PowerContext MCP integrations. Cindy owns MCP transport and credential storage. No `.cindy` archive,
+Node worker, separate REST client, or PowerContext package installation inside Cindy is required.
 
-从仓库根目录执行：
+## Connect
+
+Start and verify an independently configured PowerContext Server. For a supported personal macOS/Linux service:
 
 ```bash
-bash integrations/cindy/scripts/package.sh
+powercontext config validate --env-file /path/to/powercontext.env
+powercontext service install --env-file /path/to/powercontext.env
+powercontext service status
 ```
 
-产物为 `dist/powercontext-cindy-0.1.0.cindy`。脚本需要 `zip`，仅打包列出的插件源码和 LICENSE，
-不会递归包含本地配置、测试或凭证。根目录 `MANUAL.md` 由 `read_manual` 工具按需读取；它不是
-`manual.items` 目录，不会被错误注册为仅允许 Markdown 文件的手册树。
+Load the corresponding client connection settings before `powercontext ready` and `powercontext capabilities`.
+See [deployment](../../docs/en/docs/operate/deploy-server.md) and
+[remote connections](../../docs/en/docs/operate/connect-remote-server.md) for environment-file and HTTPS requirements.
 
-在 Cindy 中导入 `.cindy` 文件，确认插件启用，打开插件设置。默认 Server URL 为
-`http://127.0.0.1:8000`。生产使用的 Server 应独立配置并启动，例如：
+In Cindy settings, add a custom MCP server:
+
+| Field | Value |
+| --- | --- |
+| Name | `PowerContext` |
+| Transport | `http` (Streamable HTTP) |
+| URL | `http://127.0.0.1:8000/mcp`, or the Server's HTTPS `/mcp` URL |
+| Bearer token | The configured Server token, without the `Bearer ` prefix; leave empty for anonymous local use |
+| Additional headers | Empty for ordinary Bearer authentication |
+
+Use `http`, not legacy `sse`: Cindy's Codex and Pi paths consume the Streamable HTTP configuration.
+The endpoint matches the [portable MCP configuration](../agent-plugin/powercontext/mcp.json); that file is a
+reference for its URL and protocol, not a Cindy import format. Configure Cindy through its own UI and select the
+connection for the task. PowerContext does not edit Cindy's database or bypass its credential UI.
+
+For Cindy on another machine, use a reachable HTTPS Server URL. Desktop loopback is not the remote Agent's
+loopback; Cindy's SSH Pi route connects to custom MCP URLs directly. Reconfigure credentials when changing Servers.
+
+## Scope and behavior
+
+Inspect the actual tool catalog before calling a tool. Cindy may namespace the Server's operation names.
+Use `list_scopes` and `get_scope` to inspect an existing Scope, or `create_scope` only when the user requests one.
+Before a scoped operation, call `resolve_scope_binding` with the selected Server-issued `explicit_scope_id`
+and `allow_default: false`. Reuse the returned `scope_id` for subsequent calls. An absent binding stops the memory
+operation; it does not authorize inventing a Scope, changing a binding, or silently using the Server default.
+
+Native custom MCP configuration does not supply a trusted Cindy session ID or working directory to PowerContext.
+This integration therefore uses explicit Scope selection. It does not create session/workspace bindings from
+Agent-authored paths. DSH's automatic workspace binding depends on its own trusted host callback and is not assumed
+to exist in Cindy. An operator can manage existing durable bindings through the shared Server operations.
+
+Use the same intent routing as the
+[shared project-context Skill](../agent-plugin/powercontext/skills/powercontext-project-context/SKILL.md):
+
+- `search_memory` for requested recall; empty results are valid.
+- `remember_memory` for an explicit durable save, then verify the result.
+- `capture_content_source` for explicitly selected original material, retaining its `source_id` across retries.
+- The shared Handoff and candidate-review tools for explicitly requested transfer or review.
+
+Current instructions outrank retrieved history. Writes retain Cindy and Server authorization checks. An uncertain
+write requires inspecting Server state before retrying. Failure stops the requested PowerContext operation while
+ordinary work can continue from current context. Do not store credentials or captured recall as original evidence.
+
+This connection provides explicit tools. It has no prompt hooks, automatic Source capture, automatic PreparedContext
+injection, `/pc` command, or separate plugin `status` tool. Use the CLI for readiness and the discovered MCP tools for
+business operations. Server `prepare_context` is an HTTP hook API and is not exposed in the current MCP catalog.
+No equivalent is invented by combining searches.
+
+## Validate locally
+
+Use a disposable checkout of the pinned Cindy source and this repository's development environment:
 
 ```bash
-uv run powercontext server run
-```
-
-在 Cindy 中依次调用 `status`、`list_scopes`、`bind_scope`、`remember_memory` 和 `search_memory`。
-没有合适的 Scope 时先用 `create_scope` 创建。完整调用示例见 [插件手册](plugins/powercontext/MANUAL.md)。
-
-## 验证
-
-从仓库根目录执行：
-
-```bash
-node --test integrations/cindy/tests/*.test.cjs
+git clone --depth 1 --branch v0.1.104 https://github.com/makecindy/cindy.git /tmp/cindy-mcp-validation
 uv sync --locked
-node integrations/cindy/scripts/smoke.mjs
+POWERCONTEXT_CINDY_SOURCE=/tmp/cindy-mcp-validation \
+  uv run pytest tests/e2e/test_cindy_mcp_chain.py -q
+uv run pytest tests/e2e/test_mcp_transport.py tests/e2e/test_mcp_full_profile.py -q
+rm -rf /tmp/cindy-mcp-validation
 ```
 
-第一条检查客户端行为及模拟的 Cindy 消息桥。冒烟脚本创建临时目录、全新 SQLite 数据库和随机端口的
-Bearer 鉴权 Server，将真实 `main.js` 经模拟 Host 桥接至独立 Node worker 进程，再访问真实 HTTP API。
-它验证鉴权、Scope 创建/绑定/隔离、Memory 保存/全文检索、PreparedContext、Source 幂等采集与冲突，
-结束时关闭自己启动的进程并清理临时数据库，不使用已有 PowerContext 数据。
+The opt-in test runs Cindy's unmodified `CustomMcpProvider` with Node 22.18+ and uses its Claude Code, Codex,
+and Pi configuration projections to connect the standard MCP SDK to a real loopback TCP Server with a fresh SQLite
+database. It checks authentication, tool discovery, explicit Scope resolution, scope isolation, Memory readback
+across connections, and idempotent Source capture. The Server and temporary database are cleaned up.
 
-已有 Cindy 官方插件仓 checkout 时，可额外检查 Manifest：
-
-```bash
-node /path/to/cindy-official-plugins/scripts/validate-plugin-manifest.mjs \
-  integrations/cindy/plugins/powercontext
-```
-
-此命令只检查清单形状，不证明桌面端安装成功。实机还需验证：导入产物、插件工具发现、设置保存、
-保险库凭证注入、通知去重，以及分别在 Cindy 的 Claude Code、Codex 和 Pi 中执行手册示例。
-
-## 行为边界
-
-- 提供显式工具，没有自动捕获、消息改写或自动回合注入。
-- Scope 默认为会话绑定优先、目录绑定其次；设置页显式 Scope 覆盖两者。没有绑定时失败，不使用全局默认 Scope。
-- URL 与凭证绑定；只允许 HTTPS 或环回 HTTP，非环回 HTTP 需要地址对应的显式同意；不跟随重定向。
-- 凭证只进入对应的 Node RPC 请求，不进入普通 KV、Agent 参数、结果或日志。切换匿名模式不会自动删除保险库凭证。
-- 单次工具操作的 HTTP 总期限为 10 秒，响应上限为 1 MiB。PreparedContext 另按调用方字节预算完整校验。
-- 采集和保存均为用户意图驱动；未增加自动重试或额外的插件确认弹窗。调用仍受 Cindy 和 Server 各自的授权控制。
-- 设置页和手册使用英文；Manifest 发现信息和工具说明提供英文、简体中文。
-- 此调试集成尚未加入 PowerContext `setup`、安装目录或已验证能力清单，也不包含 Handoff、Dream 或 Candidate 审核工具。
-
-接口依据：[Cindy 0.1.76 作者手册](https://github.com/makecindy/cindy/blob/v0.1.76/apps/desktop/src/main/cindy-brain/forge.ts)、
-[官方插件编写指南](https://github.com/makecindy/cindy-official-plugins/blob/5a7d99e7b2383cabb4ebf3ddbbe5aef490ff8001/docs/plugin-authoring.zh-CN.md)。
+This is provider-source and real-MCP acceptance. It does not launch Cindy Desktop, operate its settings or token
+vault, or run a model in its harnesses. Complete those checks on a desktop before adding Cindy to the qualified
+host catalog. Host implementation references:
+[configuration UI](https://github.com/makecindy/cindy/blob/v0.1.104/apps/desktop/src/renderer/components/settings/McpServerDialog.tsx),
+[provider](https://github.com/makecindy/cindy/blob/v0.1.104/apps/desktop/src/main/mcp-integrations/custom-mcp-provider.ts),
+[Pi routing](https://github.com/makecindy/cindy/blob/v0.1.104/apps/desktop/src/main/mcp-integrations/piEnvironment.ts).
