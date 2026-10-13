@@ -80,7 +80,6 @@ describe('PowerContextPlugin', () => {
     try {
       const hooks = await PowerContextPlugin(pluginInput())
       expect(hooks.tool?.pc_remember).toBeDefined()
-      expect(hooks.tool?.pc_capture_working_note).toBeDefined()
       expect(await readFile(path, 'utf8')).toBe('expected-nonce')
     } finally {
       await rm(path, { force: true })
@@ -235,11 +234,10 @@ describe('PowerContextPlugin', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
       const body = init.body ? JSON.parse(String(init.body)) : undefined
       calls.push({ url, body })
-      return bindingResponse(url, body) ?? Response.json({ status: 'accepted', source: { name: 'content', source_id: 'note-1' }, position: 1 }, { status: 202 })
+      return bindingResponse(url, body) ?? Response.json({ status: 'accepted' }, { status: 202 })
     }))
     const hooks = await PowerContextPlugin(pluginInput())
     const ask = vi.fn(async () => undefined)
-
     const result = await hooks.tool?.pc_capture_working_note?.execute(
       {
         source_id: 'note-1',
@@ -249,20 +247,12 @@ describe('PowerContextPlugin', () => {
         expires_at: '2030-01-02T00:00:00Z',
       },
       {
-        sessionID: 'session-1',
-        messageID: 'msg-1',
-        agent: 'build',
-        directory: '/tmp/project',
-        worktree: '/tmp/project',
-        abort: new AbortController().signal,
-        metadata: vi.fn(),
-        ask,
+        sessionID: 'session-1', messageID: 'msg-1', agent: 'build',
+        directory: '/tmp/project', worktree: '/tmp/project',
+        abort: new AbortController().signal, metadata: vi.fn(), ask,
       },
     )
-
-    expect(ask).toHaveBeenCalledWith(expect.objectContaining({
-      permission: 'powercontext', patterns: ['capture_working_note'],
-    }))
+    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ permission: 'powercontext' }))
     expect(calls.find((call) => call.url.endsWith('/v1/sources/working-notes'))?.body).toEqual({
       source_id: 'note-1',
       content: 'Parser validation is still in progress.',
@@ -272,6 +262,56 @@ describe('PowerContextPlugin', () => {
       scope_id: 'project:test',
     })
     expect(JSON.parse(String(result))).toMatchObject({ ok: true, status: 202 })
+  })
+
+  it('forwards advisory rollover reasons through both Handoff draft tools', async () => {
+    process.env.POWERCONTEXT_OPENCODE_SCOPE_ID = 'project:test'
+    const calls: Array<{ url: string; body: any }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body))
+      calls.push({ url, body })
+      return bindingResponse(url, body) ?? Response.json({ ok: true })
+    }))
+    const hooks = await PowerContextPlugin(pluginInput())
+    const boundarySource = { name: 'content', source_id: 'turn-1' }
+    const reasons = ['host_context_budget', 'context_quality']
+    const context = {
+      sessionID: 'session-1',
+      messageID: 'msg-1',
+      agent: 'build',
+      directory: '/tmp/project',
+      worktree: '/tmp/project',
+      abort: new AbortController().signal,
+      metadata: vi.fn(),
+      ask: vi.fn(async () => undefined),
+    }
+
+    await hooks.tool?.pc_handoff_activate?.execute({
+      boundary_source: boundarySource,
+      objective: 'Continue in a fresh session.',
+      rollover_reasons: reasons,
+    }, context)
+    await hooks.tool?.pc_handoff_prepare?.execute({
+      objective: 'Continue in a fresh session.',
+      evidence: [{ kind: 'source', source_ref: boundarySource }],
+      rollover_reasons: reasons,
+    }, context)
+
+    expect(calls.filter((call) => call.url.includes('/v1/handoff/'))).toEqual([
+      { url: 'http://127.0.0.1:8000/v1/handoff/activate', body: {
+        boundary_source: boundarySource,
+        objective: 'Continue in a fresh session.',
+        evidence: [],
+        rollover_reasons: reasons,
+        scope_id: 'project:test',
+      } },
+      { url: 'http://127.0.0.1:8000/v1/handoff/prepare', body: {
+        objective: 'Continue in a fresh session.',
+        evidence: [{ kind: 'source', source_ref: boundarySource }],
+        rollover_reasons: reasons,
+        scope_id: 'project:test',
+      } },
+    ])
   })
 
   it('does not send secret-shaped prompts', async () => {

@@ -1595,12 +1595,13 @@ class _RelationalTriggers:
                         connection,
                         self._services.scope_id,
                         (request.boundary_source,),
+                        allow_working_notes=True,
                     )
                 except RepositoryNotFoundError:
                     raise HandoffEvidenceUnavailableError(
                         HandoffSourceCitation(source_ref=request.boundary_source)
                     ) from None
-                require_source_eligible(request.boundary_source, source.value)
+                require_source_eligible(request.boundary_source, source.value, allow_working_notes=True)
                 state_row = await self._services.repositories.cursors.load(
                     connection,
                     self._services.scope_id,

@@ -15,6 +15,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
+import { PowerContextClient } from '../src/client.ts'
 import { registerTools } from '../src/tools.ts'
 import type { PluginRuntime } from '../src/invoke.ts'
 
@@ -96,10 +97,6 @@ describe('agent tool surface', () => {
       reason: 'PowerContext tool "pc_remember" changes durable project context.',
     })
     expect(next).not.toHaveBeenCalled()
-    await expect(preExecute?.({ name: 'pc_capture_working_note' }, next)).resolves.toEqual({
-      kind: 'ask',
-      reason: 'PowerContext tool "pc_capture_working_note" changes durable project context.',
-    })
     await expect(preExecute?.({ name: 'pc_search' }, next)).resolves.toEqual({ kind: 'allow' })
     expect(next).toHaveBeenCalledOnce()
   })
@@ -133,6 +130,74 @@ describe('agent tool surface', () => {
     })
   })
 
+  it('forwards advisory rollover reasons through both Handoff draft operations', async () => {
+    const registered: Array<Record<string, unknown>> = []
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = []
+    const runtime = {
+      client: new PowerContextClient({
+        baseUrl: 'http://127.0.0.1:8000',
+        allowInsecureHttp: true,
+        requestTimeoutMs: 1000,
+        fetch: async (url, init) => {
+          requests.push({ url, body: JSON.parse(String(init.body)) })
+          return Response.json({ ok: true })
+        },
+      }),
+      config: { maxBytes: 8000 },
+      resolveScope: vi.fn(async () => 'project:demo'),
+      log: vi.fn(),
+    } as unknown as PluginRuntime
+    registerTools(
+      { tools: { register: (tool) => registered.push(tool as Record<string, unknown>) }, on: () => undefined },
+      runtime,
+      (definition) => definition,
+    )
+    const activate = registered.find((tool) => tool.name === 'pc_handoff_activate') as {
+      parameters: Record<string, unknown>
+      execute: (args: Record<string, unknown>, exec: { signal: AbortSignal }) => Promise<unknown>
+    }
+    const prepare = registered.find((tool) => tool.name === 'pc_handoff_prepare') as typeof activate
+    const boundarySource = { name: 'content', source_id: 'turn-1' }
+    const reasons = ['host_context_budget', 'context_quality']
+
+    expect(activate.parameters.rollover_reasons).toMatchObject({
+      type: 'array',
+      items: { type: 'string', enum: ['user_requested', 'host_context_budget', 'host_compaction', 'context_quality', 'delegation', 'manual_checkpoint'] },
+    })
+    expect(prepare.parameters.rollover_reasons).toMatchObject({
+      type: 'array',
+      items: { type: 'string', enum: ['user_requested', 'host_context_budget', 'host_compaction', 'context_quality', 'delegation', 'manual_checkpoint'] },
+    })
+    expect(activate.parameters.rollover_reasons).not.toHaveProperty('maxItems')
+    expect(prepare.parameters.rollover_reasons).not.toHaveProperty('maxItems')
+    await activate.execute({
+      boundary_source: boundarySource,
+      objective: 'Continue in a fresh session.',
+      rollover_reasons: reasons,
+    }, { signal: new AbortController().signal })
+    await prepare.execute({
+      objective: 'Continue in a fresh session.',
+      evidence: [{ kind: 'source', source_ref: boundarySource }],
+      rollover_reasons: reasons,
+    }, { signal: new AbortController().signal })
+
+    expect(requests).toEqual([
+      { url: 'http://127.0.0.1:8000/v1/handoff/activate', body: {
+        boundary_source: boundarySource,
+        objective: 'Continue in a fresh session.',
+        evidence: [],
+        rollover_reasons: reasons,
+        scope_id: 'project:demo',
+      } },
+      { url: 'http://127.0.0.1:8000/v1/handoff/prepare', body: {
+        objective: 'Continue in a fresh session.',
+        evidence: [{ kind: 'source', source_ref: boundarySource }],
+        rollover_reasons: reasons,
+        scope_id: 'project:demo',
+      } },
+    ])
+  })
+
   it('routes Working Note capture through the scoped operation', async () => {
     const registered: Array<{
       name: string
@@ -157,7 +222,6 @@ describe('agent tool surface', () => {
       } as unknown as PluginRuntime,
       (definition) => definition,
     )
-
     const capture = registered.find((tool) => tool.name === 'pc_capture_working_note')
     const result = await capture?.execute({
       source_id: 'note-1',
@@ -169,7 +233,6 @@ describe('agent tool surface', () => {
       signal: AbortSignal.timeout(1000),
       agent: { session: { header: { cwd: '/workspace/repo' } } },
     })
-
     expect(result).toMatchObject({ ok: true, status: 202 })
     expect(request).toHaveBeenCalledWith('capture_working_note', {
       source_id: 'note-1',

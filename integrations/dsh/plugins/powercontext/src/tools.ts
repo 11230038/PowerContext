@@ -249,7 +249,7 @@ function contextTools(runtime: PluginRuntime, defineTool: DefineTool): unknown[]
         content: { type: 'string', required: true, description: 'Temporary work state to persist.' },
         session_id: { type: 'string', required: true, description: 'Host/session correlation id.' },
         note_kind: { type: 'string', required: true, enum: [...WORKING_NOTE_KINDS] },
-        expires_at: { type: 'string', format: 'date-time', description: 'Optional future logical expiry.' },
+        expires_at: { type: 'string', description: 'Optional RFC 3339 future logical expiry.' },
       },
       execute: (args, exec) => run(runtime, exec, 'capture_working_note', {
         source_id: args.source_id,
@@ -276,6 +276,13 @@ const HANDOFF_EVIDENCE = {
   },
   description: 'For captured evidence use {kind: "source", source_ref: data.source}, copying the exact result. No raw facts.',
 }
+const HANDOFF_ROLLOVER_REASONS = {
+  type: 'array',
+  items: {
+    type: 'string',
+    enum: ['user_requested', 'host_context_budget', 'host_compaction', 'context_quality', 'delegation', 'manual_checkpoint'],
+  },
+}
 
 function handoffTools(runtime: PluginRuntime, defineTool: DefineTool): unknown[] {
   return [
@@ -293,9 +300,11 @@ function handoffTools(runtime: PluginRuntime, defineTool: DefineTool): unknown[]
         boundary_source: { ...SOURCE_REFERENCE, required: true },
         objective: { type: 'string', required: true },
         evidence: { type: 'array', items: HANDOFF_EVIDENCE },
+        rollover_reasons: HANDOFF_ROLLOVER_REASONS,
       },
       execute: (args, exec) => run(runtime, exec, 'activate_handoff', {
         boundary_source: args.boundary_source, objective: args.objective, evidence: args.evidence ?? [],
+        ...(args.rollover_reasons === undefined ? {} : { rollover_reasons: args.rollover_reasons }),
       }),
     }),
     pcTool(defineTool, {
@@ -310,8 +319,13 @@ function handoffTools(runtime: PluginRuntime, defineTool: DefineTool): unknown[]
       parameters: {
         objective: { type: 'string', required: true },
         evidence: { type: 'array', required: true, items: HANDOFF_EVIDENCE },
+        rollover_reasons: HANDOFF_ROLLOVER_REASONS,
       },
-      execute: (args, exec) => run(runtime, exec, 'prepare_handoff', { objective: args.objective, evidence: args.evidence }),
+      execute: (args, exec) => run(runtime, exec, 'prepare_handoff', {
+        objective: args.objective,
+        evidence: args.evidence,
+        ...(args.rollover_reasons === undefined ? {} : { rollover_reasons: args.rollover_reasons }),
+      }),
     }),
     pcTool(defineTool, {
       name: 'pc_handoff_finalize',
