@@ -8,7 +8,7 @@ description: Connect Cindy 0.1.104 to the shared PowerContext MCP tools.
 `experimental`
 
 Cindy connects to the running PowerContext Server through its native custom MCP settings. This uses the same
-Server tool catalog and authorization as other MCP integrations. No Ghost plugin or separate REST worker is required.
+Server tool catalog and authorization as other MCP integrations. An optional Ghost adapter provides automatic hooks.
 The compatibility target is [Cindy 0.1.104](https://github.com/makecindy/cindy/releases/tag/v0.1.104).
 
 ## Connect the Server
@@ -49,13 +49,43 @@ Memory saves require user intent and result verification. Source capture accepts
 same `source_id` for retries; it does not prove Memory extraction has completed. Handoff and candidate-review
 operations use the same Server tools and approval boundaries as other MCP hosts.
 
-The native connection does not provide a trusted Cindy session identity or workspace path. Scope selection is
-explicit. DSH's workspace binding and automatic recall depend on its own host callbacks; those are not assumed in
-Cindy. There are no prompt hooks, automatic capture, PreparedContext injection, or `/pc` commands in this connection.
-The current MCP catalog does not expose `prepare_context`; use the CLI for readiness checks.
+The native MCP connection does not provide a trusted Cindy session identity or workspace path. Explicit tool calls
+use the selected Scope. The automatic adapter receives its trusted session ID from a Host event and resolves the
+Server's Cindy session binding. A workspace binding is not inferred from Agent-authored text.
 
 Retrieved history does not override current instructions. On failure, report the failed operation and continue
 ordinary work from available context. Inspect Server state before retrying an uncertain write.
+
+## Enable automatic recall and prompt capture
+
+Import `powercontext-cindy-hooks-0.1.0.cindy`, enable the plugin, and open its settings. Use the same Server URL
+and Scope as the native MCP connection, configure the hook credential if needed, and select **Enable automatic
+memory**. Users need no DSH installation, SDK, npm packages, or separate Node installation: the archive contains a
+standalone worker run by Cindy. Development build commands are in the integration README.
+
+Select an explicit Scope in settings, or leave it empty and have an operator register the Host-issued session ID
+through `set_scope_binding` with `integration: "cindy"` and `kind: "session"`. The plugin `status` tool reports the
+latest observed session ID and hook outcome. Missing bindings allow the original message without memory operations;
+they do not trigger Scope creation or default-Scope fallback.
+
+The `will-user-message` hook recalls bounded PreparedContext and independently captures the original prompt as a
+Source before dispatch. Capture is separately selectable and does not prove extraction or Memory production.
+The captured text is the input to this adapter before its rewrite; an earlier Ghost may already have rewritten it.
+Cindy does not supply a separate raw-draft field.
+Explicit writes, Handoffs, and review remain native MCP tools. The hook uses the shared HTTP protocol implementation
+for `prepare_context`, which is not currently an MCP tool; no business-tool catalog is duplicated.
+
+A ready snapshot is appended as untrusted historical evidence. Cindy's rewrite updates the message displayed,
+stored, and sent to the Agent. It is not hidden system context. Failed or empty recall leaves the original message
+available; late replies cannot rewrite it. Context obeys its UTF-8 budget and the complete message must fit Cindy's
+16,000-character rewrite limit. The adapter sends an allow verdict after a local timeout; Cindy independently
+enforces its three-second deadline for the complete hook dispatch.
+
+The same delivery reuses its Source ID; a newly submitted message has a new Host hook ID. Edited messages carrying
+the adapter's historical markers are allowed without recapture or reinjection. Flagged credentials are skipped.
+Uncertain writes are reported without automatic retry. Local user-message dispatch and steering are covered;
+remote, worker, scheduled, goal-continuation, and pre-compaction flows are not qualified. There is no forced flush
+or `/pc` command. Use the CLI for Server readiness checks.
 
 ## Validation boundary
 
@@ -63,6 +93,10 @@ The [integration README](https://github.com/oceanbase/powercontext/blob/master/i
 provides reproducible provider-source acceptance commands. They exercise Cindy 0.1.104's unmodified native provider
 projections for Claude Code, Codex, and Pi against a real local TCP Server with fresh SQLite storage.
 
-This verifies provider configuration, authentication, tool discovery, Scope isolation, Memory readback, and Source
-idempotency. It does not establish desktop installation, credential UI behavior, live harness routing, or model
+Hook acceptance additionally extracts the archive into a directory without DSH, restricts the worker's filesystem
+access to that directory, and exercises the official subscription gateway source against the plugin and a real TCP
+Server. Credential/message bridges and unused Host storage dependencies are simulated. It verifies rewrite
+verdicts, original-prompt persistence, session isolation, and missing-binding behavior.
+
+These checks do not establish desktop installation, credential UI behavior, live harness routing, or model
 execution. Cindy remains outside the qualified host catalog until those desktop checks are completed.

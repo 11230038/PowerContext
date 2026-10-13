@@ -57,7 +57,7 @@ process.stdout.write(JSON.stringify({ config, env: provider.getExtraEnv(context)
 """
 
 
-@pytest.fixture
+@pytest.fixture(name="cindy_provider")
 def cindy_provider() -> Path:
     source = os.environ.get("POWERCONTEXT_CINDY_SOURCE")
     if not source:
@@ -75,7 +75,7 @@ def cindy_provider() -> Path:
     return provider
 
 
-@pytest.fixture
+@pytest.fixture(name="cindy_server")
 def cindy_server(tmp_path: Path, cindy_provider: Path) -> Iterator[tuple[str, str]]:
     token = uuid4().hex
     storage = tmp_path / "server"
