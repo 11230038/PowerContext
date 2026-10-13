@@ -64,6 +64,7 @@ class RelationalHandoffBackend:
                 self._scope_id,
                 artifact_id,
                 draft,
+                allow_working_notes=True,
             )
         return cast(Handoff, artifact)
 
@@ -74,6 +75,7 @@ class RelationalHandoffBackend:
                 self._scope_id,
                 base,
                 draft,
+                allow_working_notes=True,
             )
         return cast(Handoff, artifact)
 

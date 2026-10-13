@@ -63,12 +63,17 @@ def require_source_eligible(
     /,
     *,
     target: ArtifactLineageTarget | None = None,
+    allow_working_notes: bool = False,
 ) -> None:
     """Allow ordinary evidence, or a lineage-only Source at its exact bound target."""
 
     if not isinstance(source, ContentSource):
         return
     if source.is_working_note:
+        if allow_working_notes:
+            if source.is_working_note_active():
+                return
+            raise WorkingNoteUnavailableError(source_ref)
         raise SourceNotEligibleError(source_ref)
     if source.internal is None:
         return

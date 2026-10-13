@@ -21,12 +21,7 @@ from collections.abc import Sequence
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.builtin.persistence.sources import SourceRepository, StoredSource
-from powercontext.builtin.source_eligibility import (
-    WorkingNoteUnavailableError,
-    is_generation_eligible,
-    require_source_eligible,
-)
-from powercontext.builtin.sources import ContentSource
+from powercontext.builtin.source_eligibility import is_generation_eligible, require_source_eligible
 from powercontext.sources import SourceRef
 
 
@@ -49,11 +44,7 @@ class GenerationSourceAccess:
 
         rows = await self._repository.get_many(connection, scope_id, refs)
         for row in rows:
-            if allow_working_notes and isinstance(row.value, ContentSource) and row.value.is_working_note:
-                if row.value.is_working_note_active():
-                    continue
-                raise WorkingNoteUnavailableError(row.ref)
-            require_source_eligible(row.ref, row.value)
+            require_source_eligible(row.ref, row.value, allow_working_notes=allow_working_notes)
         return rows
 
     async def list_window_for_generation(

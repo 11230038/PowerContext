@@ -103,6 +103,14 @@ def test_handoff_can_use_an_explicit_working_note_citation() -> None:
             assert draft.next_action is not None
             assert draft.next_action.citations == (citation,)
 
+            handoffs = runtime.handoff.for_scope(scope.scope_id)
+            prepared = await handoffs.finalize(draft)
+            committed = await handoffs.commit(prepared)
+
+            assert committed.content == prepared.content
+            assert committed.lineage.sources == (note.source_ref,)
+            assert await handoffs.latest() == committed
+
     asyncio.run(scenario())
 
 
