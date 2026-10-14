@@ -4,11 +4,15 @@
       "schemas/pre_dream.json"
     ],
     "p0002": [],
-    "p0003": []
+    "p0003": [],
+    "p0004": [
+      "schemas/atomic_memory_evidence_v1.json"
+    ]
   },
   "sqlite_baselines": {
     "e1cae089a8a565291a7a1f782cea1f6c6e1a6cdd9eab75ef0c4ca61dfda453cb": "p0001",
-    "fcee685ed307ee6d02fe5e950ed4e80be75f38d19de902ccacf443f21ee8c73d": "p0003"
+    "fcee685ed307ee6d02fe5e950ed4e80be75f38d19de902ccacf443f21ee8c73d": "p0003",
+    "93c1c20ae9bba2114158658e7852324af2bbaef12d28fa298cdbe3cae4847a84": "p0004"
   },
   "sqlite_fingerprints": {
     "p0001": [
@@ -20,13 +24,20 @@
     "p0003": [
       "9958fa0413ed3c16442df27dc48057d438e2cf3f7e4312c5a914cccd9d3acaab",
       "fcee685ed307ee6d02fe5e950ed4e80be75f38d19de902ccacf443f21ee8c73d"
+    ],
+    "p0004": [
+      "4f21a735d9ff2e53b70599f658d762ee30a14604e4fe96c97826215433dcd509",
+      "93c1c20ae9bba2114158658e7852324af2bbaef12d28fa298cdbe3cae4847a84"
     ]
   },
   "affected_objects": [
     "pc_artifacts",
     "pc_artifact_heads",
     "pc_artifact_candidate_versions",
-    "pc_artifact_tags"
+    "pc_artifact_tags",
+    "pc_atomic_memory_evidence_schema",
+    "pc_atomic_memory_evidence_history",
+    "pc_source_evidence_bindings"
   ],
   "retained_objects": [
     "pc_retained_p0002_artifact_tags"
