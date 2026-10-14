@@ -43,6 +43,7 @@ class AtomicMemoryEvidenceSchemaError(PersistenceError):
 
     def __init__(self, detail: str) -> None:
         message = {
+            "missing": "Atomic Memory evidence schema is incomplete; apply the registered p0004 migration",
             "version": "Atomic Memory evidence schema version is unsupported",
             "shape": "Atomic Memory evidence table has an incompatible shape",
         }[detail]
@@ -63,16 +64,41 @@ async def apply_atomic_memory_evidence_migration(connection: AsyncConnection) ->
     dialect = "sqlite" if connection.dialect.name == "sqlite" else "mysql"
     resources = Path(__file__).parent / "resources/schemas/atomic_memory_evidence_v1.json"
     statements = json.loads(resources.read_text())[dialect]
+    tables = set(await connection.run_sync(lambda sync: inspect(sync).get_table_names()))
     for table, statement in zip(ATOMIC_MEMORY_EVIDENCE_TABLES, statements[:-1], strict=True):
-        exists = await connection.run_sync(lambda sync, name=table.name: inspect(sync).has_table(name))
-        if not exists:
-            await connection.exec_driver_sql(statement)
-        await _require_shape(connection, table.name, statement, dialect)
+        if table.name in tables:
+            await _require_shape(connection, table.name, statement, dialect)
     marker = ATOMIC_MEMORY_EVIDENCE_SCHEMA_TABLE
-    versions = tuple((await connection.execute(select(marker.c.schema_version))).scalars())
+    versions = (
+        tuple((await connection.execute(select(marker.c.schema_version))).scalars()) if marker.name in tables else ()
+    )
+    if versions and versions != (ATOMIC_MEMORY_EVIDENCE_SCHEMA_VERSION,):
+        raise AtomicMemoryEvidenceSchemaError("version")
+    if versions and any(table.name not in tables for table in ATOMIC_MEMORY_EVIDENCE_TABLES):
+        # A ready marker cannot authorize recreating missing retained history.
+        raise AtomicMemoryEvidenceSchemaError("missing")
+    for table, statement in zip(ATOMIC_MEMORY_EVIDENCE_TABLES, statements[:-1], strict=True):
+        if table.name not in tables:
+            await connection.exec_driver_sql(statement)
+            await _require_shape(connection, table.name, statement, dialect)
     if not versions:
         await connection.exec_driver_sql(statements[-1])
-    elif versions != (ATOMIC_MEMORY_EVIDENCE_SCHEMA_VERSION,):
+
+
+async def require_atomic_memory_evidence_schema(connection: AsyncConnection, tables: set[str] | None = None) -> None:
+    """Check retained evidence readiness without DDL or historical payload reads."""
+
+    if tables is None:
+        tables = set(await connection.run_sync(lambda sync: inspect(sync).get_table_names()))
+    if any(table.name not in tables for table in ATOMIC_MEMORY_EVIDENCE_TABLES):
+        raise AtomicMemoryEvidenceSchemaError("missing")
+    dialect = "sqlite" if connection.dialect.name == "sqlite" else "mysql"
+    resources = Path(__file__).parent / "resources/schemas/atomic_memory_evidence_v1.json"
+    statements = json.loads(resources.read_text())[dialect]
+    for table, statement in zip(ATOMIC_MEMORY_EVIDENCE_TABLES, statements[:-1], strict=True):
+        await _require_shape(connection, table.name, statement, dialect)
+    versions = tuple((await connection.execute(select(ATOMIC_MEMORY_EVIDENCE_SCHEMA_TABLE.c.schema_version))).scalars())
+    if versions != (ATOMIC_MEMORY_EVIDENCE_SCHEMA_VERSION,):
         raise AtomicMemoryEvidenceSchemaError("version")
 
 
@@ -88,11 +114,15 @@ async def _require_shape(connection: AsyncConnection, name: str, statement: str,
         return
     # Reuse the frozen MySQL inventory parser so physical formatting accepted
     # by the shared backend does not become a second schema convention.
+    from powercontext.builtin.persistence.migrations.models import MigrationError
     from powercontext.builtin.persistence.migrations.mysql_schema import _matches, _parse_table
 
     actual = (await connection.exec_driver_sql(f"SHOW CREATE TABLE `{name}`")).one()[1]
-    actual_name, actual_table = _parse_table(actual)
-    expected_name, expected_table = _parse_table(statement)
+    try:
+        actual_name, actual_table = _parse_table(actual)
+        expected_name, expected_table = _parse_table(statement)
+    except MigrationError as error:
+        raise AtomicMemoryEvidenceSchemaError("shape") from error
     if not _matches(
         {"tables": {actual_name: actual_table}, "views": [], "triggers": []},
         {"tables": {expected_name: expected_table}, "views": [], "triggers": []},
