@@ -58,7 +58,10 @@ from powercontext.builtin.inference import (
 )
 from powercontext.builtin.persistence.artifacts import ArtifactRepository
 from powercontext.builtin.persistence.atomic_memory import AtomicMemoryStateRepository, atomic_memory_state_expression
-from powercontext.builtin.persistence.atomic_memory_evidence import AtomicMemoryEvidenceAnnotation
+from powercontext.builtin.persistence.atomic_memory_evidence import (
+    AtomicMemoryEvidenceAnnotation,
+    AtomicMemoryEvidenceRepository,
+)
 from powercontext.builtin.persistence.atomic_memory_index import (
     ATOMIC_MEMORY_RRF_CONSTANT,
     AtomicMemoryIndex,
@@ -80,7 +83,6 @@ from powercontext.builtin.persistence.tags import tag_predicate
 from powercontext.builtin.records import BaseOperationNotSupportedError, InvalidBaseAccessRequestError
 from powercontext.builtin.runtime.artifact_merge import ArtifactMergeAccess, merge_artifact_tags
 from powercontext.builtin.tags import TagFilter
-from powercontext.sources.evidence import MemoryEvidenceDeclaration
 
 
 class AtomicMemoryAccess(ArtifactMergeAccess):
@@ -237,45 +239,13 @@ class ScopedAtomicMemory:
             application.database.transaction(consistent_snapshot=True) as connection,
         ):
             record = await application.service.get(connection, self.scope_id, artifact_id, context, revision=revision)
-            sources = application.artifacts.source_repository
-            materials = (
-                ()
-                if sources is None
-                else await sources.evidence(connection, self.scope_id, record.artifact.lineage.sources)
+            return await AtomicMemoryEvidenceRepository().verify(
+                connection,
+                self.scope_id,
+                record.ref,
+                record.artifact.lineage.sources,
+                sources=application.artifacts.source_repository,
             )
-            annotation = await application.index.read_evidence(connection, self.scope_id, record.ref)
-            if annotation is not None:
-                by_ref = {(item.source_ref.source_type, item.source_ref.source_id): item for item in materials}
-                for accepted in annotation.sources:
-                    material = by_ref.get((accepted.source_ref.source_type, accepted.source_ref.source_id))
-                    if material is not None and accepted.material_digest != material.material_digest:
-                        raise AtomicMemoryIndexError(
-                            "evidence-material", "Historical evidence does not match the exact Source material"
-                        )
-            if annotation is None or tuple(item.source_ref for item in annotation.sources) != tuple(
-                item.source_ref for item in materials
-            ):
-                return AtomicMemoryEvidenceAnnotation(
-                    scope_id=self.scope_id,
-                    artifact_ref=record.ref,
-                    sources=tuple(
-                        material.model_copy(update={"declaration": MemoryEvidenceDeclaration()})
-                        for material in materials
-                    ),
-                )
-            verified = tuple(
-                accepted
-                if (
-                    accepted.materialization == material.materialization
-                    and accepted.definition_name == material.definition_name
-                    and accepted.definition_version == material.definition_version
-                    and accepted.manifest_fingerprint == material.manifest_fingerprint
-                    and accepted.declaration == material.declaration
-                )
-                else accepted.model_copy(update={"declaration": MemoryEvidenceDeclaration()})
-                for accepted, material in zip(annotation.sources, materials, strict=True)
-            )
-            return annotation.model_copy(update={"sources": verified})
 
     async def list(
         self,

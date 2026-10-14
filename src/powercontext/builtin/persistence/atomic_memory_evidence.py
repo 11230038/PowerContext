@@ -29,8 +29,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.artifacts import ArtifactRef
 from powercontext.builtin.persistence.atomic_memory_evidence_schema import ATOMIC_MEMORY_EVIDENCE_HISTORY_TABLE
-from powercontext.builtin.persistence.sources import _require_identity
+from powercontext.builtin.persistence.sources import SourceRepository, _require_identity
 from powercontext.limits import MAX_SCOPE_ID_LENGTH
+from powercontext.sources import SourceRef
 from powercontext.sources.evidence import MemoryEvidenceDeclaration, SourceEvidence
 
 
@@ -103,6 +104,55 @@ class AtomicMemoryEvidenceRepository:
         artifact_ref = self._reference(scope_id, artifact_ref)
         payload = await self._payload(connection, scope_id, artifact_ref)
         return None if payload is None else self._decode(scope_id, artifact_ref, payload)
+
+    async def verify(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        artifact_ref: ArtifactRef,
+        source_refs: Sequence[SourceRef],
+        *,
+        sources: SourceRepository | None = None,
+    ) -> AtomicMemoryEvidenceAnnotation:
+        """Derive exact facts from retained inputs, never today's declarations.
+
+        Missing or damaged declaration records are neutral. Missing Sources,
+        corrupt authoritative payloads and unequal exact materials remain errors.
+        No accepted snapshot is saved or repaired by this operation.
+        """
+
+        from powercontext.builtin.persistence.atomic_memory_index import AtomicMemoryIndexError
+        from powercontext.builtin.sources import BUILTIN_SOURCE_REGISTRY
+
+        artifact_ref = self._reference(scope_id, artifact_ref)
+        repository = SourceRepository(BUILTIN_SOURCE_REGISTRY) if sources is None else sources
+        materials = await repository.historical_evidence(connection, scope_id, source_refs)
+        annotation = await self.read(connection, scope_id, artifact_ref)
+        if annotation is not None:
+            by_ref = {(item.source_ref.source_type, item.source_ref.source_id): item for item in materials}
+            for accepted in annotation.sources:
+                material = by_ref.get((accepted.source_ref.source_type, accepted.source_ref.source_id))
+                if material is not None and accepted.material_digest != material.material_digest:
+                    raise AtomicMemoryIndexError(
+                        "evidence-material", "Historical evidence does not match the exact Source material"
+                    )
+        if annotation is None or tuple(item.source_ref for item in annotation.sources) != tuple(
+            item.source_ref for item in materials
+        ):
+            return self._neutral(scope_id, artifact_ref, materials)
+        verified = tuple(
+            accepted
+            if (
+                accepted.materialization == material.materialization
+                and accepted.definition_name == material.definition_name
+                and accepted.definition_version == material.definition_version
+                and accepted.manifest_fingerprint == material.manifest_fingerprint
+                and accepted.declaration == material.declaration
+            )
+            else accepted.model_copy(update={"declaration": MemoryEvidenceDeclaration()})
+            for accepted, material in zip(annotation.sources, materials, strict=True)
+        )
+        return annotation.model_copy(update={"sources": verified})
 
     @staticmethod
     def _reference(scope_id: str, artifact_ref: ArtifactRef) -> ArtifactRef:
