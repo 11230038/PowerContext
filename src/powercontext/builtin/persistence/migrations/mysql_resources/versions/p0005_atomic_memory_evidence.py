@@ -12,19 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Frozen additive evidence revision; never synthesize historical declarations."""
+"""Create the frozen additive evidence layout without backfilling trust."""
 
-import json
-from pathlib import Path
+from alembic import context, op
 
-from alembic import op
-
-revision = "p0004"
-down_revision = "p0003"
+revision = "p0005"
+down_revision = "p0004"
 
 
 def upgrade() -> None:
-    statements = json.loads((Path(__file__).parents[1] / "schemas/atomic_memory_evidence_v1.json").read_text())
-    connection = op.get_bind()
-    for statement in statements["sqlite" if connection.dialect.name == "sqlite" else "mysql"]:
-        connection.exec_driver_sql(statement)
+    context.config.attributes["execute_revision"](revision)
+    op.execute("INSERT INTO pc_atomic_memory_evidence_schema (schema_version) VALUES ('p0005')")

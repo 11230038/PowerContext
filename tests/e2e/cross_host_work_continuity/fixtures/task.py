@@ -12,14 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Create the frozen additive evidence layout without backfilling trust."""
-
-from alembic import context, op
-
-revision = "p0004"
-down_revision = "p0003"
+"""The unfinished task that Pi implements in the disposable workspace."""
 
 
-def upgrade() -> None:
-    context.config.attributes["execute_revision"](revision)
-    op.execute("INSERT INTO pc_atomic_memory_evidence_schema (schema_version) VALUES ('p0004')")
+def increment(value: int) -> int:
+    raise NotImplementedError

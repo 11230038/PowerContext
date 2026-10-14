@@ -25,7 +25,7 @@ from powercontext.limits import (
     MAX_SOURCE_TYPE_LENGTH,
 )
 
-ATOMIC_MEMORY_EVIDENCE_SCHEMA_VERSION = "p0004"
+ATOMIC_MEMORY_EVIDENCE_SCHEMA_VERSION = "p0005"
 ATOMIC_MEMORY_EVIDENCE_SCHEMA_TABLE = Table(
     "pc_atomic_memory_evidence_schema",
     SHARED_METADATA,

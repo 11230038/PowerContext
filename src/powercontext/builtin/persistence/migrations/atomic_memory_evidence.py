@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Apply the frozen additive p0004 revision to runtime-owned evidence tables.
+"""Apply the frozen additive p0005 revision to runtime-owned evidence tables.
 
 The production bundle covers a historical subset of business tables. Runtime
 profiles therefore apply this same frozen additive revision independently of
@@ -43,7 +43,7 @@ class AtomicMemoryEvidenceSchemaError(PersistenceError):
 
     def __init__(self, detail: str) -> None:
         message = {
-            "missing": "Atomic Memory evidence schema is incomplete; apply the registered p0004 migration",
+            "missing": "Atomic Memory evidence schema is incomplete; apply the registered p0005 migration",
             "version": "Atomic Memory evidence schema version is unsupported",
             "shape": "Atomic Memory evidence table has an incompatible shape",
         }[detail]
@@ -51,7 +51,7 @@ class AtomicMemoryEvidenceSchemaError(PersistenceError):
 
 
 async def apply_atomic_memory_evidence_migration(connection: AsyncConnection) -> None:
-    """Add only missing p0004 tables, validate exact shapes, then mark ready.
+    """Add only missing p0005 tables, validate exact shapes, then mark ready.
 
     No reads or writes of Source/Artifact history are needed, and no current
     declaration is used to invent accepted historical inputs.
