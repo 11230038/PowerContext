@@ -25,6 +25,7 @@ from typing import Any
 from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from powercontext.builtin.persistence.atomic_memory_evidence_schema import ATOMIC_MEMORY_EVIDENCE_TABLES
 from powercontext.builtin.persistence.errors import PersistenceError
 from powercontext.builtin.persistence.migrations.atomic_memory_evidence import (
     AtomicMemoryEvidenceSchemaError,
@@ -99,10 +100,11 @@ async def atomic_memory_readiness_issues(
     if tables is None:
         tables = set(await connection.run_sync(lambda value: inspect(value).get_table_names()))
     issues: list[str] = []
-    try:
-        await require_atomic_memory_evidence_schema(connection, tables)
-    except AtomicMemoryEvidenceSchemaError as error:
-        issues.append(str(error))
+    if "pc_artifacts" in tables or any(table.name in tables for table in ATOMIC_MEMORY_EVIDENCE_TABLES):
+        try:
+            await require_atomic_memory_evidence_schema(connection, tables)
+        except AtomicMemoryEvidenceSchemaError as error:
+            issues.append(str(error))
     if (
         collections_removed
         and "pc_artifacts" in tables
