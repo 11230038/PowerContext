@@ -114,7 +114,10 @@ def _tokenizer() -> jieba.Tokenizer:
     return jieba.Tokenizer()
 
 
-_QUOTED_QUERY_TEXT = re.compile(r"""(`[^`]*`|"[^"]*"|“[^”]*”|‘[^’]*’|(?<!\w)'[^']*'(?!\w))""")  # noqa: RUF001
+_QUOTED_QUERY_TEXT = re.compile(
+    r"""(`[^`]*`|"[^"]*"|“[^”]*”|‘(?:[^‘’]|(?<=\w)’(?=\w))*’|"""  # noqa: RUF001
+    r"""(?<!\w)'(?:[^']|(?<=\w)'(?=\w))*'(?!\w))"""
+)
 _EXECUTION_SENTENCE = re.compile(
     r"(?:use only (?:the )?(?:(?:context|evidence|information) (?:already )?"
     r"(?:supplied|provided|available)(?: to you)?|(?:supplied|provided|available) (?:context|evidence|information))"
