@@ -88,9 +88,9 @@ with `artifact_search_not_supported` and field `include_scores`. Other Family-sp
 Chinese text is segmented into words; Latin words and identifiers remain whole. Unquoted queries omit common English
 and Chinese stopwords while retaining negations. Quote a stopword to search for it; quotations do not request phrase matching.
 
-Record formats remain v1. Before upgrading, stop existing Server and Worker processes. Initialization refreshes
-searchable text for existing records without changing their content, history or vectors. This check runs at each startup
-and can take longer as stored data grows.
+Record formats remain v1. Before upgrading, stop existing Server and Worker processes. The first startup after a
+document analyzer upgrade updates searchable text without changing record content, history or vectors.
+This startup can take longer as stored data grows.
 
 ## Experience and Skill text search
 

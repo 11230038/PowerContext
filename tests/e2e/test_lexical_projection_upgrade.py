@@ -24,6 +24,7 @@ from powercontext.builtin.inference import EmbeddingResult
 from powercontext.builtin.persistence.atomic_memory_index_schema import atomic_memory_current_table
 from powercontext.builtin.persistence.tables import (
     ARTIFACT_HEADS_TABLE,
+    LEXICAL_PROJECTION_VERSIONS_TABLE,
     TOPIC_MEMORY_ACTIVE_CHUNKS_TABLE,
     TOPIC_MEMORY_ACTIVE_TOPICS_TABLE,
 )
@@ -78,6 +79,7 @@ def test_upgrade_preserves_search_exact_records_and_vectors(migration_backend):
 
         async with migration_profile(migration_backend.config) as profile, profile.database.transaction() as connection:
             # Canonical revisions, states and vectors survive an analyzer change.
+            await connection.execute(LEXICAL_PROJECTION_VERSIONS_TABLE.delete())
             for table in (
                 atomic_memory_current_table(),
                 TOPIC_MEMORY_ACTIVE_TOPICS_TABLE,
@@ -111,5 +113,15 @@ def test_upgrade_preserves_search_exact_records_and_vectors(migration_backend):
             assert (await application.search("atomic-memory", {"query": "freshmarker"})).matches[
                 0
             ].artifact_ref.artifact_id == fresh.artifact_id
+            current_vectors = await runtime.atomic_memory.for_scope(scope).search(marker, mode="vector")
+
+        async with open_builtin_runtime(
+            config, embedding_model=embedding, scheduler_path=migration_backend.directory / "scheduler"
+        ) as runtime:
+            for family, original in originals.items():
+                result = await runtime.artifacts.for_scope(scope).search(family, {"query": marker, "mode": "text"})
+                assert [match.artifact_ref.artifact_id for match in result.matches] == [original.artifact_id]
+            assert runtime.atomic_memory is not None
+            assert await runtime.atomic_memory.for_scope(scope).search(marker, mode="vector") == current_vectors
 
     asyncio.run(scenario())

@@ -70,12 +70,9 @@ SELECT h.scope_id, h.family, h.artifact_id, h.revision, h.searchable_text
 FROM pc_artifact_heads AS h
 WHERE h.family IN ('experience', 'skill') AND h.lifecycle_state = 'active'
   AND h.searchable_text IS NOT NULL
-  AND NOT EXISTS (
-      SELECT 1 FROM pc_artifact_fts AS f
-      WHERE f.scope_id = h.scope_id AND f.family = h.family
-        AND f.artifact_id = h.artifact_id AND f.revision = h.revision
-        AND f.searchable_text = h.searchable_text
-  )
+EXCEPT
+SELECT scope_id, family, artifact_id, revision, searchable_text
+FROM pc_artifact_fts
 """
 _PROBE_FTS_SQL = "SELECT rowid FROM pc_artifact_fts WHERE pc_artifact_fts MATCH 'powercontext'"
 _DELETE_FTS_SQL = text(
