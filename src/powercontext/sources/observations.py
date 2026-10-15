@@ -163,7 +163,7 @@ class SourceObservation(Source):
 def manifest_for_definition(definition: SourceDefinition[Any, Any, Any], /) -> SourceDefinitionManifest:
     """Build the immutable declaration transported by a remote worker."""
 
-    source_schema = _json_object(definition.source_class.model_json_schema())
+    source_schema = _json_object(definition.source_class.model_json_schema(mode="serialization"))
     projections = tuple(
         SourceProjectionManifest(
             key=SourceProjectionKey(name=projection.name, version=projection.version),

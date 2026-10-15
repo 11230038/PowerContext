@@ -266,28 +266,7 @@ class SourceRepository:
         value is substituted for historical registration facts.
         """
 
-        stored_sources = await self.get_many(connection, scope_id, refs)
-        # These server-owned records describe a management write, not evidence
-        # supplied for that write. Other lineage-only Sources remain represented.
-        sources = tuple(stored for stored in stored_sources if not _management_write_source(stored.value))
-        if not sources:
-            return ()
-        materials = tuple(
-            SourceEvidence(
-                source_ref=stored.ref,
-                materialization=stored.value.materialization,
-                material_digest=_source_material_digest(stored.value),
-                definition_name=stored.ref.source_type,
-                definition_version=stored.value.definition_version,
-            )
-            for stored in sources
-        )
-        fingerprints = {
-            (stored.ref.source_type, stored.ref.source_id): stored.value.definition_fingerprint
-            for stored in sources
-            if isinstance(stored.value, SourceObservation)
-        }
-        return await self._bound_evidence(connection, scope_id, materials, fingerprints)
+        return await self.historical_evidence(connection, scope_id, refs)
 
     async def historical_evidence(
         self, connection: AsyncConnection, scope_id: str, refs: Sequence[SourceRef], /
@@ -341,7 +320,7 @@ class SourceRepository:
                 SourceEvidence(
                     source_ref=reference,
                     materialization=source.materialization,
-                    material_digest=f"sha256:{sha256(rfc8785.dumps(material)).hexdigest()}",
+                    material_digest=_source_material_digest_material(material),
                     definition_name=ref[0],
                     definition_version=source.definition_version,
                 )
@@ -372,7 +351,11 @@ class SourceRepository:
                     raise InvalidStoredPayloadError("source", reference.source_type, "payload is not JSON") from error
                 return source, material
             source = self._decode_row(row).value
-            return source, source.model_dump(mode="json", by_alias=True)
+            try:
+                material = _JSON_OBJECT.validate_json(payload, strict=True)
+            except ValueError as error:
+                raise InvalidStoredPayloadError("source", reference.source_type, "payload is not JSON") from error
+            return source, material
         material = envelope.value
         model = SourceObservation if envelope.representation == "observation" else Source
         source = load_model(model, rfc8785.dumps(material), kind="source", name=reference.source_type)
@@ -754,6 +737,10 @@ async def _find_evidence_manifest(
         return await SourceDefinitionManifestRepository().find(connection, name, version)
     except (IdentityMismatchError, InvalidStoredColumnError, InvalidStoredPayloadError):
         return None
+
+
+def _source_material_digest_material(material: Mapping[str, JsonValue]) -> str:
+    return f"sha256:{sha256(rfc8785.dumps(material)).hexdigest()}"
 
 
 def _dump_source(
