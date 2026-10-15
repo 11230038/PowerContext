@@ -199,7 +199,7 @@ def project_source_for_transport(
             "remote Source observations must retain their canonical value",
         )
     manifest = manifest_for_definition(definition)
-    payload = _json_object(source.model_dump(mode="json"))
+    payload = _json_object(source.model_dump(mode="json", by_alias=True))
     projections = tuple(
         SourceProjectionValue(key=key, value=registry.project(source, key)) for key in registry.projection_keys(source)
     )
