@@ -18,8 +18,11 @@
 import asyncio
 
 import httpx
+import pytest
 
-from powercontext.builtin.runtime import RuntimeConfig
+from powercontext.builtin.records import ArtifactWrite
+from powercontext.builtin.runtime import BuiltinConfig, PrepareContextRequest, RuntimeConfig, open_builtin_runtime
+from powercontext.builtin.scope import ScopeDraft
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import McpConfig, ServerSettings
 
@@ -29,6 +32,49 @@ QUESTIONS = (
     "PowerContext Server 地址是什么？",
     "我之前让你记住的 PowerContext Server 地址是什么？",
 )
+
+STOPWORD_PREFIX = (
+    "i me my myself we us our ours ourselves you your yours yourself yourselves he him his himself "
+    "she her hers herself it its itself they them their theirs themselves what which who whom this "
+    "that these those am is are was were be been being have has had having do does did doing will "
+    "would shall should can could may might must ought"
+)
+
+
+@pytest.mark.parametrize("evidence", ["deploymentmarker", '"the"', "not"])
+def test_prepared_topic_recall_preserves_evidence_after_stopwords(migration_backend, evidence):
+    async def scenario():
+        config = BuiltinConfig(
+            database=migration_backend.config, runtime=RuntimeConfig(artifact_processing_families=())
+        )
+        async with open_builtin_runtime(config, scheduler_path=migration_backend.directory / "scheduler") as runtime:
+            assert runtime.scopes is not None
+            scope = (
+                await runtime.scopes.create(
+                    ScopeDraft(
+                        title="Bounded recall", summary="Preserve effective query evidence", idempotency_key="bounded"
+                    )
+                )
+            ).scope_id
+            original = await runtime.records.for_scope(scope).create_artifact(
+                "topic-memory",
+                ArtifactWrite(
+                    content={"title": "deploymentmarker", "summary": "the not", "detail": "Durable deployment evidence"}
+                ),
+            )
+
+            result = await runtime.context.for_scope(scope).prepare(
+                PrepareContextRequest.model_validate({
+                    "query": f"{STOPWORD_PREFIX} {evidence}",
+                    "max_bytes": 8192,
+                    "assembly": {"sections": [{"family": "topic-memory", "limit": 8}]},
+                })
+            )
+
+            assert result.status == "ready"
+            assert result.content is not None and original.artifact_id in result.content
+
+    asyncio.run(scenario())
 
 
 def test_public_word_recall_identifiers_and_prepare(migration_backend):

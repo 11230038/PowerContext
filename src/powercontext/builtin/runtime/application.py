@@ -84,7 +84,6 @@ from powercontext.builtin.artifacts.search import (
     AdmissionCounts,
     AdmissionFloor,
     analyze_text,
-    lexical_terms_with_spans,
 )
 from powercontext.builtin.artifacts.skill import (
     AgentKind,
@@ -125,6 +124,7 @@ from powercontext.builtin.artifacts.topic_memory import (
     TopicMemorySearchMode,
     TopicMemorySearchResult,
 )
+from powercontext.builtin.artifacts.topic_memory.search import bounded_topic_memory_query
 from powercontext.builtin.code.application import CodeApplication
 from powercontext.builtin.code.errors import CodeError
 from powercontext.builtin.code.models import CodeConfig, CodeQueryRequest, CodeQueryResult
@@ -1492,7 +1492,7 @@ class ScopedContextApplication:
         allow_embedding: bool,
     ) -> TopicMemoryRecallOutcome:
         configured = self._runtime._topic_memory_search is not None
-        bounded_query = _bounded_topic_memory_recall_query(query)
+        bounded_query = bounded_topic_memory_query(query)
         with self._runtime._stage(
             "topic_memory.search",
             attributes={
@@ -3529,23 +3529,3 @@ def _unavailable_evidence(resolution: HandoffResolution) -> tuple[HandoffCitatio
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-def _bounded_topic_memory_recall_query(query: str) -> str:
-    """Focus internal Prepared Context recall without weakening the public search contract."""
-
-    trimmed = query.strip()
-    terms = tuple(dict.fromkeys(word for word, _start, _end in lexical_terms_with_spans(trimmed)))
-    if len(terms) <= MAX_TOPIC_MEMORY_QUERY_TERMS:
-        return trimmed
-
-    selected: list[str] = []
-    characters = 0
-    for term in terms[:MAX_TOPIC_MEMORY_QUERY_TERMS]:
-        separator = int(bool(selected))
-        available = MAX_TOPIC_MEMORY_QUERY_LENGTH - characters - separator
-        if available < 1:
-            break
-        selected.append(term[:available])
-        characters += separator + min(len(term), available)
-    return " ".join(selected)
