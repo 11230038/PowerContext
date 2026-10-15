@@ -23,7 +23,7 @@ export const MCP_OPERATIONS = {
   "activate_handoff": {
     "readOnly": false
   },
-  "approve_artifact_candidate": {
+  "approve_candidate": {
     "readOnly": false
   },
   "capture_content_source": {
@@ -62,13 +62,16 @@ export const MCP_OPERATIONS = {
   "get_artifact": {
     "readOnly": true
   },
-  "get_artifact_candidate": {
-    "readOnly": true
-  },
   "get_artifact_revision": {
     "readOnly": true
   },
   "get_atomic_memory_state": {
+    "readOnly": true
+  },
+  "get_candidate": {
+    "readOnly": true
+  },
+  "get_candidate_history": {
     "readOnly": true
   },
   "get_dream_run": {
@@ -98,10 +101,10 @@ export const MCP_OPERATIONS = {
   "import_external_skill": {
     "readOnly": false
   },
-  "list_artifact_candidates": {
+  "list_atomic_memories": {
     "readOnly": true
   },
-  "list_atomic_memories": {
+  "list_candidates": {
     "readOnly": true
   },
   "list_dream_runs": {
@@ -143,7 +146,7 @@ export const MCP_OPERATIONS = {
   "record_task_outcome": {
     "readOnly": false
   },
-  "reject_artifact_candidate": {
+  "reject_candidate": {
     "readOnly": false
   },
   "remember_memory": {
@@ -161,7 +164,7 @@ export const MCP_OPERATIONS = {
   "restore_atomic_memory": {
     "readOnly": false
   },
-  "revise_artifact_candidate": {
+  "revise_candidate": {
     "readOnly": false
   },
   "scan_external_skills": {

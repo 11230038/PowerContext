@@ -1132,9 +1132,9 @@ const OPERATIONS = {
 		successStatuses: [200],
 		emptyStatuses: []
 	},
-	list_artifact_candidates: {
+	list_candidates: {
 		method: "POST",
-		path: "/v1/artifact-candidates/list",
+		path: "/v1/candidates/list",
 		location: "body",
 		scopeMode: "current",
 		pathParameters: [],
@@ -1143,9 +1143,9 @@ const OPERATIONS = {
 		successStatuses: [200],
 		emptyStatuses: []
 	},
-	get_artifact_candidate: {
+	get_candidate: {
 		method: "POST",
-		path: "/v1/artifact-candidates/get",
+		path: "/v1/candidates/get",
 		location: "body",
 		scopeMode: "current",
 		pathParameters: [],
@@ -1154,9 +1154,9 @@ const OPERATIONS = {
 		successStatuses: [200],
 		emptyStatuses: []
 	},
-	approve_artifact_candidate: {
+	approve_candidate: {
 		method: "POST",
-		path: "/v1/artifact-candidates/approve",
+		path: "/v1/candidates/approve",
 		location: "body",
 		scopeMode: "current",
 		pathParameters: [],
@@ -1165,9 +1165,9 @@ const OPERATIONS = {
 		successStatuses: [200],
 		emptyStatuses: []
 	},
-	reject_artifact_candidate: {
+	reject_candidate: {
 		method: "POST",
-		path: "/v1/artifact-candidates/reject",
+		path: "/v1/candidates/reject",
 		location: "body",
 		scopeMode: "current",
 		pathParameters: [],
@@ -1176,9 +1176,20 @@ const OPERATIONS = {
 		successStatuses: [200],
 		emptyStatuses: []
 	},
-	revise_artifact_candidate: {
+	revise_candidate: {
 		method: "POST",
-		path: "/v1/artifact-candidates/revise",
+		path: "/v1/candidates/revise",
+		location: "body",
+		scopeMode: "current",
+		pathParameters: [],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [200],
+		emptyStatuses: []
+	},
+	get_candidate_history: {
+		method: "POST",
+		path: "/v1/candidates/history",
 		location: "body",
 		scopeMode: "current",
 		pathParameters: [],
@@ -1831,6 +1842,7 @@ var PowerContextClient = class {
 	}
 	buildInit(spec, request$2, signal, requestTimeoutMs = this.requestTimeoutMs) {
 		const headers = {
+			"X-PowerContext-Dream-Contract": "2",
 			Accept: "application/json",
 			"User-Agent": PLUGIN_USER_AGENT,
 			...request$2.headers
@@ -2599,10 +2611,10 @@ const CONTENT_FIELDS = new Map([
 	["record_task_outcome", ["outcome"]],
 	["propose_experience", ["proposal", "reason"]],
 	["propose_skill", ["proposal", "reason"]],
-	["revise_artifact_candidate", ["proposal", "reason"]],
+	["revise_candidate", ["proposal", "reason"]],
 	["generate_experience", ["reason"]],
 	["generate_skill", ["reason"]],
-	["reject_artifact_candidate", ["reason"]],
+	["reject_candidate", ["reason"]],
 	["import_external_skill", ["reason"]],
 	["merge_atomic_memories", ["content"]],
 	["handoff_current_work", ["handoff"]],
@@ -3081,7 +3093,7 @@ async function call(runtime, cwd, operationId, payload, signal) {
 }
 async function handleReview(tokens, runtime, cwd, signal) {
 	const action = tokens[1];
-	if (!action) return call(runtime, cwd, "list_artifact_candidates", { status: "pending" }, signal);
+	if (!action) return call(runtime, cwd, "list_candidates", { status: "pending" }, signal);
 	if (action === "approve") {
 		const candidateId = tokens[2];
 		const version = Number(tokens[3]);
@@ -3089,7 +3101,7 @@ async function handleReview(tokens, runtime, cwd, signal) {
 			kind: "error",
 			text: "Usage: /pc review approve <candidate_id> <expected_version>"
 		};
-		return call(runtime, cwd, "approve_artifact_candidate", {
+		return call(runtime, cwd, "approve_candidate", {
 			candidate_id: candidateId,
 			expected_version: version
 		}, signal);
@@ -3102,7 +3114,7 @@ async function handleReview(tokens, runtime, cwd, signal) {
 			kind: "error",
 			text: "Usage: /pc review reject <candidate_id> <expected_version> <reason>"
 		};
-		return call(runtime, cwd, "reject_artifact_candidate", {
+		return call(runtime, cwd, "reject_candidate", {
 			candidate_id: candidateId,
 			expected_version: version,
 			reason
@@ -3294,7 +3306,7 @@ function resolveConfig(config = {}, env = process.env) {
 const MCP_OPERATIONS = {
 	"acknowledge_handoff": { "readOnly": false },
 	"activate_handoff": { "readOnly": false },
-	"approve_artifact_candidate": { "readOnly": false },
+	"approve_candidate": { "readOnly": false },
 	"capture_content_source": { "readOnly": false },
 	"change_atomic_memory_lifecycle": { "readOnly": false },
 	"clear_scope_binding": { "readOnly": false },
@@ -3307,9 +3319,10 @@ const MCP_OPERATIONS = {
 	"generate_experience": { "readOnly": false },
 	"generate_skill": { "readOnly": false },
 	"get_artifact": { "readOnly": true },
-	"get_artifact_candidate": { "readOnly": true },
 	"get_artifact_revision": { "readOnly": true },
 	"get_atomic_memory_state": { "readOnly": true },
+	"get_candidate": { "readOnly": true },
+	"get_candidate_history": { "readOnly": true },
 	"get_dream_run": { "readOnly": true },
 	"get_experience": { "readOnly": true },
 	"get_handoff_report": { "readOnly": true },
@@ -3319,8 +3332,8 @@ const MCP_OPERATIONS = {
 	"get_topic_memory": { "readOnly": true },
 	"handoff_current_work": { "readOnly": false },
 	"import_external_skill": { "readOnly": false },
-	"list_artifact_candidates": { "readOnly": true },
 	"list_atomic_memories": { "readOnly": true },
+	"list_candidates": { "readOnly": true },
 	"list_dream_runs": { "readOnly": true },
 	"list_external_skills": { "readOnly": true },
 	"list_managed_skills": { "readOnly": true },
@@ -3334,13 +3347,13 @@ const MCP_OPERATIONS = {
 	"publish_artifact": { "readOnly": false },
 	"query_code": { "readOnly": true },
 	"record_task_outcome": { "readOnly": false },
-	"reject_artifact_candidate": { "readOnly": false },
+	"reject_candidate": { "readOnly": false },
 	"remember_memory": { "readOnly": false },
 	"replace_artifact": { "readOnly": false },
 	"resolve_external_skill": { "readOnly": true },
 	"resolve_scope_binding": { "readOnly": true },
 	"restore_atomic_memory": { "readOnly": false },
-	"revise_artifact_candidate": { "readOnly": false },
+	"revise_candidate": { "readOnly": false },
 	"scan_external_skills": { "readOnly": false },
 	"search_atomic_memory": { "readOnly": true },
 	"search_memory": { "readOnly": true },
@@ -3990,7 +4003,7 @@ For a preview, draft text from current inspected facts without calling any Hando
 
 Current instructions and live repository state outrank historical evidence. Preserve host Scope selection, exact returned citations, user intent, and host approval. Use only available tools. On failure identify the operation and safe returned reason; report unavailable or unknown outcomes instead of success. Never store secrets or bypass a missing approval channel.
 
-Use \`mcp__powercontext__list_artifact_candidates\` for the requested queue and \`mcp__powercontext__get_artifact_candidate\` for an exact candidate. Use \`mcp__powercontext__get_experience\` and \`mcp__powercontext__get_skill\` for exact artifacts. \`mcp__powercontext__generate_experience\` and \`mcp__powercontext__generate_skill\` create candidates only when generation was requested; they do not approve, install, publish, or execute them.
+Use \`mcp__powercontext__list_candidates\` for the requested queue and \`mcp__powercontext__get_candidate\` for an exact candidate. Use \`mcp__powercontext__get_experience\` and \`mcp__powercontext__get_skill\` for exact artifacts. \`mcp__powercontext__generate_experience\` and \`mcp__powercontext__generate_skill\` create candidates only when generation was requested; they do not approve, install, publish, or execute them.
 
 ## Review
 
@@ -4020,7 +4033,7 @@ is absent, report that workflow unavailable and incomplete; never simulate it or
 | --- | --- |
 | Prior decisions, inventory, save or correction / 搜索记忆、盘点、记住、纠正 | \`mcp__powercontext__search_memory\`, \`mcp__powercontext__list_atomic_memories\`, \`mcp__powercontext__remember_memory\`, \`mcp__powercontext__replace_artifact\`; \`powercontext-memory\`. |
 | Transfer and resume work / 交接、接续工作 | \`mcp__powercontext__handoff_current_work\`, \`mcp__powercontext__continue_handoff\`; \`powercontext-handoff\`. |
-| Candidate inspection / 审查候选 | \`mcp__powercontext__list_artifact_candidates\`, \`mcp__powercontext__get_artifact_candidate\`; \`powercontext-review\`. Decisions remain human commands. |
+| Candidate inspection / 审查候选 | \`mcp__powercontext__list_candidates\`, \`mcp__powercontext__get_candidate\`; \`powercontext-review\`. Decisions remain human commands. |
 | Experience, Skill, or external Skill / 经验、技能、外部技能 | The corresponding native \`generate_*\`, \`get_*\`, \`propose_*\`, \`list_*\`, \`scan_*\`, \`resolve_*\`, or \`import_*\` tools. |
 
 These are registered runtime Skills, not filesystem paths. Load a domain directly when its purpose is already clear;
@@ -4090,7 +4103,7 @@ Return the complete native finalize_handoff result unchanged, including schema, 
 The low-level flow requires exact returned Source or Artifact citations, not raw facts or invented references. When
 its inspected facts have no Source reference, call mcp__powercontext__capture_content_source first and use its
 returned source as boundary evidence.
-Use mcp__powercontext__list_artifact_candidates / mcp__powercontext__get_artifact_candidate to inspect candidates.
+Use mcp__powercontext__list_candidates / mcp__powercontext__get_candidate to inspect candidates.
 Generated candidates are not approved artifacts. Review decisions belong to the human /pc review command; never
 self-approve, install, publish, or execute a candidate.
 For requested Experience or Skill synthesis use the native generate_* / get_* / propose_* tools; they create pending

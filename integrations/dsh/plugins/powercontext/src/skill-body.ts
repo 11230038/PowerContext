@@ -29,7 +29,7 @@ is absent, report that workflow unavailable and incomplete; never simulate it or
 | --- | --- |
 | Prior decisions, inventory, save or correction / 搜索记忆、盘点、记住、纠正 | \`mcp__powercontext__search_memory\`, \`mcp__powercontext__list_atomic_memories\`, \`mcp__powercontext__remember_memory\`, \`mcp__powercontext__replace_artifact\`; \`powercontext-memory\`. |
 | Transfer and resume work / 交接、接续工作 | \`mcp__powercontext__handoff_current_work\`, \`mcp__powercontext__continue_handoff\`; \`powercontext-handoff\`. |
-| Candidate inspection / 审查候选 | \`mcp__powercontext__list_artifact_candidates\`, \`mcp__powercontext__get_artifact_candidate\`; \`powercontext-review\`. Decisions remain human commands. |
+| Candidate inspection / 审查候选 | \`mcp__powercontext__list_candidates\`, \`mcp__powercontext__get_candidate\`; \`powercontext-review\`. Decisions remain human commands. |
 | Experience, Skill, or external Skill / 经验、技能、外部技能 | The corresponding native \`generate_*\`, \`get_*\`, \`propose_*\`, \`list_*\`, \`scan_*\`, \`resolve_*\`, or \`import_*\` tools. |
 
 These are registered runtime Skills, not filesystem paths. Load a domain directly when its purpose is already clear;

@@ -63,7 +63,7 @@ Return the complete native finalize_handoff result unchanged, including schema, 
 The low-level flow requires exact returned Source or Artifact citations, not raw facts or invented references. When
 its inspected facts have no Source reference, call mcp__powercontext__capture_content_source first and use its
 returned source as boundary evidence.
-Use mcp__powercontext__list_artifact_candidates / mcp__powercontext__get_artifact_candidate to inspect candidates.
+Use mcp__powercontext__list_candidates / mcp__powercontext__get_candidate to inspect candidates.
 Generated candidates are not approved artifacts. Review decisions belong to the human /pc review command; never
 self-approve, install, publish, or execute a candidate.
 For requested Experience or Skill synthesis use the native generate_* / get_* / propose_* tools; they create pending

@@ -111,7 +111,7 @@ function secretArguments(operation, scopeId) {
       name: 'deployment-review', description: 'Review a deployment', instructions: 'Run tests', validation: ['Tests pass'],
       metadata: { note: text },
     } }
-    case 'revise_artifact_candidate': return { scope_id: scopeId, candidate_id: 'secret-fixture', expected_version: 1,
+    case 'revise_candidate': return { scope_id: scopeId, candidate_id: 'secret-fixture', expected_version: 1,
       source_refs: [source], artifact_refs: [], proposal: { content: text } }
     default: return { scope_id: scopeId, text, kind: 'decision' }
   }

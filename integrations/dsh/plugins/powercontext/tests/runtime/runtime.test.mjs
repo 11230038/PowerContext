@@ -149,7 +149,7 @@ test('real DSH rejects secret native writes including nested work, candidate and
     const { instance } = env.harness({ capturePrompts: false })
     for (const operation of ['remember_memory', 'replace_artifact', 'capture_content_source',
       'handoff_current_work', 'activate_handoff', 'finalize_handoff', 'commit_handoff',
-      'create_work_contract', 'record_task_outcome', 'propose_experience', 'propose_skill', 'revise_artifact_candidate']) {
+      'create_work_contract', 'record_task_outcome', 'propose_experience', 'propose_skill', 'revise_candidate']) {
       assert.ok((await instance.run(`RUN_PC_SECRET:${operation}`)).finalResponse)
       const input = env.modelRequests.filter(request => request.stream).at(-1)
       assert.match(input.messages.find(message => message.role === 'tool').content, /secret_rejected/, operation)

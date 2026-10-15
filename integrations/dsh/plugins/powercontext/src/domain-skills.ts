@@ -97,7 +97,7 @@ For a preview, draft text from current inspected facts without calling any Hando
 
 Current instructions and live repository state outrank historical evidence. Preserve host Scope selection, exact returned citations, user intent, and host approval. Use only available tools. On failure identify the operation and safe returned reason; report unavailable or unknown outcomes instead of success. Never store secrets or bypass a missing approval channel.
 
-Use \`mcp__powercontext__list_artifact_candidates\` for the requested queue and \`mcp__powercontext__get_artifact_candidate\` for an exact candidate. Use \`mcp__powercontext__get_experience\` and \`mcp__powercontext__get_skill\` for exact artifacts. \`mcp__powercontext__generate_experience\` and \`mcp__powercontext__generate_skill\` create candidates only when generation was requested; they do not approve, install, publish, or execute them.
+Use \`mcp__powercontext__list_candidates\` for the requested queue and \`mcp__powercontext__get_candidate\` for an exact candidate. Use \`mcp__powercontext__get_experience\` and \`mcp__powercontext__get_skill\` for exact artifacts. \`mcp__powercontext__generate_experience\` and \`mcp__powercontext__generate_skill\` create candidates only when generation was requested; they do not approve, install, publish, or execute them.
 
 ## Review
 

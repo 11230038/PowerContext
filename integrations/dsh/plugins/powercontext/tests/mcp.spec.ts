@@ -127,7 +127,7 @@ describe('PowerContext MCP bridge', () => {
   it('asks before candidate approval even when the MCP server only advertises annotations', async () => {
     const next = vi.fn(async () => ({ kind: 'allow' as const }))
     const result = await policyHook()({
-      name: 'mcp__powercontext__approve_artifact_candidate',
+      name: 'mcp__powercontext__approve_candidate',
       arguments: { scope_id: 'scope-a', candidate_id: 'candidate-1' },
       signal: new AbortController().signal,
     }, next)
@@ -151,12 +151,12 @@ describe('PowerContext MCP bridge', () => {
     ['propose_experience', { reason: 'api_key=FAKE_REVIEW_CANARY' }],
     ['propose_skill', { proposal: { metadata: { note: 'api_key=FAKE_REVIEW_CANARY' } } }],
     ['propose_skill', { reason: 'api_key=FAKE_REVIEW_CANARY' }],
-    ['revise_artifact_candidate', { proposal: { instructions: 'api_key=FAKE_REVIEW_CANARY' } }],
-    ['revise_artifact_candidate', { proposal: { content: 'api_key=FAKE_REVIEW_CANARY' } }],
-    ['revise_artifact_candidate', { reason: 'api_key=FAKE_REVIEW_CANARY' }],
+    ['revise_candidate', { proposal: { instructions: 'api_key=FAKE_REVIEW_CANARY' } }],
+    ['revise_candidate', { proposal: { content: 'api_key=FAKE_REVIEW_CANARY' } }],
+    ['revise_candidate', { reason: 'api_key=FAKE_REVIEW_CANARY' }],
     ['generate_experience', { reason: 'api_key=FAKE_REVIEW_CANARY' }],
     ['generate_skill', { reason: 'api_key=FAKE_REVIEW_CANARY' }],
-    ['reject_artifact_candidate', { reason: 'api_key=FAKE_REVIEW_CANARY' }],
+    ['reject_candidate', { reason: 'api_key=FAKE_REVIEW_CANARY' }],
     ['import_external_skill', { reason: 'api_key=FAKE_REVIEW_CANARY' }],
     ['acknowledge_handoff', { message: 'api_key=FAKE_REVIEW_CANARY' }],
     ['acknowledge_handoff', { prepared: { content: { state: [{ text: 'api_key=FAKE_REVIEW_CANARY' }] } } }],
@@ -225,7 +225,7 @@ describe('PowerContext MCP bridge', () => {
     ['record_task_outcome', { outcome: { summary: 'Deployment verified', checks: [] } }],
     ['propose_experience', { proposal: { lesson: 'Verify before deploying' }, reason: 'Document the result' }],
     ['propose_skill', { proposal: { instructions: 'Verify before deploying', validation: ['Run tests'] } }],
-    ['revise_artifact_candidate', { proposal: { content: 'Verify before deploying' }, reason: null }],
+    ['revise_candidate', { proposal: { content: 'Verify before deploying' }, reason: null }],
   ])('keeps ordinary caller-authored content in %s subject to write approval', async (operation, content) => {
     const result = await policyHook()({
       name: `mcp__powercontext__${operation}`,
