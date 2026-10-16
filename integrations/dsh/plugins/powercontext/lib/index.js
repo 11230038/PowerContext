@@ -2608,6 +2608,7 @@ const SECRET_MARKERS = [
 const PAYLOAD_WRITES = new Set([
 	"remember_memory",
 	"capture_content_source",
+	"capture_working_note",
 	"revise_memory_entry",
 	"replace_artifact",
 	"change_atomic_memory_lifecycle"
