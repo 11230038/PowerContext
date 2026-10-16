@@ -17,7 +17,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 from sqlalchemy import insert
 
 from powercontext import InvalidSourceDefinitionError
@@ -59,15 +60,27 @@ class SerializationAliasSource(Source):
     body: str = Field(serialization_alias="wire_text")
 
 
+class CamelCaseSource(SerializationAliasSource):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+
+class UpperCaseSource(SerializationAliasSource):
+    model_config = ConfigDict(alias_generator=str.upper, populate_by_name=True)
+
+
 class SerializationAliasAdapter:
     name = "serialization-alias"
     input_class = SerializationAliasInput
-    source_class = SerializationAliasSource
+
+    def __init__(self, source_class: type[SerializationAliasSource]) -> None:
+        self.source_class = source_class
 
     async def resolve(self, value: SerializationAliasInput, /) -> SerializationAliasSource:
-        return SerializationAliasSource(
+        return self.source_class(
             name=value.source_id,
+            definition_version="2",
             materialization=SourceMaterialization.CAPTURED,
+            description="Remote alias description.",
             body=value.body,
         )
 
@@ -178,9 +191,14 @@ def test_repository_batch_reads_deduplicate_refs_and_bound_the_journal_window() 
     asyncio.run(scenario())
 
 
-def test_remote_observation_ingestion_accepts_serialization_aliases() -> None:
+@pytest.mark.parametrize("source_class", (SerializationAliasSource, CamelCaseSource, UpperCaseSource))
+def test_remote_observation_ingestion_accepts_serialization_aliases(
+    source_class: type[SerializationAliasSource],
+) -> None:
     async def scenario() -> None:
-        worker = SourceDefinitionRegistry((AdapterSourceDefinition(SerializationAliasAdapter()),))
+        worker = SourceDefinitionRegistry((
+            AdapterSourceDefinition(SerializationAliasAdapter(source_class), version="2"),
+        ))
         source = await worker.resolve(SerializationAliasInput(source_id="remote-1", body="Remote note text."))
         manifest = manifest_for_definition(worker.definition_for_name("serialization-alias"))
         observation = project_source_for_transport(worker, source)
@@ -196,8 +214,13 @@ def test_remote_observation_ingestion_accepts_serialization_aliases() -> None:
 
         assert receipt.source_ref == SourceRef(source_type="serialization-alias", source_id="remote-1")
         assert isinstance(stored, SourceObservation)
-        assert stored.payload["wire_text"] == "Remote note text."
-        assert "body" not in stored.payload
+        assert stored.payload == {
+            "name": "remote-1",
+            "definition_version": "2",
+            "materialization": "captured",
+            "description": "Remote alias description.",
+            "wire_text": "Remote note text.",
+        }
 
     asyncio.run(scenario())
 
