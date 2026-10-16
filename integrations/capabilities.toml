@@ -312,6 +312,9 @@ capabilities = ["memory_write"]
 id = "mcp__powercontext__capture_content_source"
 capabilities = ["source_capture"]
 [[toolsets.tools]]
+id = "mcp__powercontext__capture_working_note"
+capabilities = ["source_capture"]
+[[toolsets.tools]]
 id = "mcp__powercontext__create_work_contract"
 capabilities = ["work_contract"]
 [[toolsets.tools]]
