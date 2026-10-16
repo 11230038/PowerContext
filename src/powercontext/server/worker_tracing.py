@@ -104,6 +104,8 @@ class _TracedWorker:
             if token is not None:
                 worker_observability.reset(token)
             if span is not None:
+                if isinstance(error, ArtifactProcessingBlockedError):
+                    span.set_attributes({"powercontext.error.category": "blocked"})
                 span.finish(outcome, error=error)
             if tracing is not None:
                 # BSP/export shutdown is best-effort and cannot hold a child indefinitely.

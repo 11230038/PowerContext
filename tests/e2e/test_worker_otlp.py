@@ -27,6 +27,11 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime.config import InferenceConfig, RuntimeConfig
+from powercontext.builtin.runtime.processing_contracts import (
+    ArtifactProcessingBlock,
+    ArtifactProcessingBlockedError,
+    ArtifactProcessingWorkAssignment,
+)
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import McpConfig, ServerSettings, TracingConfig
 from powercontext.server.telemetry import service_resource
@@ -104,6 +109,88 @@ def _spans(received):
         for scope in resource.scope_spans
         for span in scope.spans
     ]
+
+
+def _blocked_worker(_assignment: ArtifactProcessingWorkAssignment):
+    raise ArtifactProcessingBlockedError(
+        ArtifactProcessingBlock("frontier", "topic_memory", "window_attempt_limit", (("attempts", 3),))
+    )
+
+
+def test_spawned_worker_policy_block_preserves_child_and_supervisor_trace_categories(tmp_path, monkeypatch):
+    import asyncio
+
+    from powercontext.builtin.persistence.processing_intents import ArtifactProcessingIntentRepository
+    from powercontext.builtin.persistence.sqlite import SQLiteProfile
+    from powercontext.builtin.persistence.tables import SHARED_TABLES
+    from powercontext.builtin.runtime.artifact_processing import (
+        ArtifactProcessingBinding,
+        ArtifactProcessingSupervisor,
+        SpawnArtifactProcessingWorkerLauncher,
+    )
+    from powercontext.server.worker_tracing import WorkerTracing
+
+    with _receiver() as (endpoint, received):
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", endpoint + "/v1/traces")
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", "0.2")
+        provider = TracerProvider(resource=service_resource("all"), shutdown_on_exit=False)
+        provider.add_span_processor(
+            SimpleSpanProcessor(OTLPSpanExporter(endpoint=endpoint + "/v1/traces", timeout=0.2))
+        )
+        tracing = ServerTracing(provider)
+        binding_name = "topic-memory-source-window"
+        scope_id = "blocked"
+
+        async def run():
+            config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'blocked.db'}")
+            async with SQLiteProfile.open(config, tables=SHARED_TABLES) as profile:
+                intents = ArtifactProcessingIntentRepository()
+                async with profile.database.transaction() as connection:
+                    await intents.request(connection, scope_id, binding_name)
+                binding = ArtifactProcessingBinding(
+                    binding_name,
+                    "topic-memory",
+                    SpawnArtifactProcessingWorkerLauncher(
+                        _blocked_worker, entrypoint_wrapper=WorkerTracing(TracingConfig(enabled=True)).wrap
+                    ),
+                )
+                async with ArtifactProcessingSupervisor(
+                    database=profile.database, bindings=(binding,), lease_mode="single-process", tracing=tracing
+                ):
+                    async with asyncio.timeout(20):
+                        while not any(  # noqa: ASYNC110 - bounded wait for actual OTLP reception.
+                            span.name == "artifact_processing.worker" for span, _ in _spans(received)
+                        ):
+                            await asyncio.sleep(0.01)
+                async with profile.database.transaction() as connection:
+                    intent = await intents.load(connection, scope_id, binding_name)
+                    assert intent is not None and intent.requested_generation > intent.handled_generation
+
+        try:
+            asyncio.run(run())
+            spans = [
+                span
+                for span, _ in _spans(received)
+                if span.name
+                in {
+                    "artifact_processing.worker",
+                    "artifact_processing.worker.wait",
+                    "artifact_processing.worker.execute",
+                }
+            ]
+            assert {span.name for span in spans} == {
+                "artifact_processing.worker",
+                "artifact_processing.worker.wait",
+                "artifact_processing.worker.execute",
+            }
+            assert len({span.trace_id for span in spans}) == 1
+            for span in spans:
+                attributes = {attribute.key: attribute.value.string_value for attribute in span.attributes}
+                assert attributes["powercontext.operation.outcome"] == "blocked"
+                assert attributes["powercontext.error.category"] == "blocked"
+                assert span.status.code == 0  # OTel UNSET: policy blocks are not execution errors.
+        finally:
+            provider.shutdown()
 
 
 @pytest.mark.parametrize("family", ["memory", "topic-memory"])
