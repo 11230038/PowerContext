@@ -114,3 +114,75 @@ calls; tracing does not capture unrelated host model calls automatically.
 
 For environment-file deployments, put the tracing and OpenTelemetry variables in the explicit file passed to the
 Server. See [environment configuration](../get-started/configure-server-environment.md) for precedence rules.
+
+### Background service and observation freshness
+
+Split API/background roles require OceanBase. SQLite and embedded seekdb retain the `all` role.
+
+The `background` role exposes only `/health/live` and `/metrics` on `HTTP_HOST` and the separate
+`POWERCONTEXT_SERVER_METRICS_BACKGROUND_PORT` (default `8001`). It does not expose business APIs, MCP, the dashboard,
+or OpenAPI. API/all roles continue using their normal HTTP port. Disabling `METRICS_ENABLED` also disables the background
+HTTP listener. Authentication and `server.observe` authorization use the same Server profile as the API metrics endpoint;
+non-loopback binding follows the existing Server bind policy. Configure the metrics port in the background environment
+file when multiple processes share a host.
+
+When metrics are enabled, readiness is evaluated at startup and every 30 seconds. Scraping metrics never invokes a
+model, pings the database, or refreshes readiness. Inference probes retain their existing 300-second normal and 30-second
+transient caches. `readiness_evaluated_timestamp_seconds` dates the aggregate evaluation, not a fresh provider request;
+this timestamp does not bypass or describe the age of an individual cached probe.
+
+| Metric (prefix `powercontext_server_`) | Interpretation |
+| --- | --- |
+| `readiness_state{state}` | One-hot `ready`, `degraded`, `not_ready`; the compatible `runtime_ready` still means able to accept operations |
+| `dependency_state{dependency,state}` | One-hot bounded dependency results; an absent dependency is unconfigured/unobserved, not a healthy zero |
+| `readiness_evaluated_timestamp_seconds` | Unix seconds of the latest aggregate evaluation, which may use cached probes |
+| `artifact_processing_supervisor_alive`, `artifact_processing_leader`, `artifact_processing_degraded` | Local supervisor task, held fence, and discovery health, by registered family |
+| `artifact_processing_blocked` | Number of locally retained policy-blocked invocations; not worker failures |
+| `artifact_processing_discovered_timestamp_seconds`, `artifact_processing_unacknowledged_observed_timestamp_seconds` | Unix time of the last successful discovery pass and last unacknowledged-count query, respectively; they are different observations |
+| `artifact_processing_last_success_timestamp_seconds` | Latest supervisor-verified acknowledgement, not merely child return |
+| `artifact_processing_oldest_observed_pending_timestamp_seconds` | Earliest local admission still retained in ready/running/retry state; zero means none observed |
+| `artifact_processing_invocation_duration_seconds{family,outcome}` | Histogram of finalized invocation attempts including launch, execution and acknowledgement; each retry is another sample |
+| `model_usage_queue_depth`, `model_usage_queue_capacity` | Local usage-recorder queue and capacity; queue depth excludes the in-flight write |
+| `model_usage_dropped_records_total`, `model_usage_write_failures_total` | Local cumulative lost records and failed/indeterminate writes; best-effort statistics, not billing |
+| `metrics_collection_failures_total` | Failed processing snapshot refreshes; an old snapshot can remain visible |
+
+Processing timestamps use `0` for an observation that has never occurred. All counts, histograms and timestamps belong
+to the current process/supervisor lifetime and reset or disappear on restart/removal. The pending timestamp is a local
+lower bound on unfinished-work age, not the oldest durable Source or a complete database backlog: undiscovered work,
+retry-cache eviction and restart can remove its history. Combine it with backlog counts and observation freshness.
+A healthy idle worker need not have a recent success. Use pending work plus stalled progress/freshness as alert conditions;
+keep policy blocks separate from outages. Invocation outcomes are `success`, `failure`, `blocked`, `cancelled`, `conflict`
+and `timeout`; a slot retained for leadership cleanup is not counted again as a completed reap.
+
+Processing labels use registered family names and bounded outcomes, never scope/worker/request identities. Scrapes read
+in-memory snapshots; local ready/retry/running observation work is bounded by scheduler limits rather than database size.
+Usage telemetry observes this process's recorder only; an API scrape cannot report drops in a different worker process.
+Scrape every deployed API/background target and keep role/instance attribution in target labels. An absent target or
+missing sample must not be interpreted as zero failures. Do not sum process snapshots as if they were one durable ledger.
+
+### Worker execution traces and integration coverage
+
+With tracing enabled and `tracing-otlp` installed, Server-composed workers capture only W3C `traceparent`/`tracestate`
+when launched. Each child creates its own provider/resource, joins that supervisor execution, and instruments its real
+family or Topic Memory model composition. Memory processing includes the existing commit stages; Topic Memory adds
+`topic_memory.prepare` and `topic_memory.commit`. The child `artifact_processing.worker.execute` span describes a child
+result; the supervisor acknowledgement remains the evidence of verified business completion.
+
+A scheduled/coalesced invocation starts an independent supervisor trace. It does not inherit a capture request ID,
+keep an HTTP request open, or claim a durable causal link to all contributing Sources. No incoming context is persisted
+for replay. Custom launchers own their bootstrap; SDK-only composition stays unconfigured unless an embedding application
+supplies the optional worker wrapper. Parent-based sampling decisions propagate to the child. Child export/shutdown is
+best-effort, with at most a one-second shutdown wait; forced termination can leave incomplete spans. Missing exporters
+still fail an explicitly configured Server at startup, while child telemetry setup/export failure cannot change its domain result.
+
+| Integration boundary | Coverage |
+| --- | --- |
+| HTTP and MCP ingress/internal bridge | Existing W3C propagation and logical-operation semantics; infrastructure scrapes are excluded |
+| Python Client | Existing outbound spans and context injection under the application's configured provider |
+| Pydantic AI capability | Real Agent/capability and Python Client propagation validated against a local HTTP Server/OTLP receiver; fixture model, not an external provider acceptance claim |
+| Built-in Memory and Topic Memory spawn workers | Real entrypoints, local provider HTTP success/timeout, child spans and OTLP reception verified |
+| Other native host integrations | Host diagnostics remain available; automatic host trace propagation is not claimed by this coverage |
+
+OTLP tests use an actual local protobuf HTTP receiver, not a production trace database. To validate storage and backend
+queries, follow the Phoenix/Langfuse instructions or the chosen backend's deployment procedure. Metrics dashboards,
+trace storage, log shipping and alert delivery are separate deployment capabilities.

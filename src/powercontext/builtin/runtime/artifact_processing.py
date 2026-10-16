@@ -204,16 +204,27 @@ def _start_owned_spawn_process(process: _OwnedSpawnProcess, owner: _SpawnStartOw
 class SpawnArtifactProcessingWorkerLauncher:
     """Launch a picklable Worker entrypoint in a fresh spawn child process."""
 
-    def __init__(self, entrypoint: WorkerEntrypoint, *, initializer: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self,
+        entrypoint: WorkerEntrypoint,
+        *,
+        initializer: Callable[[], None] | None = None,
+        entrypoint_wrapper: Callable[[WorkerEntrypoint], WorkerEntrypoint] | None = None,
+    ) -> None:
         self._entrypoint = entrypoint
         self._initializer = initializer
+        self._entrypoint_wrapper = entrypoint_wrapper
 
     async def start(self, assignment: ArtifactProcessingWorkAssignment) -> ArtifactProcessingWorkerHandle:
         context = multiprocessing.get_context("spawn")
         receiver, sender = context.Pipe(duplex=False)
+        entrypoint = self._entrypoint
+        if self._entrypoint_wrapper is not None:
+            with suppress(Exception):
+                entrypoint = self._entrypoint_wrapper(entrypoint)
         process = _OwnedSpawnProcess(
             target=_run_spawned_worker,
-            args=(sender, self._entrypoint, assignment, self._initializer),
+            args=(sender, entrypoint, assignment, self._initializer),
             name=f"powercontext-artifact-worker-{assignment.worker_id}",
             daemon=False,
         )
@@ -427,6 +438,9 @@ class _FamilyState:
     last_error_stage: str = ""
     last_error_at: str = ""
     last_success_at: str = ""
+    requested_observed_at: float = 0
+    discovered_at: float = 0
+    pending_since: dict[str, float] = field(default_factory=dict)
 
 
 class ArtifactProcessingSupervisor:
@@ -450,6 +464,7 @@ class ArtifactProcessingSupervisor:
         retry_jitter: Callable[[], float] | None = None,
         blocked_check_seconds: float = _BLOCKED_CHECK_SECONDS,
         tracing: RuntimeTracing | None = None,
+        processing_observer: Callable[[str, str, float], None] | None = None,
     ) -> None:
         for attribute in ("binding_name", "artifact_family", "config_prefix"):
             names = [getattr(binding, attribute) for binding in bindings]
@@ -476,6 +491,7 @@ class ArtifactProcessingSupervisor:
             raise ValueError("blocked check interval must be positive")  # noqa: TRY003
         self._blocked_check_seconds = blocked_check_seconds
         self._tracing = tracing
+        self._processing_observer = processing_observer
         self._fence: ArtifactProcessingFence | None = None
         self._status = ArtifactProcessingSupervisorStatus.STANDBY
         self._wake = asyncio.Event()
@@ -505,6 +521,16 @@ class ArtifactProcessingSupervisor:
                 "status": "degraded" if state.degraded else self._status.value,
                 "supervisor_running": self._task is not None and not self._task.done(),
                 "supervisor_role": "leader" if self._fence is not None and not self._lease_lost else "standby",
+                "supervisor_alive": int(self._task is not None and not self._task.done()),
+                "leader": int(self._fence is not None and not self._lease_lost),
+                "degraded": int(state.degraded),
+                "discovered_timestamp_seconds": state.discovered_at,
+                "unacknowledged_observed_timestamp_seconds": state.requested_observed_at,
+                "last_success_timestamp_seconds": (
+                    datetime.fromisoformat(state.last_success_at).timestamp() if state.last_success_at else 0
+                ),
+                "oldest_observed_pending_timestamp_seconds": min(state.pending_since.values(), default=0),
+                "blocked": sum(retry.block is not None for retry in state.retries.values()),
                 "max_workers": state.binding.max_workers,
                 "automatic_processing_enabled": (
                     state.binding.automatic_processing_interval is not None or state.binding.cron is not None
@@ -662,6 +688,7 @@ class ArtifactProcessingSupervisor:
                     async with asyncio.timeout(_DISCOVERY_TIMEOUT_SECONDS):
                         await self._discover(state)
                     state.degraded = False
+                    state.discovered_at = time.time()
                 except ArtifactProcessingLeadershipLostError:
                     raise
                 except Exception as error:
@@ -718,6 +745,7 @@ class ArtifactProcessingSupervisor:
                     )
                     or 0
                 )
+                state.requested_observed_at = time.time()
             rows = await self._intents.scan(
                 connection,
                 state.binding.binding_name,
@@ -848,6 +876,7 @@ class ArtifactProcessingSupervisor:
 
     def _enqueue(self, state: _FamilyState, scope: str, *, retry: bool = False) -> None:
         if scope not in state.queued and scope not in state.running:
+            state.pending_since.setdefault(scope, time.time())
             state.ready.append(scope)
             state.queued.add(scope)
             if retry:
@@ -878,6 +907,7 @@ class ArtifactProcessingSupervisor:
             )
             if expired is not None:
                 evicted = state.retries.pop(expired)
+                state.pending_since.pop(expired, None)
                 if evicted.block is not None:
                     # The domain gate still protects evicted terminal keys.
                     # Revisit their durable intents without delaying fresh work.
@@ -890,6 +920,7 @@ class ArtifactProcessingSupervisor:
                 state.blocked_rescan_at = (
                     deadline if state.blocked_rescan_at is None else min(state.blocked_rescan_at, deadline)
                 )
+                state.pending_since.pop(scope, None)
                 return
             else:
                 # Durable requested > handled retains the omitted key. Pause
@@ -898,7 +929,9 @@ class ArtifactProcessingSupervisor:
                 # Already-ready work drains, so only a finite cohort can extend it.
                 state.overflow_not_before = max(state.overflow_not_before, deadline)
                 self.wake(state.binding.binding_name)
+                state.pending_since.pop(scope, None)
                 return
+        state.pending_since.setdefault(scope, time.time())
         state.retries[scope] = _RetryState(failures, deadline, block, request_generation, probe_error)
 
     async def _dispatch(self, state: _FamilyState) -> None:
@@ -919,6 +952,7 @@ class ArtifactProcessingSupervisor:
                 row = await self._intents.load(connection, scope, state.binding.binding_name, for_update=True)
             if row is None or row.requested_generation <= row.handled_generation:
                 state.retries.pop(scope, None)
+                state.pending_since.pop(scope, None)
                 continue
             assignment = ArtifactProcessingWorkAssignment(
                 binding_name=state.binding.binding_name,
@@ -1161,6 +1195,7 @@ class ArtifactProcessingSupervisor:
                 continue
             state.invocation_seconds = asyncio.get_running_loop().time() - running.started_at
             retain_slot = False
+            observed_outcome = "failure"
             try:
                 completion = running.task.result()
                 if completion.outcome is ArtifactProcessingWorkerOutcome.LEADERSHIP_LOST:
@@ -1169,6 +1204,7 @@ class ArtifactProcessingSupervisor:
                     ArtifactProcessingWorkerOutcome.CURSOR_CONFLICT,
                     ArtifactProcessingWorkerOutcome.HEAD_CONFLICT,
                 }:
+                    observed_outcome = "conflict"
                     previous = state.retries.get(scope)
                     self._defer(
                         state,
@@ -1187,6 +1223,8 @@ class ArtifactProcessingSupervisor:
                         )
                     )
                 state.retries.pop(scope, None)
+                observed_outcome = "success"
+                state.pending_since.pop(scope, None)
                 state.completed += 1
                 state.last_success_at = datetime.now(UTC).isoformat()
                 if row.requested_generation > row.handled_generation:
@@ -1194,8 +1232,10 @@ class ArtifactProcessingSupervisor:
             except (ArtifactProcessingLeadershipLostError, _WorkerTerminationError):
                 # Retain the slot until the old term is revoked and all children are reaped.
                 retain_slot = True
+                observed_outcome = "leadership_lost"
                 raise
             except asyncio.CancelledError:
+                observed_outcome = "cancelled"
                 raise
             except Exception as error:
                 block = (
@@ -1206,8 +1246,13 @@ class ArtifactProcessingSupervisor:
                     else None
                 )
                 if block is not None:
+                    observed_outcome = "blocked"
                     self._wait_for_block(state, running.assignment, block)
                     continue
+                if isinstance(error, TimeoutError):
+                    observed_outcome = "timeout"
+                elif isinstance(error, _WorkerExecutionError) and error.failure.cancelled:
+                    observed_outcome = "cancelled"
                 previous = state.retries.get(scope)
                 failures = 1 if previous is None else previous.failures + 1
                 delay = self._retry_delay(failures)
@@ -1218,6 +1263,11 @@ class ArtifactProcessingSupervisor:
                 self._record_failure(state, error, "worker")
                 self._log_failure(state, running.assignment, error, "worker", failures, delay)
             finally:
+                if not retain_slot and self._processing_observer is not None:
+                    with suppress(Exception):
+                        self._processing_observer(
+                            state.binding.artifact_family, observed_outcome, state.invocation_seconds
+                        )
                 if not retain_slot:
                     state.running.pop(scope, None)
                     self.wake(state.binding.binding_name)
@@ -1258,6 +1308,9 @@ class ArtifactProcessingSupervisor:
         await self._reap_unconfirmed_exits()
         for state in self._families.values():
             state.running.clear()
+            state.pending_since.clear()
+            state.discovered_at = 0
+            state.requested_observed_at = 0
             state.ready.clear()
             state.queued.clear()
             state.retry_queued.clear()

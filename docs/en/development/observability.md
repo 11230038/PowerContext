@@ -106,3 +106,19 @@ For new instrumentation, cover the observable outcome that can regress: success,
 required field output, sensitive-value exclusion, and failure isolation. A process-boundary claim requires a real
 spawned worker; invoking a hook directly or replacing the worker entrypoint cannot prove built-in worker coverage.
 Model-provider and OTLP-backend claims require their own real execution evidence. Run `make check` before delivery.
+
+## Child execution and metric observations
+
+Server composition supplies `WorkerTracing.wrap` through the Runtime's optional `worker_entrypoint_wrapper` port.
+The wrapper is built at launch, so only the current supervisor execution context crosses spawn. Child composition reads
+its optional `worker_observability` context to construct instrumented models and runtime stages; it must not import
+Server settings or configure a provider itself. Custom launchers remain responsible for their own bootstrap.
+
+Processing observations are emitted after finalized reap, and only verified acknowledgement receives `success`.
+Telemetry observers are synchronous, bounded, non-I/O callbacks and cannot change domain outcomes. Queue-loss telemetry
+is emitted by the recorder that owns admission/write results. Do not infer worker queue losses from an API process.
+Keep observation timestamps distinct from scrape time, and document cache, reset and incomplete-coverage semantics.
+
+Run `uv run --extra tracing-otlp pytest tests/e2e/test_worker_otlp.py tests/test_observability_health.py -q` for real spawn,
+OTLP/HTTP, local model fixture, Pydantic AI propagation and background-listener checks. This proves local reception,
+not storage/query acceptance by an external backend.
