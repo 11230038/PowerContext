@@ -264,6 +264,13 @@ jobs:
             tests/e2e/test_atomic_artifact_search_http.py \
             tests/e2e/test_atomic_memory_long_fts_query.py
 
+      - name: Test background listener lifecycle without skips
+        timeout-minutes: 5
+        run: |
+          uv run --locked --extra server python scripts/run_atomic_memory_clean_migration.py \
+            oceanbase --output "$MIGRATION_REPORTS/background-metrics" --tests \
+            tests/e2e/test_background_metrics.py
+
       - name: Collect the database log
         if: always()
         run: |

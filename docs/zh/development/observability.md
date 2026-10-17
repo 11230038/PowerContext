@@ -124,6 +124,21 @@ Queue gauge 仅表示父进程 recorder；child 丢失计数累加到本地 snap
 Observation timestamp 与 scrape time 要明确区分，并记录
 cache、reset 以及覆盖不完整的语义。
 
-运行 `uv run --extra tracing-otlp pytest tests/e2e/test_worker_otlp.py tests/test_observability_health.py -q` 验证真实
-spawn、OTLP/HTTP、本地 model fixture、Pydantic AI propagation 和 background listener。这些证据证明本地 reception，
-不能代替外部 backend 的存储与查询验收。
+通过默认 `uv sync` 新建的开发环境不包含 `tracing-otlp`。在该环境中，`make test` 会跳过 OTLP worker tests
+和 worker model-usage tests 中的 tracing 用例。`make check` 不执行这些测试。
+`Main` workflow 的 `worker-observability` job 安装该 extra，
+并要求所选测试全部通过，不允许 skip：
+
+```bash
+uv run --locked --extra tracing-otlp pytest tests/e2e/test_worker_otlp.py \
+  tests/e2e/test_worker_model_usage.py tests/test_observability_health.py -q
+```
+
+这些检查覆盖真实 spawn、OTLP/HTTP、本地 model fixture、Pydantic AI propagation 和 metrics HTTP surface。
+这些证据证明本地 reception，不能代替外部 backend 的存储与查询验收。
+
+Background CLI listener 生命周期测试需要可丢弃的 OceanBase 实例及
+`POWERCONTEXT_TEST_MIGRATION_OCEANBASE_URL`。`E2E harness` workflow 的 `atomic-memory-clean-oceanbase` job
+通过 clean migration acceptance runner 执行 `tests/e2e/test_background_metrics.py`，不允许测试 skip。
+该测试验证真实 background process、metrics 授权、business routes 不可用，以及 SIGTERM 后正常退出。
+未设置该 backend 变量时，默认测试会跳过此生命周期测试。

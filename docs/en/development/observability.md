@@ -122,6 +122,21 @@ missing reports remain unknown. Preserve received counters even if subsequent ac
 Queue gauges describe the parent recorder only; child loss counters are added without replacing that local snapshot.
 Keep observation timestamps distinct from scrape time, and document cache, reset and incomplete-coverage semantics.
 
-Run `uv run --extra tracing-otlp pytest tests/e2e/test_worker_otlp.py tests/test_observability_health.py -q` for real spawn,
-OTLP/HTTP, local model fixture, Pydantic AI propagation and background-listener checks. This proves local reception,
-not storage/query acceptance by an external backend.
+A fresh development environment installed with `uv sync` does not include `tracing-otlp`. In that environment,
+`make test` skips OTLP worker tests and the tracing cases in worker model-usage tests. `make check` does not execute
+these tests. The `Main` workflow's
+`worker-observability` job installs the extra and requires all selected tests to pass without skips:
+
+```bash
+uv run --locked --extra tracing-otlp pytest tests/e2e/test_worker_otlp.py \
+  tests/e2e/test_worker_model_usage.py tests/test_observability_health.py -q
+```
+
+These checks exercise real spawn, OTLP/HTTP, a local model fixture, Pydantic AI propagation and the metrics HTTP
+surface. They prove local reception, not storage/query acceptance by an external backend.
+
+The background CLI listener lifecycle requires a disposable OceanBase instance and
+`POWERCONTEXT_TEST_MIGRATION_OCEANBASE_URL`. The `E2E harness` workflow's `atomic-memory-clean-oceanbase` job runs
+`tests/e2e/test_background_metrics.py` through the clean migration acceptance runner, which rejects skipped tests.
+It verifies the real background process, authorized metrics, absence of business routes and clean SIGTERM shutdown.
+Without this backend setting, default test runs skip that lifecycle test.
