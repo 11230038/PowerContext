@@ -257,7 +257,9 @@ def test_builtin_spawned_worker_exports_model_and_execution_spans_to_otlp(
                 parents = [span for span, _ in spans if span.span_id == execution.parent_span_id]
                 assert parents and parents[0].trace_id == execution.trace_id
                 child_spans = [span for span, role in spans if role.get("powercontext.service.role") == "worker"]
-                assert any(span.name.startswith("chat ") for span in child_spans)
+                model_spans = [span for span in child_spans if span.name.startswith("chat ")]
+                assert model_spans
+                assert all(not span.events and not span.status.message for span in model_spans)
                 outcomes = {attribute.key: attribute.value.string_value for attribute in execution.attributes}
                 if timeout:
                     assert outcomes["powercontext.operation.outcome"] == "failure"

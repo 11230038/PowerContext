@@ -106,7 +106,8 @@ Identity 和 error 字段为新增字段；console 行现在包含 identity。
 安装 `tracing-otlp` extra，启用 `POWERCONTEXT_SERVER_TRACING_ENABLED=true`，并配置 OTLP HTTP 接收端。
 完整步骤见 [Phoenix](trace-with-phoenix.md) 或 [Langfuse](trace-with-langfuse.md)。
 缺少 extra 时启用 Tracing 会导致启动失败。PowerContext 跟踪自身的传输、应用和模型调用，
-不会自动采集宿主中无关的模型调用。
+不会自动采集宿主中无关的模型调用。Model span 关闭自动 exception event 和 status description，
+避免 provider error body 导出 Source、prompt 或 response 内容；仅保留有界的 `error.type` 和 error status。
 
 使用环境文件部署时，将 Tracing 与 OpenTelemetry 变量写入传给 Server 的显式文件。
 优先级规则见[环境配置](../get-started/configure-server-environment.md)。

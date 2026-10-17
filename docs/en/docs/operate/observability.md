@@ -110,7 +110,9 @@ optional model provider. See [Troubleshoot](troubleshoot.md) for status definiti
 Install the `tracing-otlp` extra, enable `POWERCONTEXT_SERVER_TRACING_ENABLED=true`, and configure an OTLP HTTP
 receiver. Follow the complete [Phoenix](trace-with-phoenix.md) or [Langfuse](trace-with-langfuse.md) procedure.
 Without the extra, enabling tracing fails at startup. PowerContext traces its own transport, application, and model
-calls; tracing does not capture unrelated host model calls automatically.
+calls; tracing does not capture unrelated host model calls automatically. Model spans disable automatic exception events
+and status descriptions so provider error bodies cannot export Source, prompt, or response content; only a bounded
+`error.type` and error status are retained.
 
 For environment-file deployments, put the tracing and OpenTelemetry variables in the explicit file passed to the
 Server. See [environment configuration](../get-started/configure-server-environment.md) for precedence rules.

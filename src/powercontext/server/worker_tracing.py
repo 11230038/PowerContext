@@ -21,16 +21,18 @@ import logging
 from contextlib import suppress
 from dataclasses import dataclass
 from threading import Thread
+from typing import Any
 
 from opentelemetry import propagate
 from opentelemetry.trace import SpanKind
 
-from powercontext._logging import log_safely
+from powercontext._logging import error_category, log_safely
 from powercontext.builtin.runtime.processing_contracts import (
     ArtifactProcessingBlockedError,
     ArtifactProcessingWorkAssignment,
     ArtifactProcessingWorkerCompletion,
     WorkerEntrypoint,
+    processing_error_code,
 )
 from powercontext.builtin.runtime.worker_observability import WorkerObservability, worker_observability
 from powercontext.server.settings import TracingConfig
@@ -104,12 +106,24 @@ class _TracedWorker:
             if token is not None:
                 worker_observability.reset(token)
             if span is not None:
-                if isinstance(error, ArtifactProcessingBlockedError):
-                    span.set_attributes({"powercontext.error.category": "blocked"})
-                span.finish(outcome, error=error)
+                _finish_worker_span(span, outcome, error)
             if tracing is not None:
                 # BSP/export shutdown is best-effort and cannot hold a child indefinitely.
                 with suppress(Exception):
                     flush = Thread(target=tracing.shutdown, daemon=True)
                     flush.start()
                     flush.join(timeout=1.0)
+
+
+def _finish_worker_span(span: Any, outcome: str, error: BaseException | None) -> None:
+    """Classify child failures with the supervisor's bounded vocabulary before ending the span."""
+
+    if error is not None:
+        category = (
+            "blocked"
+            if isinstance(error, ArtifactProcessingBlockedError)
+            else error_category(processing_error_code(type(error)), outcome=outcome)
+        )
+        if category is not None:
+            span.set_attributes({"powercontext.error.category": category})
+    span.finish(outcome, error=error)
