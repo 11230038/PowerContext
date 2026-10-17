@@ -9,7 +9,7 @@
 
 *[English](README.md) · [中文](README_CN.md) · [日本語](README_JP.md)*
 
-[Web サイト](https://powercontext.oceanbase.io/en/) · [クイックスタート](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/) · [Agent 連携](https://powercontext.oceanbase.io/en/docs/integrations/) · [ベンチマーク](https://powercontext.oceanbase.io/en/benchmarks/) · [インターフェース](https://powercontext.oceanbase.io/en/docs/develop/interfaces/)
+[Web サイト](https://powercontext.oceanbase.io/en/) · [クイックスタート](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/) · [手動起動](docs/en/docs/get-started/manual-start.md) · [Agent 連携](https://powercontext.oceanbase.io/en/docs/integrations/) · [ベンチマーク](https://powercontext.oceanbase.io/en/benchmarks/) · [インターフェース](https://powercontext.oceanbase.io/en/docs/develop/interfaces/)
 
 ## PowerContext とは何か？
 
@@ -111,6 +111,8 @@ Experience は、状況・行動・観察された結果・再利用可能な教
 評価手法、詳細な結果、適用範囲は[公式ベンチマークページ](https://powercontext.oceanbase.io/en/benchmarks/)を参照してください。隠すより書いておきたい注意点が 2 つあります。上記 6 件の LoCoMo Plus スコアはプロジェクト所有者から提供されたもので、検証用の実行成果物は公開されていません。公開されている再現手順は評価ハーネスの説明であり、これらのスコア自体の検証を意味するものではありません。また、Windows のサポートは `experimental` です。
 
 ## クイックスタート
+
+設定ウィザードを使わずに手動で設定・起動する場合は、[手動起動ガイド](docs/en/docs/get-started/manual-start.md)を参照してください。
 
 PowerContext は、長く使うプロジェクトのコンテキストを 1 つの会話の外に保持します。最初の実行は次の流れです。
 

@@ -9,7 +9,7 @@
 
 *[English](README.md) · [中文](README_CN.md) · [日本語](README_JP.md)*
 
-[Website](https://powercontext.oceanbase.io/) · [Quickstart](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/) · [Integrations](https://powercontext.oceanbase.io/en/docs/integrations/) · [Benchmarks](https://powercontext.oceanbase.io/en/benchmarks/) · [Interfaces](https://powercontext.oceanbase.io/en/docs/develop/interfaces/)
+[Website](https://powercontext.oceanbase.io/) · [Quickstart](https://powercontext.oceanbase.io/en/docs/get-started/quickstart/) · [Manual startup](docs/en/docs/get-started/manual-start.md) · [Integrations](https://powercontext.oceanbase.io/en/docs/integrations/) · [Benchmarks](https://powercontext.oceanbase.io/en/benchmarks/) · [Interfaces](https://powercontext.oceanbase.io/en/docs/develop/interfaces/)
 
 ## What is PowerContext?
 
@@ -146,6 +146,8 @@ artifacts are not publicly available for verification — the published instruct
 scores. Windows support is `experimental`.
 
 ## Quick start
+
+If you want to manually configure and start PowerContext, see the [manual startup guide](docs/en/docs/get-started/manual-start.md).
 
 PowerContext keeps durable project context outside any single chat. A first run follows this path:
 

@@ -9,7 +9,7 @@
 
 *[English](README.md) · [中文](README_CN.md) · [日本語](README_JP.md)*
 
-[网站](https://powercontext.oceanbase.io/zh/) · [快速开始](https://powercontext.oceanbase.io/zh/docs/get-started/quickstart/) · [接入 Agent](https://powercontext.oceanbase.io/zh/docs/integrations/) · [评测](https://powercontext.oceanbase.io/zh/benchmarks/) · [接口](https://powercontext.oceanbase.io/zh/docs/develop/interfaces/)
+[网站](https://powercontext.oceanbase.io/zh/) · [快速开始](https://powercontext.oceanbase.io/zh/docs/get-started/quickstart/) · [手动启动](docs/zh/docs/get-started/manual-start.md) · [接入 Agent](https://powercontext.oceanbase.io/zh/docs/integrations/) · [评测](https://powercontext.oceanbase.io/zh/benchmarks/) · [接口](https://powercontext.oceanbase.io/zh/docs/develop/interfaces/)
 
 ## PowerContext 是什么？
 
@@ -115,6 +115,8 @@ Experience 记录一个场景、一次动作、观察到的结果，以及可复
 评测方法、完整结果和适用边界：[官网评测页](https://powercontext.oceanbase.io/zh/benchmarks/)。有两点我们宁愿写明而不是藏起来：上面这六组 LoCoMo Plus 分数由项目方提供，运行产物尚未公开供复核——公开的是评测工具的复现步骤，不代表这些分数本身已被公开验证。Windows 支持为 `experimental`。
 
 ## 快速开始
+
+如果希望自己一步一步配置并启动 PowerContext，请查看[手动启动文档](docs/zh/docs/get-started/manual-start.md)。
 
 PowerContext 把可长期复用的项目上下文放在单次对话之外。一次完整体验可以概括为：
 
