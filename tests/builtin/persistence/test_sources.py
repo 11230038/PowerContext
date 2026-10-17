@@ -68,6 +68,12 @@ class UpperCaseSource(SerializationAliasSource):
     model_config = ConfigDict(alias_generator=str.upper, populate_by_name=True)
 
 
+class NativeCamelCaseSource(SerializationAliasSource):
+    model_config = ConfigDict(alias_generator=to_camel)
+
+    body: str
+
+
 class SerializationAliasAdapter:
     name = "serialization-alias"
     input_class = SerializationAliasInput
@@ -221,6 +227,40 @@ def test_remote_observation_ingestion_accepts_serialization_aliases(
             "description": "Remote alias description.",
             "wire_text": "Remote note text.",
         }
+
+    asyncio.run(scenario())
+
+
+def test_native_generated_alias_source_survives_read_replay_and_restart(tmp_path) -> None:
+    async def scenario() -> None:
+        adapter = SerializationAliasAdapter(NativeCamelCaseSource)
+        registry = SourceDefinitionRegistry((AdapterSourceDefinition(adapter, version="2"),))
+        value = SerializationAliasInput(source_id="native-2", body="Keep the native version and body.")
+        source = await adapter.resolve(value)
+        # Keep the persisted version nondefault regardless of the constructor's alias rules.
+        source.definition_version = "2"
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'native-alias.db'}")
+
+        async with SQLiteProfile.open(config, tables=SHARED_TABLES) as profile:
+            contexts = RelationalContexts(database=profile.database, source_registry=registry)
+            context = await contexts.get("scope-a")
+            assert await context.sources.add(source) == source
+            loaded = await context.sources.get(source)
+            assert loaded == source
+            assert await context.sources.read(loaded) == value.body
+            assert await context.sources.add(source) == source
+            assert await context.sources.journal.position(source) == 1
+
+        async with SQLiteProfile.open(config, tables=SHARED_TABLES) as profile:
+            contexts = RelationalContexts(database=profile.database, source_registry=registry)
+            context = await contexts.get("scope-a")
+            loaded = await context.sources.get(source)
+            assert loaded == source
+            assert loaded.definition_version == "2"
+            resolved = await context.sources.resolve(value)
+            assert resolved == source
+            assert await context.sources.add(resolved) == source
+            assert await context.sources.journal.position(resolved) == 1
 
     asyncio.run(scenario())
 

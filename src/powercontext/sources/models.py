@@ -60,11 +60,11 @@ class SourceProjectionKey(BaseModel):
 class Source(BaseModel):
     """Base value for an adapter-owned Source description."""
 
-    # Envelope keys remain canonical when a Definition generates aliases for its own fields.
-    name: str = Field(serialization_alias="name")
-    definition_version: str = Field(default="1", serialization_alias="definition_version")
-    materialization: SourceMaterialization = Field(serialization_alias="materialization")
-    description: str | None = Field(default=None, serialization_alias="description")
+    # Envelope keys stay canonical for validation and serialization, independently of adapter aliases.
+    name: str = Field(alias="name")
+    definition_version: str = Field(default="1", alias="definition_version")
+    materialization: SourceMaterialization = Field(alias="materialization")
+    description: str | None = Field(default=None, alias="description")
 
     @field_validator("definition_version")
     @classmethod
