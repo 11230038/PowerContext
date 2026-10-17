@@ -71,7 +71,7 @@ def test_background_cli_serves_only_authorized_metrics_and_stops_cleanly(tmp_pat
     reports = os.environ.get("MIGRATION_REPORTS")
     log_path = Path(reports) / "background-metrics" / "background.log" if reports else tmp_path / "background.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("w+") as output:
+    with log_path.open("w") as output:
         process = subprocess.Popen(
             [
                 os.path.join(os.path.dirname(sys.executable), "powercontext"),
@@ -97,11 +97,9 @@ def test_background_cli_serves_only_authorized_metrics_and_stops_cleanly(tmp_pat
                         time.sleep(0.05)
                     if ready:
                         break
-                output.flush()
-                output.seek(0)
                 assert ready, (
                     f"Background CLI did not become live (returncode={process.poll()}); log tail:\n"
-                    + output.read()[-16000:]
+                    + log_path.read_text(errors="replace")[-16000:]
                 )
                 assert client.get(base + "/metrics").status_code == 401
                 headers = {"Authorization": "Bearer background-fixture-token"}
