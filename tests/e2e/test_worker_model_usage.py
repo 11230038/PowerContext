@@ -59,7 +59,10 @@ class _UsageFaultWorker:
             for _ in range(3):
                 original_offer(recorder, *args, **kwargs)
 
-        with patch.object(StatisticsRepository, "record", failed_write), patch.object(_ModelUsageRecorder, "offer", burst):
+        with (
+            patch.object(StatisticsRepository, "record", failed_write),
+            patch.object(_ModelUsageRecorder, "offer", burst),
+        ):
             completion = self.entrypoint(assignment)
         if self.failure == "returned_error":
             raise RuntimeError("controlled worker failure after recorder shutdown")  # noqa: TRY003
@@ -82,14 +85,16 @@ def _model_server():
                     "object": "chat.completion",
                     "created": 1,
                     "model": "fixture",
-                    "choices": [{
-                        "index": 0,
-                        "finish_reason": "stop",
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps({"probes": []} if b"probes" in payload else {"candidates": []}),
-                        },
-                    }],
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "stop",
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps({"probes": []} if b"probes" in payload else {"candidates": []}),
+                            },
+                        }
+                    ],
                     "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
                 }).encode()
             self.send_response(200)
@@ -140,23 +145,30 @@ def test_builtin_worker_usage_losses_reach_server_metrics(tmp_path, monkeypatch,
     with _model_server() as endpoint:
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", endpoint + "/v1/traces")
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", "0.2")
-        app = create_server_app(settings=ServerSettings(
-            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'usage.db'}"),
-            inference=InferenceConfig(generation_model="openai-chat:fixture", generation_base_url=endpoint + "/model"),
-            runtime=RuntimeConfig.model_validate({
-                "artifact_processing_families": (family,),
-                family.replace("-", "_") + "_schedule_seconds": 0.05,
-                "model_usage_queue_capacity": 1,
-            }),
-            tracing=TracingConfig(enabled=tracing),
-            mcp=McpConfig(enabled=False),
-        ))
+        app = create_server_app(
+            settings=ServerSettings(
+                database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'usage.db'}"),
+                inference=InferenceConfig(
+                    generation_model="openai-chat:fixture", generation_base_url=endpoint + "/model"
+                ),
+                runtime=RuntimeConfig.model_validate({
+                    "artifact_processing_families": (family,),
+                    family.replace("-", "_") + "_schedule_seconds": 0.05,
+                    "model_usage_queue_capacity": 1,
+                }),
+                tracing=TracingConfig(enabled=tracing),
+                mcp=McpConfig(enabled=False),
+            )
+        )
         with TestClient(app) as client:
             scope = client.get("/v1/scopes/default").json()["scope_id"]
-            assert client.post(
-                "/v1/sources/content",
-                json={"scope_id": scope, "source_id": "usage-fixture", "content": "User prefers short answers."},
-            ).status_code == 202
+            assert (
+                client.post(
+                    "/v1/sources/content",
+                    json={"scope_id": scope, "source_id": "usage-fixture", "content": "User prefers short answers."},
+                ).status_code
+                == 202
+            )
             terminal = "completed" if failure == "none" else "failed"
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
