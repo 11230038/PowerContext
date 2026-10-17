@@ -169,7 +169,7 @@ from powercontext.builtin.runtime.extraction_diagnostics import ExtractionDiagno
 from powercontext.builtin.runtime.family_processing import FAMILY_BINDINGS, FamilyWorkerSpec, run_family_worker
 from powercontext.builtin.runtime.memory_write_gate import build_memory_write_gate
 from powercontext.builtin.runtime.models import DreamOperationCapability, MemorySearchMode, RuntimeCapabilities
-from powercontext.builtin.runtime.processing_contracts import WorkerEntrypoint
+from powercontext.builtin.runtime.processing_contracts import ArtifactProcessingModelUsageDelta, WorkerEntrypoint
 from powercontext.builtin.runtime.processing_discovery import SourceProcessingPendingProvider, enabled_profile_scopes
 from powercontext.builtin.runtime.processing_registry import (
     canonical_processing_manifest,
@@ -194,6 +194,7 @@ from powercontext.builtin.runtime.topic_memory_processing import (
 )
 from powercontext.builtin.runtime.topic_memory_scope import topic_memory_processing_block
 from powercontext.builtin.runtime.topic_memory_search import TopicMemorySearcher
+from powercontext.builtin.runtime.worker_observability import worker_model_usage_collector
 from powercontext.builtin.sources import (
     BUILTIN_SOURCE_REGISTRY,
     TEXT_EVIDENCE_PROJECTION_KEY,
@@ -447,6 +448,7 @@ async def open_builtin_runtime(
     memory_write_gate: MemoryWriteGate | None = None,
     instrumentation: InstrumentationSettings | None = None,
     model_usage_observer: Callable[[int, int, int, int], None] | None = None,
+    worker_model_usage_observer: Callable[[ArtifactProcessingModelUsageDelta | None], None] | None = None,
     scope_cache_observer: ScopeCacheObserver | None = None,
     topic_memory_search_observer: Callable[[str, bool], None] | None = None,
     tracing: RuntimeTracing | None = None,
@@ -635,6 +637,7 @@ async def open_builtin_runtime(
             worker_security=worker_security,
             worker_initializer=worker_initializer,
             worker_entrypoint_wrapper=worker_entrypoint_wrapper,
+            worker_model_usage_observer=worker_model_usage_observer,
             source_registry=configured_source_registry,
         )
         log_safely(
@@ -844,6 +847,7 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
     worker_security: dict[str, Any] | None = None,
     worker_initializer: Callable[[], None] | None = None,
     worker_entrypoint_wrapper: Callable[[WorkerEntrypoint], WorkerEntrypoint] | None = None,
+    worker_model_usage_observer: Callable[[ArtifactProcessingModelUsageDelta | None], None] | None = None,
     source_registry: SourceDefinitionRegistry = BUILTIN_SOURCE_REGISTRY,
 ) -> tuple[ArtifactProcessingBinding, ...]:
     configured = list(bindings)
@@ -920,7 +924,10 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
                 binding_name=binding,
                 artifact_family=family,
                 launcher=SpawnArtifactProcessingWorkerLauncher(
-                    entrypoint, initializer=worker_initializer, entrypoint_wrapper=worker_entrypoint_wrapper
+                    entrypoint,
+                    initializer=worker_initializer,
+                    entrypoint_wrapper=worker_entrypoint_wrapper,
+                    collect_model_usage=worker_model_usage_observer is not None,
                 ),
                 max_workers=getattr(config.runtime, f"{prefix}_max_workers"),
                 worker_timeout_seconds=getattr(config.runtime, f"{prefix}_worker_timeout_seconds"),
@@ -936,6 +943,7 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
                 work_block=partial(topic_memory_processing_block, dream_enabled=config.runtime.dream_enabled)
                 if family == "topic-memory"
                 else None,
+                worker_model_usage_observer=worker_model_usage_observer,
             )
         )
     _validate_processing_registrations(configured)
@@ -1030,6 +1038,10 @@ async def open_builtin_contexts(
 ) -> AsyncIterator[RelationalContexts]:
     """Open the selected database and expose scope-bound PowerContext providers."""
 
+    if model_usage_observer is None:
+        collector = worker_model_usage_collector.get()
+        if collector is not None:
+            model_usage_observer = collector.observer()
     database = config.database
     configured_token_estimator = character_token_estimator() if token_estimator is None else token_estimator
     if isinstance(database, SQLiteConfig):

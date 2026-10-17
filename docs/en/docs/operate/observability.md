@@ -142,8 +142,9 @@ this timestamp does not bypass or describe the age of an individual cached probe
 | `artifact_processing_last_success_timestamp_seconds` | Latest supervisor-verified acknowledgement, not merely child return |
 | `artifact_processing_oldest_observed_pending_timestamp_seconds` | Earliest local admission still retained in ready/running/retry state; zero means none observed |
 | `artifact_processing_invocation_duration_seconds{family,outcome}` | Histogram of finalized invocation attempts including launch, execution and acknowledgement; each retry is another sample |
-| `model_usage_queue_depth`, `model_usage_queue_capacity` | Local usage-recorder queue and capacity; queue depth excludes the in-flight write |
-| `model_usage_dropped_records_total`, `model_usage_write_failures_total` | Local cumulative lost records and failed/indeterminate writes; best-effort statistics, not billing |
+| `model_usage_queue_depth`, `model_usage_queue_capacity` | Parent-process recorder queue and capacity; excludes the in-flight write and child queues |
+| `model_usage_dropped_records_total`, `model_usage_write_failures_total` | Parent recorder losses plus received child loss counters; best-effort statistics, not billing |
+| `model_usage_worker_reports_total{outcome}` | Invocation attempts with `received` recorder counters or `missing` observations; missing does not mean zero losses |
 | `metrics_collection_failures_total` | Failed processing snapshot refreshes; an old snapshot can remain visible |
 
 Processing timestamps use `0` for an observation that has never occurred. All counts, histograms and timestamps belong
@@ -156,7 +157,13 @@ and `timeout`; a slot retained for leadership cleanup is not counted again as a 
 
 Processing labels use registered family names and bounded outcomes, never scope/worker/request identities. Scrapes read
 in-memory snapshots; local ready/retry/running observation work is bounded by scheduler limits rather than database size.
-Usage telemetry observes this process's recorder only; an API scrape cannot report drops in a different worker process.
+Built-in spawned workers return two cumulative loss counters after recorder shutdown, on both success and failure.
+The owning supervisor adds each attempt's counters once, independently of acknowledgement and tracing configuration.
+Multiple recorders opened during one child invocation contribute to the same report. Scrapes do not recount reports.
+Child queue depth/capacity are not live measurements in this endpoint. A running child has not yet reported; a crash,
+forced termination, or invocation that never observed a recorder produces a `missing` report rather than known zero losses.
+This projection is not durable: parent restart or a lost child report can lose observations. Custom launchers must supply
+their own report and observer wiring. An API-only process cannot observe another background service's children.
 Scrape every deployed API/background target and keep role/instance attribution in target labels. An absent target or
 missing sample must not be interpreted as zero failures. Do not sum process snapshots as if they were one durable ledger.
 

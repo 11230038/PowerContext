@@ -236,6 +236,7 @@ def create_server_app(  # noqa: C901
                     topic_memory_search_observer=None if metrics is None else metrics.observe_topic_memory_search,
                     tracing=resolved_tracing,
                     model_usage_observer=None if metrics is None else metrics.observe_model_usage,
+                    worker_model_usage_observer=None if metrics is None else metrics.observe_worker_model_usage,
                     processing_observer=None if metrics is None else metrics.observe_processing,
                     scheduled_source_runner=scheduled_source_runner,
                     scheduled_experience_runner=scheduled_experience_runner,

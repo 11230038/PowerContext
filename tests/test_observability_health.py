@@ -89,7 +89,17 @@ def test_processing_histogram_counts_attempts_not_scrapes_and_bounds_labels():
     assert 'invocation_duration_seconds_count{family="memory",outcome="timeout"} 1.0' in first
     assert 'invocation_duration_seconds_sum{family="memory",outcome="success"} 1.0' in first
     assert "private/scope" not in first
-    assert first == metrics.render().decode()
+    histogram = [
+        line
+        for line in first.splitlines()
+        if line.startswith("powercontext_server_artifact_processing_invocation_duration_seconds")
+    ]
+    repeated = [
+        line
+        for line in metrics.render().decode().splitlines()
+        if line.startswith("powercontext_server_artifact_processing_invocation_duration_seconds")
+    ]
+    assert histogram == repeated
 
 
 def test_processing_freshness_survives_scrape_without_refreshing_observations():

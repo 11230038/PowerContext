@@ -26,7 +26,7 @@ import traceback as traceback_module
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextlib import contextmanager, nullcontext, suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from multiprocessing.context import SpawnProcess
@@ -61,6 +61,7 @@ from powercontext.builtin.persistence.tables import ARTIFACT_PROCESSING_INTENTS_
 from powercontext.builtin.runtime.processing_contracts import (
     ArtifactProcessingBlock,
     ArtifactProcessingBlockedError,
+    ArtifactProcessingModelUsageDelta,
     ArtifactProcessingWorkAssignment,
     ArtifactProcessingWorkerCompletion,
     ArtifactProcessingWorkerFailure,
@@ -71,6 +72,10 @@ from powercontext.builtin.runtime.processing_contracts import (
     processing_error_code,
 )
 from powercontext.builtin.runtime.protocols import RuntimeSpan, RuntimeTracing
+from powercontext.builtin.runtime.worker_observability import (
+    WorkerModelUsageCollector,
+    worker_model_usage_collector,
+)
 
 logger = logging.getLogger(__name__)
 _OCEANBASE_TICK_SECONDS = 1.0
@@ -125,6 +130,9 @@ class ArtifactProcessingBinding:
     # Applies to every invocation, including explicit requests and retries.
     # Domains inspect durable metadata here; they retain their Worker guards.
     work_block: Callable[[AsyncConnection, str, str], Awaitable[ArtifactProcessingBlock | None]] | None = None
+    # Receives one fixed telemetry summary after every worker execution attempt.
+    # It must not affect domain scheduling or completion semantics.
+    worker_model_usage_observer: Callable[[ArtifactProcessingModelUsageDelta | None], None] | None = None
 
     def __post_init__(self) -> None:
         if not self.binding_name or self.binding_name != self.binding_name.strip():
@@ -210,10 +218,12 @@ class SpawnArtifactProcessingWorkerLauncher:
         *,
         initializer: Callable[[], None] | None = None,
         entrypoint_wrapper: Callable[[WorkerEntrypoint], WorkerEntrypoint] | None = None,
+        collect_model_usage: bool = False,
     ) -> None:
         self._entrypoint = entrypoint
         self._initializer = initializer
         self._entrypoint_wrapper = entrypoint_wrapper
+        self._collect_model_usage = collect_model_usage
 
     async def start(self, assignment: ArtifactProcessingWorkAssignment) -> ArtifactProcessingWorkerHandle:
         context = multiprocessing.get_context("spawn")
@@ -224,7 +234,7 @@ class SpawnArtifactProcessingWorkerLauncher:
                 entrypoint = self._entrypoint_wrapper(entrypoint)
         process = _OwnedSpawnProcess(
             target=_run_spawned_worker,
-            args=(sender, entrypoint, assignment, self._initializer),
+            args=(sender, entrypoint, assignment, self._initializer, self._collect_model_usage),
             name=f"powercontext-artifact-worker-{assignment.worker_id}",
             daemon=False,
         )
@@ -1071,7 +1081,7 @@ class ArtifactProcessingSupervisor:
     def _retry_delay(self, failures: int) -> float:
         return min(self._retry_cap, self._retry_base * 2 ** min(failures - 1, 20) * self._jitter())
 
-    async def _execute(
+    async def _execute(  # noqa: C901 - worker lifecycle owns setup, result and cleanup boundaries
         self, binding: ArtifactProcessingBinding, assignment: ArtifactProcessingWorkAssignment
     ) -> ArtifactProcessingWorkerCompletion:
         attributes = {"powercontext.artifact_processing.family": binding.artifact_family}
@@ -1082,6 +1092,7 @@ class ArtifactProcessingSupervisor:
                 "artifact_processing.worker", operation="process_artifact_scope", attributes=attributes
             )
         )
+        model_usage: ArtifactProcessingModelUsageDelta | None = None
         with log_context(_worker_log_fields(assignment)), background as span, _observe_worker_error(span):
             handle: ArtifactProcessingWorkerHandle | None = None
             try:
@@ -1101,6 +1112,7 @@ class ArtifactProcessingSupervisor:
                         _observe_worker_error(wait_span),
                     ):
                         completion = await handle.wait()
+                    model_usage = completion.model_usage
                     if completion.outcome is ArtifactProcessingWorkerOutcome.LEADERSHIP_LOST:
                         raise ArtifactProcessingLeadershipLostError(  # noqa: TRY301
                             self._supervisor_group, self.holder_id, 0
@@ -1132,6 +1144,8 @@ class ArtifactProcessingSupervisor:
                         span.set_outcome(completion.outcome.value)
                     return completion
             except BaseException as error:
+                if isinstance(error, _WorkerExecutionError) and error.failure.model_usage is not None:
+                    model_usage = error.failure.model_usage
                 if isinstance(error, (asyncio.CancelledError, TimeoutError)):
                     log_safely(
                         logger,
@@ -1151,6 +1165,10 @@ class ArtifactProcessingSupervisor:
                     cleanup = asyncio.create_task(self._terminate_worker(handle))
                     await _complete_cleanup(cleanup)
                 raise
+            finally:
+                if binding.worker_model_usage_observer is not None:
+                    with suppress(Exception):
+                        binding.worker_model_usage_observer(model_usage)
 
     def _log_completion_hold(
         self,
@@ -1493,6 +1511,7 @@ def _run_spawned_worker(
     entrypoint: WorkerEntrypoint,
     assignment: ArtifactProcessingWorkAssignment,
     initializer: Callable[[], None] | None = None,
+    collect_model_usage: bool = False,
 ) -> None:
     with log_context(_worker_log_fields(assignment)):
         if initializer is not None:
@@ -1515,9 +1534,14 @@ def _run_spawned_worker(
             "Artifact processing worker started",
             extra={"event": "artifact_processing.worker.started"},
         )
+        collector = WorkerModelUsageCollector() if collect_model_usage else None
+        token = None if collector is None else worker_model_usage_collector.set(collector)
         try:
             completion = entrypoint(assignment)
-            sender.send(ArtifactProcessingWorkerCompletion() if completion is None else completion)
+            completed = ArtifactProcessingWorkerCompletion() if completion is None else completion
+            if collector is not None and isinstance(completed, ArtifactProcessingWorkerCompletion):
+                completed = replace(completed, model_usage=collector.snapshot())
+            sender.send(completed)
             log_safely(
                 logger,
                 logging.INFO,
@@ -1571,9 +1595,12 @@ def _run_spawned_worker(
                     traceback=_safe_traceback(error),
                     block=error.block if isinstance(error, ArtifactProcessingBlockedError) else None,
                     cancelled=isinstance(error, asyncio.CancelledError),
+                    model_usage=None if collector is None else collector.snapshot(),
                 )
             )
         finally:
+            if token is not None:
+                worker_model_usage_collector.reset(token)
             sender.close()
 
 

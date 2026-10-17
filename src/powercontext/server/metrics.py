@@ -40,6 +40,7 @@ from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily, Metri
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from typing_extensions import override
 
+from powercontext.builtin.runtime.processing_contracts import ArtifactProcessingModelUsageDelta
 from powercontext.limits import MAX_ARTIFACT_FAMILY_LENGTH
 from powercontext.server.context import is_internal_bridge
 
@@ -124,29 +125,35 @@ class _ProcessingMetricsCollector:
 
 
 class _ModelUsageMetricsCollector:
-    """Render a single process-local recorder snapshot without recounting on scrape."""
+    """Render local queue gauges and local plus completed-worker loss counters."""
 
     def __init__(self) -> None:
         self.snapshot: tuple[int, int, int, int] | None = None
+        self.worker_losses: tuple[int, int] | None = None
 
     def collect(self) -> Iterator[Metric]:
         snapshot = self.snapshot
-        if snapshot is None:
+        worker_losses = self.worker_losses
+        if snapshot is None and worker_losses is None:
             return
-        for name, value, description, counter in zip(
-            ("queue_depth", "queue_capacity", "dropped_records", "write_failures"),
-            snapshot,
+        if snapshot is not None:
+            for name, value, description in (
+                ("queue_depth", snapshot[0], "Local queued records, excluding in-flight writes and child queues."),
+                ("queue_capacity", snapshot[1], "Local recorder queue capacity, excluding child queues."),
+            ):
+                yield GaugeMetricFamily("powercontext_server_model_usage_" + name, description, value=value)
+        local_losses = (0, 0) if snapshot is None else snapshot[2:]
+        losses = tuple(local + worker for local, worker in zip(local_losses, worker_losses or (0, 0), strict=True))
+        for name, value, description in zip(
+            ("dropped_records", "write_failures"),
+            losses,
             (
-                "Queued records, excluding in-flight writes.",
-                "Queue capacity.",
-                "Dropped local records; resets on restart.",
-                "Failed/indeterminate local writes; resets on restart.",
+                "Dropped records from the local recorder and received child reports; resets on restart.",
+                "Failed/indeterminate writes from the local recorder and received child reports; resets on restart.",
             ),
-            (False, False, True, True),
             strict=True,
         ):
-            family = CounterMetricFamily if counter else GaugeMetricFamily
-            yield family("powercontext_server_model_usage_" + name, description, value=value)
+            yield CounterMetricFamily("powercontext_server_model_usage_" + name, description, value=value)
 
 
 class ServerMetrics:
@@ -230,6 +237,12 @@ class ServerMetrics:
         )
         self._usage = _ModelUsageMetricsCollector()
         self.registry.register(self._usage)
+        self.worker_usage_reports = Counter(
+            "powercontext_server_model_usage_worker_reports_total",
+            "Worker attempts with a received recorder summary or missing observations; missing is not zero losses.",
+            ("outcome",),
+            registry=self.registry,
+        )
         self.collection_failures = Counter(
             "powercontext_server_metrics_collection_failures_total",
             "Failed processing snapshot refreshes.",
@@ -279,6 +292,16 @@ class ServerMetrics:
     def observe_model_usage(self, queued: int, capacity: int, dropped: int, failed: int) -> None:
         with suppress(Exception):
             self._usage.snapshot = (queued, capacity, dropped, failed)
+
+    def observe_worker_model_usage(self, delta: ArtifactProcessingModelUsageDelta | None) -> None:
+        """Add one attempt's child counters once, independently of durable acknowledgement."""
+        with suppress(Exception):
+            if delta is None:
+                self.worker_usage_reports.labels(outcome="missing").inc()
+                return
+            dropped, failed = self._usage.worker_losses or (0, 0)
+            self._usage.worker_losses = (dropped + delta.dropped_records, failed + delta.write_failures)
+            self.worker_usage_reports.labels(outcome="received").inc()
 
     def observe_readiness(self, state: str, checks: Mapping[str, str]) -> None:
         """Publish the last evaluation without executing dependency probes at scrape time."""

@@ -116,7 +116,10 @@ Server settings or configure a provider itself. Custom launchers remain responsi
 
 Processing observations are emitted after finalized reap, and only verified acknowledgement receives `success`.
 Telemetry observers are synchronous, bounded, non-I/O callbacks and cannot change domain outcomes. Queue-loss telemetry
-is emitted by the recorder that owns admission/write results. Do not infer worker queue losses from an API process.
+is emitted by the recorder that owns admission/write results. Spawn workers collect per-recorder loss deltas and return
+one bounded summary after resource cleanup, including failure results. The supervisor reports it once per attempt;
+missing reports remain unknown. Preserve received counters even if subsequent acknowledgement verification fails.
+Queue gauges describe the parent recorder only; child loss counters are added without replacing that local snapshot.
 Keep observation timestamps distinct from scrape time, and document cache, reset and incomplete-coverage semantics.
 
 Run `uv run --extra tracing-otlp pytest tests/e2e/test_worker_otlp.py tests/test_observability_health.py -q` for real spawn,

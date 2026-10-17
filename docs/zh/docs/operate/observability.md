@@ -135,8 +135,9 @@ Inference probe 保留原有正常结果 300 秒、临时失败 30 秒的缓存�
 | `artifact_processing_last_success_timestamp_seconds` | 最近一次 supervisor 验证 acknowledgement 的时间，不是 child return 时间 |
 | `artifact_processing_oldest_observed_pending_timestamp_seconds` | 本地 ready/running/retry 中最早且仍保留的 admission 时间；零表示没有观察到 |
 | `artifact_processing_invocation_duration_seconds{family,outcome}` | 已完成 reap 的 invocation attempt histogram，包含 launch、execution、acknowledgement；每次 retry 单独采样 |
-| `model_usage_queue_depth`、`model_usage_queue_capacity` | 本进程 usage recorder 的 queue 和 capacity；depth 不包含正在写入的记录 |
-| `model_usage_dropped_records_total`、`model_usage_write_failures_total` | 本进程累计丢失记录及失败或结果不确定的写入次数；不是 billing ledger |
+| `model_usage_queue_depth`、`model_usage_queue_capacity` | 父进程 recorder 的 queue 和 capacity；不包含正在写入的记录和 child queue |
+| `model_usage_dropped_records_total`、`model_usage_write_failures_total` | 父进程 recorder 与已收到的 child report 中累计丢失记录及失败或结果不确定的写入次数；不是 billing ledger |
+| `model_usage_worker_reports_total{outcome}` | 收到 recorder 计数的 `received` attempt，以及缺少观察的 `missing` attempt；missing 不表示零丢失 |
 | `metrics_collection_failures_total` | Processing snapshot 刷新失败次数；失败时可能保留上一次 snapshot |
 
 Processing timestamp 为 `0` 表示尚未发生该观察。计数、histogram 和 timestamp 属于当前 process/supervisor 生命周期，
@@ -147,8 +148,13 @@ Invocation outcomes 为 `success`、`failure`、`blocked`、`cancelled`、`confl
 不会被重复统计为已完成 reap。
 
 Processing labels 仅使用已注册 family 和有界 outcome，不包含 scope/worker/request identity。Scrape 只读取内存 snapshot；
-ready/retry/running 观察工作量受 scheduler limits 限制，不随数据库总记录数增长。Usage telemetry 只观察本进程 recorder，
-API scrape 无法观察另一 worker 进程丢失的 usage records。应采集各 API/background targets，并通过 target labels 区分
+ready/retry/running 观察工作量受 scheduler limits 限制，不随数据库总记录数增长。内置 spawn worker 在 recorder 关闭后，
+通过成功或失败结果回传两个累计丢失计数。所属 supervisor 每个 attempt 只累计一次，不依赖 acknowledgement 或 tracing。
+一个 child invocation 内创建的多个 recorder 会合并为同一份 report；scrape 不会重复计数。
+Endpoint 不提供 child queue depth/capacity 的实时值。运行中的 child 尚未上报；崩溃、强制终止，或从未观察到 recorder 的
+invocation 记录为 `missing`，不能当作零丢失。该投影不持久化，父进程重启或 child report 丢失会造成观察缺口。
+Custom launcher 需自行连接 report 与 observer；API-only 进程无法观察另一个 background service 的 children。
+应采集各 API/background targets，并通过 target labels 区分
 role/instance。Target 或 sample 缺失不等于零故障；不要把各进程 snapshot 相加当作持久化总账。
 
 ### Worker execution traces 与 integration coverage

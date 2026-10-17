@@ -118,7 +118,10 @@ Custom launcher 自己负责 bootstrap。
 
 Processing observation 在最终 reap 后产生，只有验证 acknowledgement 后才计为 `success`。Telemetry observer 必须是
 同步、有界、无 I/O 的 callback，且不能改变 domain outcome。Queue-loss telemetry 由拥有 admission/write result 的
-recorder 产生，不能从 API 进程推断 child queue losses。Observation timestamp 与 scrape time 要明确区分，并记录
+recorder 产生。Spawn worker 累计各 recorder 的丢失增量，在资源清理后通过成功或失败结果回传一份有界 summary。
+Supervisor 每个 attempt 只报告一次；缺少 report 表示未知。后续 acknowledgement 验证失败也不能丢弃已收到的计数。
+Queue gauge 仅表示父进程 recorder；child 丢失计数累加到本地 snapshot，不覆盖它。
+Observation timestamp 与 scrape time 要明确区分，并记录
 cache、reset 以及覆盖不完整的语义。
 
 运行 `uv run --extra tracing-otlp pytest tests/e2e/test_worker_otlp.py tests/test_observability_health.py -q` 验证真实
