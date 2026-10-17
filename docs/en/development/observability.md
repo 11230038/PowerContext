@@ -138,5 +138,8 @@ surface. They prove local reception, not storage/query acceptance by an external
 The background CLI listener lifecycle requires a disposable OceanBase instance and
 `POWERCONTEXT_TEST_MIGRATION_OCEANBASE_URL`. The `E2E harness` workflow's `atomic-memory-clean-oceanbase` job runs
 `tests/e2e/test_background_metrics.py` through the clean migration acceptance runner, which rejects skipped tests.
-It verifies the real background process, authorized metrics, absence of business routes and clean SIGTERM shutdown.
-Without this backend setting, default test runs skip that lifecycle test.
+The test initializes its fresh database before starting the real background CLI, then checks listener startup,
+authorized metrics, absence of business routes and clean SIGTERM shutdown. The listener startup budget excludes
+first-run schema and index creation. CI retains `background-metrics/background.log` with the migration reports;
+startup failures include the child return code and a bounded log tail. Backend acceptance requires this step to pass.
+Without the backend setting, default test runs skip that lifecycle test.

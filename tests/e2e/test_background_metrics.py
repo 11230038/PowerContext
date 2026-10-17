@@ -14,9 +14,25 @@
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
+
 import pytest
 
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
+from powercontext.builtin.runtime.composition import open_builtin_runtime
+from powercontext.builtin.runtime.config import BuiltinConfig, RuntimeConfig
+from powercontext.server.authz import PrincipalRef
+from powercontext.server.authz.composition import open_builtin_access_control
+
+
+async def _initialize_background_database(config: BuiltinConfig) -> None:
+    principal = PrincipalRef(type="service", id="server-token", description="PowerContext static bearer")
+    async with (
+        open_builtin_access_control(config.database, bootstrap_administrators=(principal,)),
+        open_builtin_runtime(config),
+    ):
+        pass
 
 
 @pytest.mark.parametrize("migration_backend", ["oceanbase"], indirect=True)
@@ -30,11 +46,20 @@ def test_background_cli_serves_only_authorized_metrics_and_stops_cleanly(tmp_pat
 
     import httpx
 
+    assert isinstance(migration_backend.config, OceanBaseConfig)
+    # Complete cold OceanBase schema/index creation before timing the listener lifecycle.
+    asyncio.run(
+        _initialize_background_database(
+            BuiltinConfig(
+                database=migration_backend.config,
+                runtime=RuntimeConfig(artifact_processing_role="background"),
+            )
+        )
+    )
     with socket.socket() as candidate:
         candidate.bind(("127.0.0.1", 0))
         port = candidate.getsockname()[1]
     environment = {key: value for key, value in os.environ.items() if not key.startswith("POWERCONTEXT_SERVER_")}
-    assert isinstance(migration_backend.config, OceanBaseConfig)
     environment.update({
         "POWERCONTEXT_SERVER_DATABASE_KIND": "oceanbase",
         "POWERCONTEXT_SERVER_DATABASE_URL": migration_backend.config.url.get_secret_value(),
@@ -43,7 +68,10 @@ def test_background_cli_serves_only_authorized_metrics_and_stops_cleanly(tmp_pat
         "POWERCONTEXT_SERVER_METRICS_BACKGROUND_PORT": str(port),
         "POWERCONTEXT_SERVER_METRICS_ENABLED": "true",
     })
-    with (tmp_path / "background.log").open("w+") as output:
+    reports = os.environ.get("MIGRATION_REPORTS")
+    log_path = Path(reports) / "background-metrics" / "background.log" if reports else tmp_path / "background.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w+") as output:
         process = subprocess.Popen(
             [
                 os.path.join(os.path.dirname(sys.executable), "powercontext"),
@@ -71,7 +99,10 @@ def test_background_cli_serves_only_authorized_metrics_and_stops_cleanly(tmp_pat
                         break
                 output.flush()
                 output.seek(0)
-                assert ready, output.read()
+                assert ready, (
+                    f"Background CLI did not become live (returncode={process.poll()}); log tail:\n"
+                    + output.read()[-16000:]
+                )
                 assert client.get(base + "/metrics").status_code == 401
                 headers = {"Authorization": "Bearer background-fixture-token"}
                 response = client.get(base + "/metrics", headers=headers)
