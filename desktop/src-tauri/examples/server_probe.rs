@@ -20,7 +20,7 @@ use powercontext_desktop::{
         profiles::ProfileRepository,
         session::{CompatibilityProfile, ConnectionManager, WriteStatus},
     },
-    credentials::{Secret, WindowsVault},
+    credentials::{NativeVault, Secret},
     error::SafeError,
     transport::{Endpoint, ServerApi, wire::ArtifactReference},
 };
@@ -126,7 +126,7 @@ async fn main() {
     let manager = ConnectionManager::with_compatibility(
         ProfileRepository::open(
             temporary.path().join("profiles.json"),
-            std::sync::Arc::new(WindowsVault),
+            std::sync::Arc::new(NativeVault),
         )
         .unwrap(),
         vec![fixture.compatibility_profile.clone()],

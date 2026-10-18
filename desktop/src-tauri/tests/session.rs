@@ -18,7 +18,7 @@ mod common;
 
 use powercontext_desktop::{
     connections::{profiles::ProfileRepository, session::ConnectionManager},
-    credentials::WindowsVault,
+    credentials::NativeVault,
     error::SafeError,
 };
 use std::sync::{
@@ -126,7 +126,7 @@ fn add(manager: &ConnectionManager, name: &str, endpoint: &str) -> String {
 }
 fn manager(dir: &tempfile::TempDir) -> Arc<ConnectionManager> {
     Arc::new(common::connection_manager(
-        ProfileRepository::open(dir.path().join("profiles.json"), Arc::new(WindowsVault)).unwrap(),
+        ProfileRepository::open(dir.path().join("profiles.json"), Arc::new(NativeVault)).unwrap(),
     ))
 }
 #[tokio::test]
@@ -134,7 +134,7 @@ async fn successful_probes_do_not_qualify_a_synthetic_profile_in_the_product_man
     let server = fixture().await;
     let dir = tempfile::tempdir().unwrap();
     let manager = ConnectionManager::new(
-        ProfileRepository::open(dir.path().join("profiles.json"), Arc::new(WindowsVault)).unwrap(),
+        ProfileRepository::open(dir.path().join("profiles.json"), Arc::new(NativeVault)).unwrap(),
     );
     let id = add(&manager, "Unqualified", &server.endpoint);
     let state = manager.check(&id, true).await.unwrap();
@@ -157,12 +157,12 @@ async fn explicit_fixture_evidence_with_a_different_contract_remains_unverified(
     let server = fixture().await;
     let dir = tempfile::tempdir().unwrap();
     let qualified = common::connection_manager(
-        ProfileRepository::open(dir.path().join("qualified.json"), Arc::new(WindowsVault)).unwrap(),
+        ProfileRepository::open(dir.path().join("qualified.json"), Arc::new(NativeVault)).unwrap(),
     );
     let mut evidence = qualified.state().unwrap().compatibility_profiles[0].clone();
     evidence.contract_sha256 = "0".repeat(64);
     let manager = ConnectionManager::with_compatibility(
-        ProfileRepository::open(dir.path().join("profiles.json"), Arc::new(WindowsVault)).unwrap(),
+        ProfileRepository::open(dir.path().join("profiles.json"), Arc::new(NativeVault)).unwrap(),
         vec![evidence],
     );
     let id = add(&manager, "Mismatched", &server.endpoint);
