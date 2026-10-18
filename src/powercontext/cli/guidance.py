@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import shutil
@@ -132,7 +131,7 @@ def _resource_name(value: object) -> str:
     return value
 
 
-def _resource_inventory(directory: Path) -> tuple[set[str], dict[str, str]] | None:
+def _resource_inventory(directory: Path) -> set[str] | None:
     manifest = directory / RESOURCE_MANIFEST
     if not manifest.exists():
         return None
@@ -144,23 +143,13 @@ def _resource_inventory(directory: Path) -> tuple[set[str], dict[str, str]] | No
         raise GuidanceError("invalid guidance manifest") from error  # noqa: TRY003
     if not isinstance(payload, dict):
         raise GuidanceError("invalid guidance manifest")  # noqa: TRY003
-    if "schema_version" in payload:
-        resources, legacy = payload.get("resources"), payload.get("legacy_sha256")
-        if payload["schema_version"] != 1 or not isinstance(resources, list) or not isinstance(legacy, dict):
-            raise GuidanceError("unsupported guidance manifest schema")  # noqa: TRY003
-    else:
-        # Initial generated packages used the frozen migration map as their inventory.
-        resources, legacy = list(payload), payload
+    resources = payload.get("resources")
+    if payload.get("schema_version") != 1 or not isinstance(resources, list):
+        raise GuidanceError("unsupported guidance manifest schema")  # noqa: TRY003
     names = {_resource_name(name) for name in resources}
     if "SKILL.md" not in names or len(names) != len(resources):
         raise GuidanceError("guidance manifest needs a unique resource inventory including SKILL.md")  # noqa: TRY003
-    hashes = {}
-    for name, digest in legacy.items():
-        key = _resource_name(name)
-        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
-            raise GuidanceError("invalid legacy hash in guidance manifest")  # noqa: TRY003
-        hashes[key] = digest
-    return names, hashes
+    return names
 
 
 def _linked_resources(directory: Path, *, require_files: bool) -> set[str]:
@@ -192,15 +181,15 @@ def _linked_resources(directory: Path, *, require_files: bool) -> set[str]:
     return seen
 
 
-def _package_resources(directory: Path) -> tuple[set[str], dict[str, str]]:
+def _package_resources(directory: Path) -> set[str]:
     inventory = _resource_inventory(directory)
     linked = _linked_resources(directory, require_files=True)
     if inventory is None:
         for path in directory.rglob("*.md"):
             if guidance_region(path.read_text(encoding="utf-8")) is not None:
                 raise GuidanceError("managed guidance is missing its resource manifest")  # noqa: TRY003
-        return linked, {}
-    names, legacy = inventory
+        return linked
+    names = inventory
     packaged = {
         path.relative_to(directory).as_posix()
         for path in directory.rglob("*")
@@ -214,7 +203,7 @@ def _package_resources(directory: Path) -> tuple[set[str], dict[str, str]]:
         path = directory / name
         if not path.is_file() or not path.resolve().is_relative_to(directory.resolve()):
             raise GuidanceError(f"missing or out-of-package guidance resource: {name}")  # noqa: TRY003
-    return names, legacy
+    return names
 
 
 def guidance_region(content: str) -> tuple[int, int] | None:
@@ -229,16 +218,15 @@ def guidance_region(content: str) -> tuple[int, int] | None:
     return content.index(marker), content.index(END) + len(END)
 
 
-def merge_guidance(existing: str, generated: str, *, legacy_sha256: str | None = None) -> str:
-    """Replace only managed bytes; recognize pristine pre-marker packages on upgrade."""
+def merge_guidance(existing: str, generated: str) -> str:
+    """Replace only managed bytes; preserve content outside ownership markers."""
     desired = guidance_region(generated)
     if desired is None:
         message = "generated guidance has no managed region"
         raise GuidanceError(message)
     current = guidance_region(existing)
     if current is None:
-        digest = hashlib.sha256(existing.replace("\r\n", "\n").encode("utf-8")).hexdigest()
-        if not existing or digest == legacy_sha256:
+        if not existing:
             return generated
         message = "unmarked guidance contains unrecognized content; add ownership markers before refreshing"
         raise GuidanceError(message)
@@ -258,10 +246,8 @@ def _render_installed_markdown(
     content: bytes,
     current: Path,
     replacements: dict[str, str],
-    legacy_hash: str | None,
-    legacy_replacements: dict[str, str],
 ) -> bytes:
-    """Expand installation paths and safely migrate or refresh one Markdown resource."""
+    """Expand installation paths and refresh one Markdown resource."""
     generated = content.decode("utf-8").replace("\r\n", "\n")
     for placeholder, replacement in replacements.items():
         generated = generated.replace(placeholder, replacement)
@@ -272,26 +258,15 @@ def _render_installed_markdown(
                 return existing.encode("utf-8")
             message = "incoming unmarked guidance cannot safely replace existing content"
             raise GuidanceError(message)
-        for substitutions in (legacy_replacements, replacements):
-            unexpanded = existing
-            for placeholder, replacement in substitutions.items():
-                unexpanded = unexpanded.replace(replacement, placeholder)
-            if hashlib.sha256(unexpanded.replace("\r\n", "\n").encode("utf-8")).hexdigest() == legacy_hash:
-                legacy_hash = hashlib.sha256(existing.replace("\r\n", "\n").encode("utf-8")).hexdigest()
-                break
-        generated = merge_guidance(
-            existing,
-            generated,
-            legacy_sha256=legacy_hash,
-        )
+        generated = merge_guidance(existing, generated)
     return generated.encode("utf-8")
 
 
-def _validate_resource_transition(source: Path, previous: Path, resources: set[str], legacy: dict[str, str]) -> None:
+def _validate_resource_transition(source: Path, previous: Path, resources: set[str]) -> None:
     """Do not promote retired or ambiguously owned package files into user content."""
     if previous.is_dir():
         prior = _resource_inventory(previous)
-        owned = prior[0] if prior is not None else _linked_resources(previous, require_files=False) | set(legacy)
+        owned = prior if prior is not None else _linked_resources(previous, require_files=False)
         removed = {name for name in owned - resources if (previous / name).is_file()}
         if removed:
             message = f"removing owned guidance requires an explicit migration: {sorted(removed)}"
@@ -311,17 +286,16 @@ def refresh_skill(
     *,
     replacements: dict[str, str] | None = None,
     previous: Path | None = None,
-    legacy_replacements: dict[str, str] | None = None,
 ) -> None:
     """Refresh packaged resources without deleting user files or changing unchanged mtimes.
 
-    Plan every merge first, so malformed markers or an edited legacy file cannot
+    Plan every merge first, so malformed markers or unrecognized user content cannot
     leave a partially refreshed Skill. Native host installation remains separate.
     """
-    resources, legacy = _package_resources(source)
+    resources = _package_resources(source)
     writes: dict[Path, bytes] = {}
     previous = previous or target
-    _validate_resource_transition(source, previous, resources, legacy)
+    _validate_resource_transition(source, previous, resources)
     for path in source.rglob("*"):
         if not path.is_file():
             continue
@@ -337,9 +311,7 @@ def refresh_skill(
             raise GuidanceError(message)
         content = path.read_bytes()
         if path.suffix == ".md":
-            content = _render_installed_markdown(
-                content, current, replacements or {}, legacy.get(relative.as_posix()), legacy_replacements or {}
-            )
+            content = _render_installed_markdown(content, current, replacements or {})
         writes[destination] = content
     for destination, content in writes.items():
         old = previous / destination.relative_to(target)

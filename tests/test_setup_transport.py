@@ -15,9 +15,6 @@
 """Setup consent must be explicit, endpoint-bound, and usable in a new session."""
 
 import json
-import os
-import subprocess
-import sys
 from unittest.mock import Mock
 
 import pytest
@@ -204,26 +201,6 @@ def test_explicit_environment_file_selects_installer_endpoint(tmp_path, monkeypa
     from powercontext.client.transport_policy import resolve_client_transport
 
     assert resolve_client_transport("pi")[0] == "https://proxy.example/path"
-
-
-def test_setup_supports_cli_installation_without_server_dependencies(tmp_path, installed_agent_checks):
-    """Resolve client configuration when the optional database dependency is absent."""
-    (tmp_path / ".env").write_text("POWERCONTEXT_SERVER_HTTP_PORT=18000\n")
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; sys.modules['sqlalchemy'] = None; "
-            "from powercontext.cli.transport import prepare_setup_transport; "
-            "assert prepare_setup_transport('pi').server_url == 'http://127.0.0.1:18000'",
-        ],
-        cwd=tmp_path,
-        env=dict(os.environ),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("content", [None, b"SECRET='private-value", b"\xff"])

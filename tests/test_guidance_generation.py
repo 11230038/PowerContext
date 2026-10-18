@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import shutil
 import subprocess
@@ -150,15 +149,6 @@ def test_malformed_markers_never_overwrite_user_content(content: str) -> None:
         merge_guidance(content, START + "\nnew\n" + END)
 
 
-def test_only_pristine_legacy_guidance_is_automatically_migrated() -> None:
-    legacy = "original\n"
-    digest = hashlib.sha256(legacy.encode()).hexdigest()
-    desired = START + "\nnew\n" + END
-    assert merge_guidance(legacy, desired, legacy_sha256=digest) == desired
-    with pytest.raises(GuidanceError, match="unrecognized content"):
-        merge_guidance(legacy + "user edits\n", desired, legacy_sha256=digest)
-
-
 def test_installed_skill_refresh_preserves_notes_extra_files_and_mtimes(tmp_path: Path) -> None:
     source = ROOT / FILE_HOSTS["opencode"]
     target = tmp_path / "installed"
@@ -265,38 +255,6 @@ def test_pre_marker_downgrade_rejects_before_losing_user_content(
     assert {path: data for path, (data, _) in snapshot(home).items()} == before
 
 
-@pytest.mark.parametrize("edited", [False, True])
-def test_workbuddy_legacy_upgrade_uses_previous_interpreter_without_accepting_edits(
-    tmp_path: Path, monkeypatch, pre_marker_packages: dict[str, Path], edited: bool
-) -> None:
-    import powercontext.cli.workbuddy as workbuddy
-    from powercontext.cli.system import SetupError
-
-    home = tmp_path / "workbuddy home"
-    monkeypatch.setenv("WORKBUDDY_HOME", str(home))
-    monkeypatch.setenv("POWERCONTEXT_HOME", str(tmp_path / "data"))
-    old_python = (tmp_path / "old environment/python").as_posix()
-    new_python = (tmp_path / "new environment/python3").as_posix()
-    monkeypatch.setattr(workbuddy, "_python_executable", lambda: old_python)
-    install_plugin("workbuddy", source=str(str(pre_marker_packages["workbuddy"])), ref="master")
-    scope = home / "skills/powercontext-project-context/references/scope-memory.md"
-    assert old_python in scope.read_text(encoding="utf-8")
-    if edited:
-        scope.write_bytes(scope.read_bytes() + b"\nRetain my unmarked edits.\n")
-    before = {path: data for path, (data, _) in snapshot(home).items()}
-    monkeypatch.setattr(workbuddy, "_python_executable", lambda: new_python)
-    if edited:
-        with pytest.raises(SetupError, match="unrecognized content"):
-            install_plugin("workbuddy", source=str(str(ROOT)), ref="master")
-        assert {path: data for path, (data, _) in snapshot(home).items()} == before
-    else:
-        install_plugin("workbuddy", source=str(str(ROOT)), ref="master")
-        updated = scope.read_text(encoding="utf-8")
-        assert new_python in updated
-        assert old_python not in updated
-        assert START in updated and END in updated
-
-
 def test_git_crlf_checkout_passes_generation_without_rewriting_user_bytes(guidance_tree: Path) -> None:
     shutil.copy2(ROOT / ".gitattributes", guidance_tree / ".gitattributes")
     git = shutil.which("git")
@@ -338,7 +296,7 @@ def test_unchanged_pre_marker_staging_keeps_additional_user_files(
 
 
 @pytest.mark.parametrize("host", ["workbuddy", "opencode", "hermes", "zcode"])
-@pytest.mark.parametrize("damage", ["reference", "manifest", "invalid-manifest"])
+@pytest.mark.parametrize("damage", ["reference", "manifest", "unsupported-manifest"])
 def test_incomplete_package_never_uses_old_files_to_repair_it(
     tmp_path: Path, host: str, damage: str, monkeypatch
 ) -> None:
@@ -373,8 +331,8 @@ def test_incomplete_package_never_uses_old_files_to_repair_it(
     (target / "personal.md").write_bytes(b"Keep user notes\r\n")
     before = snapshot(installed)
     damaged = source / ("references/work-handoff.md" if damage == "reference" else RESOURCE_MANIFEST)
-    if damage == "invalid-manifest":
-        damaged.write_text("[]", encoding="utf-8")
+    if damage == "unsupported-manifest":
+        damaged.write_text(json.dumps({"SKILL.md": "a" * 64}), encoding="utf-8")
     else:
         damaged.unlink()
     package_before = snapshot(package)
@@ -396,10 +354,7 @@ def test_retired_owned_file_requires_migration_instead_of_becoming_a_user_file(t
     retired.write_bytes((START + "\nOld packaged guidance\n" + END + "\nUser notes\n").encode())
     manifest = previous / SKILL_DIRECTORY / RESOURCE_MANIFEST
     inventory = json.loads(manifest.read_text(encoding="utf-8"))
-    if "resources" in inventory:
-        inventory["resources"].append("references/retired.md")
-    else:
-        inventory["references/retired.md"] = "a" * 64
+    inventory["resources"].append("references/retired.md")
     manifest.write_text(json.dumps(inventory), encoding="utf-8")
     before = snapshot(previous)
     staged_before = snapshot(staged)
@@ -417,23 +372,6 @@ def test_fresh_install_requires_all_declared_resources_including_unlinked_files(
     with pytest.raises(GuidanceError, match="resource"):
         refresh_skill(source, target)
     assert not target.exists()
-
-
-def test_flat_manifest_upgrade_retains_notes_and_mtimes(tmp_path: Path) -> None:
-    source, target = tmp_path / "source", tmp_path / "installed"
-    shutil.copytree(ROOT / FILE_HOSTS["opencode"], source)
-    manifest = source / RESOURCE_MANIFEST
-    payload = json.loads(manifest.read_text(encoding="utf-8"))
-    manifest.write_text(json.dumps(payload["legacy_sha256"]), encoding="utf-8")
-    refresh_skill(source, target)
-    note = target / "personal.md"
-    note.write_bytes(b"Keep notes from an initial generated package\r\n")
-    before = (note.read_bytes(), note.stat().st_mtime_ns)
-    refresh_skill(ROOT / FILE_HOSTS["opencode"], target)
-    assert (note.read_bytes(), note.stat().st_mtime_ns) == before
-    after = snapshot(target)
-    refresh_skill(ROOT / FILE_HOSTS["opencode"], target)
-    assert snapshot(target) == after
 
 
 def test_legacy_package_missing_a_linked_reference_is_rejected(

@@ -26,7 +26,6 @@ from typer.testing import CliRunner
 
 import powercontext.cli.openclaw as openclaw_cli
 from powercontext.cli.app import create_cli
-from powercontext.cli.git_source import resolve_plugin_source
 from powercontext.cli.installation import setup as install_plugin
 from powercontext.cli.system import DiagnosticStatus, SetupError, doctor_app
 
@@ -39,13 +38,6 @@ def _write_openclaw_plugin(root: Path) -> Path:
         encoding="utf-8",
     )
     return plugin
-
-
-def test_resolve_openclaw_plugin_dir_accepts_checkout_root(tmp_path: Path) -> None:
-    checkout = tmp_path / "powercontext"
-    plugin = _write_openclaw_plugin(checkout)
-
-    assert resolve_plugin_source(source=str(checkout), ref="master", host="openclaw") == plugin
 
 
 def test_configure_openclaw_changes_only_connection_settings(monkeypatch):

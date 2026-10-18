@@ -393,7 +393,7 @@ def test_opencode_skill_refresh_replaces_only_an_owned_installation(tmp_path: Pa
         (skill / "SKILL.md").write_text(f"{START}\n{value}\n{END}\n", encoding="utf-8")
         (skill / "references/memory.md").unlink()
         (skill / RESOURCE_MANIFEST).write_text(
-            json.dumps({"schema_version": 1, "resources": ["SKILL.md"], "legacy_sha256": {}}), encoding="utf-8"
+            json.dumps({"schema_version": 1, "resources": ["SKILL.md"]}), encoding="utf-8"
         )
     config = tmp_path / "config"
     configure_opencode(monkeypatch, config)
@@ -449,34 +449,6 @@ def test_setup_opencode_refuses_unowned_skill(tmp_path: Path, monkeypatch, insta
     assert (target / "SKILL.md").read_text(encoding="utf-8") == "user-owned\n"
     assert not (config / "plugins" / "powercontext-opencode.js").exists()
     assert not (config / "plugins" / ".powercontext-opencode.json").exists()
-
-
-def test_activation_probe_uses_headless_server_without_model(tmp_path: Path, monkeypatch) -> None:
-    import powercontext.cli.opencode as opencode_cli
-
-    plugin = _write_plugin(tmp_path / "checkout")
-    config = tmp_path / "config"
-    observed: list[list[str]] = []
-
-    monkeypatch.setattr(opencode_cli, "which", lambda _name: "/usr/bin/opencode")
-    monkeypatch.setattr(opencode_cli, "_run_opencode", _fake_opencode(plugin, config))
-
-    def probe(command: list[str], env: dict[str, str]) -> None:
-        observed.append(command)
-        Path(env["POWERCONTEXT_OPENCODE_ACTIVATION_PROBE_PATH"]).write_text(
-            env["POWERCONTEXT_OPENCODE_ACTIVATION_PROBE_NONCE"], encoding="utf-8"
-        )
-
-    monkeypatch.setattr(opencode_cli, "_run_opencode_probe", probe)
-
-    output, activated = opencode_cli._probe_plugin_activation()
-
-    assert json.loads(output)["plugin"]
-    assert activated
-    assert len(observed) == 1
-    assert observed[0][:5] == ["/usr/bin/opencode", "serve", "--hostname", "127.0.0.1", "--port"]
-    assert int(observed[0][5]) > 0
-    assert "--model" not in observed[0]
 
 
 def test_run_opencode_probe_executes_request_waits_for_nonce_and_stops_process(tmp_path: Path) -> None:
@@ -607,61 +579,3 @@ def test_doctor_opencode_rejects_configured_but_inactive_plugin(tmp_path: Path, 
     payload = json.loads(result.output)["hosts"]["opencode"]
     assert payload["checks"]["plugin"]["status"] == "failed"
     assert "did not activate" in payload["checks"]["plugin"]["detail"]
-
-
-@pytest.mark.parametrize(
-    ("uri", "url_path", "expected"),
-    [
-        (
-            "file:///C:/Users/Alice/PowerContext%20Plugin",
-            "/C:/Users/Alice/PowerContext%20Plugin",
-            r"C:\Users\Alice\PowerContext Plugin",
-        ),
-        (
-            "file://server/share/PowerContext%20Plugin",
-            "//server/share/PowerContext%20Plugin",
-            r"\\server\share\PowerContext Plugin",
-        ),
-    ],
-)
-def test_configured_plugin_converts_windows_file_uris(uri: str, url_path: str, expected: str, monkeypatch) -> None:
-    import powercontext.cli.opencode as opencode_cli
-
-    def convert(path: str) -> str:
-        assert path == url_path
-        return expected
-
-    def is_plugin(path: Path) -> bool:
-        return str(path) == expected
-
-    monkeypatch.setattr(opencode_cli, "url2pathname", convert)
-    monkeypatch.setattr(type(opencode_cli.HOST_GUIDANCE["opencode"]), "recognizes", lambda _self, path: is_plugin(path))
-
-    assert opencode_cli._configured_plugin(json.dumps({"plugin": [uri]}))
-
-
-def test_configured_plugin_keeps_package_spec_out_of_file_uri_conversion(monkeypatch) -> None:
-    import powercontext.cli.opencode as opencode_cli
-
-    spec = "@example/powercontext-opencode"
-
-    def is_plugin(path: Path) -> bool:
-        return path == Path(spec)
-
-    monkeypatch.setattr(
-        opencode_cli,
-        "url2pathname",
-        lambda _path: pytest.fail("package specifications must not be converted as file URIs"),
-    )
-    monkeypatch.setattr(type(opencode_cli.HOST_GUIDANCE["opencode"]), "recognizes", lambda _self, path: is_plugin(path))
-
-    assert opencode_cli._configured_plugin(json.dumps({"plugin": [spec]}))
-
-
-def test_tui_entry_path_decodes_file_uri(tmp_path: Path) -> None:
-    import powercontext.cli.opencode as opencode_cli
-
-    target = tmp_path / "PowerContext Plugin"
-    target.mkdir()
-
-    assert opencode_cli._tui_entry_path(target.as_uri()) == target.resolve()

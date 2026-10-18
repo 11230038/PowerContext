@@ -62,7 +62,6 @@ WORKBUDDY_SERVER_URL_ENV = "POWERCONTEXT_WORKBUDDY_SERVER_URL"
 WORKBUDDY_AUTHORIZATION_ENV = "POWERCONTEXT_WORKBUDDY_AUTHORIZATION"
 WORKBUDDY_MCP_URL = f"${{{WORKBUDDY_SERVER_URL_ENV}:-http://127.0.0.1:8000}}/mcp"
 WORKBUDDY_MCP_AUTHORIZATION = f"${{{WORKBUDDY_AUTHORIZATION_ENV}:-}}"
-WORKBUDDY_LEGACY_MCP_URL = "http://127.0.0.1:8000/mcp"
 WORKBUDDY_MCP_DESCRIPTION = "PowerContext agent memory & handoff MCP server (local service on port 8000)"
 WORKBUDDY_HOOK_STATUS_MESSAGE = "Syncing PowerContext"
 WORKBUDDY_HOOK_TIMEOUT = 30
@@ -163,7 +162,7 @@ def _workbuddy_mcp_entry(existing: Any) -> dict[str, Any]:
         "description": WORKBUDDY_MCP_DESCRIPTION,
         "disabled": False,
     }
-    if isinstance(existing, dict) and not _is_legacy_workbuddy_mcp_entry(existing):
+    if isinstance(existing, dict):
         entry["disabled"] = existing.get("disabled", False)
         existing_url = existing.get("url")
         if isinstance(existing_url, str) and existing_url.strip():
@@ -172,16 +171,6 @@ def _workbuddy_mcp_entry(existing: Any) -> dict[str, Any]:
         if isinstance(existing_headers, dict) and existing_headers:
             entry["headers"] = cast(dict[str, Any], existing_headers)
     return entry
-
-
-def _is_legacy_workbuddy_mcp_entry(existing: dict[str, Any]) -> bool:
-    return existing == {
-        "type": "http",
-        "url": WORKBUDDY_LEGACY_MCP_URL,
-        "headers": {},
-        "description": WORKBUDDY_MCP_DESCRIPTION,
-        "disabled": False,
-    }
 
 
 def require_replaceable_workbuddy_skill(target: Path) -> None:
@@ -197,35 +186,7 @@ def _owned_workbuddy_skill(path: Path) -> bool:
     return payload == {"schema": 1, "owner": "powercontext", "integration": "workbuddy"}
 
 
-def _previous_workbuddy_replacements(settings_snapshot: bytes | None, hooks_dir: Path) -> dict[str, str]:
-    """Recover the exact quoted interpreter from the previous owned hook, without executing it."""
-    if settings_snapshot is None:
-        return {}
-    settings = json.loads(settings_snapshot)
-    if not isinstance(settings, dict) or not isinstance(hooks := settings.get("hooks"), dict):
-        return {}
-    matchers = hooks.get("UserPromptSubmit", [])
-    if not isinstance(matchers, list):
-        return {}
-    suffix = " " + _shell_argument((hooks_dir / WORKBUDDY_HOOK_DRIVER).as_posix())
-    for matcher in matchers:
-        if not isinstance(matcher, dict) or not isinstance(entries := matcher.get("hooks"), list):
-            continue
-        for entry in entries:
-            command = entry.get("command") if isinstance(entry, dict) else None
-            if isinstance(command, str) and command.endswith(suffix) and (interpreter := command.removesuffix(suffix)):
-                return {
-                    WORKBUDDY_PYTHON_PLACEHOLDER: interpreter,
-                    WORKBUDDY_SCOPE_BINDING_PLACEHOLDER: _shell_argument(
-                        (hooks_dir / WORKBUDDY_SCOPE_RESOLVER).as_posix()
-                    ),
-                }
-    return {}
-
-
-def _install_workbuddy_skill(
-    plugin_dir: Path, skills_dir: Path, hooks_dir: Path, *, legacy_replacements: dict[str, str] | None = None
-) -> None:
+def _install_workbuddy_skill(plugin_dir: Path, skills_dir: Path, hooks_dir: Path) -> None:
     """Copy the powercontext-project-context Skill and resolve its hooks directory placeholder."""
 
     source = plugin_dir / WORKBUDDY_SKILLS_DIRNAME / WORKBUDDY_SKILL_NAME
@@ -239,7 +200,6 @@ def _install_workbuddy_skill(
                 WORKBUDDY_PYTHON_PLACEHOLDER: _shell_argument(_python_executable()),
                 WORKBUDDY_SCOPE_BINDING_PLACEHOLDER: _shell_argument((hooks_dir / WORKBUDDY_SCOPE_RESOLVER).as_posix()),
             },
-            legacy_replacements=legacy_replacements,
         )
         write_if_changed(
             target / WORKBUDDY_SKILL_MANIFEST,
@@ -415,14 +375,8 @@ class WorkBuddyInstaller:
                 if skill.exists():
                     shutil.copytree(skill, staged_skills / WORKBUDDY_SKILL_NAME, symlinks=True)
                 settings_file = root / "settings.json"
-                snapshot = _read_bytes_or_none(
-                    settings_file,
-                    io_error=lambda error: SetupError(f"Cannot update WorkBuddy settings at {settings_file}: {error}"),
-                )
                 _install_hook_files(package, staged_hooks)
-                _install_workbuddy_skill(
-                    package, staged_skills, hooks, legacy_replacements=_previous_workbuddy_replacements(snapshot, hooks)
-                )
+                _install_workbuddy_skill(package, staged_skills, hooks)
                 candidate = staging / "settings.json"
                 if settings_file.exists():
                     shutil.copy2(settings_file, candidate)

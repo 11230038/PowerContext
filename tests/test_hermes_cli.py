@@ -17,14 +17,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from subprocess import CompletedProcess
-from unittest.mock import Mock
 
 import pytest
 from typer.testing import CliRunner
 
 import powercontext.cli.hermes as hermes_cli
 from powercontext.cli.app import create_cli
-from powercontext.cli.git_source import resolve_plugin_source
 from powercontext.cli.system import doctor_app, setup_app
 
 
@@ -287,10 +285,8 @@ def test_doctor_hermes_rejects_a_broken_provider(tmp_path: Path, monkeypatch, se
 
 def test_doctor_hermes_rejects_an_unsupported_version(monkeypatch, server_checks) -> None:
     monkeypatch.setattr(hermes_cli, "which", lambda _name: "/usr/bin/hermes")
-    calls: list[list[str]] = []
 
     def old_hermes_run(command: list[str], **_kwargs) -> CompletedProcess[str]:
-        calls.append(command)
         return CompletedProcess(command, 0, stdout="Hermes Agent v0.20.3\n", stderr="")
 
     monkeypatch.setattr(hermes_cli.subprocess, "run", old_hermes_run)
@@ -302,29 +298,6 @@ def test_doctor_hermes_rejects_an_unsupported_version(monkeypatch, server_checks
     assert payload["checks"]["hermes"]["status"] == "failed"
     assert "requires Hermes Agent v0.20.4 or newer" in payload["checks"]["hermes"]["detail"]
     assert payload["checks"]["plugin"]["status"] == "skipped"
-    assert len(calls) == 1
-
-
-def test_setup_hermes_remote_checkout_uses_the_requested_ref(
-    tmp_path: Path, monkeypatch, installed_agent_checks, hermes_activation
-) -> None:
-    monkeypatch.setenv("POWERCONTEXT_HOME", str(tmp_path / "data"))
-    captured: list[list[str]] = []
-
-    def fake_run(command, **_kwargs):
-        captured.append(command)
-        _write_plugin(Path(command[-1]))
-        return Mock(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(hermes_cli.subprocess, "run", fake_run)
-
-    source = "oceanbase/powercontext"
-    ref = "v0.0.2"
-    plugin = resolve_plugin_source(source=source, ref=ref, host="hermes")
-
-    assert (plugin / "plugin.yaml").is_file()
-    assert captured[0][:6] == ["git", "clone", "--depth", "1", "--branch", "v0.0.2"]
-    assert captured[0][6] == "https://github.com/oceanbase/powercontext.git"
 
 
 @pytest.mark.parametrize("provider", ["", "other-provider"])

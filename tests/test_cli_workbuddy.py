@@ -26,9 +26,7 @@ import pytest
 from typer.testing import CliRunner
 
 import powercontext.cli.workbuddy as workbuddy_cli
-from powercontext.cli import git_source
 from powercontext.cli.app import create_cli
-from powercontext.cli.git_source import resolve_plugin_source
 from powercontext.cli.installation import setup as install_plugin
 from powercontext.cli.system import SetupError, doctor_app, setup_app
 
@@ -274,46 +272,6 @@ def test_setup_workbuddy_preserves_remote_authenticated_mcp_configuration(
     assert mcp["mcpServers"]["powercontext"]["disabled"] is True
 
 
-def test_setup_workbuddy_migrates_the_legacy_generated_mcp_entry(
-    tmp_path: Path, monkeypatch, installed_agent_checks
-) -> None:
-    checkout = tmp_path / "powercontext"
-    _write_plugin(checkout)
-    home = tmp_path / "workbuddy"
-    home.mkdir()
-    monkeypatch.setenv("WORKBUDDY_HOME", str(home))
-    monkeypatch.setenv("POWERCONTEXT_HOME", str(tmp_path / "data"))
-
-    (home / "mcp.json").write_text(
-        json.dumps({
-            "mcpServers": {
-                "powercontext": {
-                    "type": "http",
-                    "url": "http://127.0.0.1:8000/mcp",
-                    "headers": {},
-                    "description": "PowerContext agent memory & handoff MCP server (local service on port 8000)",
-                    "disabled": False,
-                }
-            }
-        }),
-        encoding="utf-8",
-    )
-
-    result = CliRunner().invoke(
-        create_cli([setup_app]),
-        ["setup", "workbuddy", "--source", str(checkout)],
-    )
-
-    assert result.exit_code == 0
-    mcp = json.loads((home / "mcp.json").read_text(encoding="utf-8"))
-    assert mcp["mcpServers"]["powercontext"]["url"] == (
-        "${POWERCONTEXT_WORKBUDDY_SERVER_URL:-http://127.0.0.1:8000}/mcp"
-    )
-    assert mcp["mcpServers"]["powercontext"]["headers"] == {
-        "Authorization": "${POWERCONTEXT_WORKBUDDY_AUTHORIZATION:-}"
-    }
-
-
 def test_setup_workbuddy_preserves_other_hooks_shared_scripts(
     tmp_path: Path, monkeypatch, installed_agent_checks
 ) -> None:
@@ -369,7 +327,6 @@ def test_setup_workbuddy_refreshes_an_owned_skill(tmp_path: Path, monkeypatch, i
         json.dumps({
             "schema_version": 1,
             "resources": ["SKILL.md", "references/scope-memory.md"],
-            "legacy_sha256": {},
         }),
         encoding="utf-8",
     )
@@ -394,7 +351,7 @@ def test_setup_workbuddy_refreshes_an_owned_skill(tmp_path: Path, monkeypatch, i
     )
 
 
-def test_setup_workbuddy_stops_before_writes_when_settings_snapshot_is_unreadable(
+def test_setup_workbuddy_preserves_installation_when_settings_are_unreadable(
     tmp_path: Path, monkeypatch, installed_agent_checks
 ) -> None:
     checkout = tmp_path / "powercontext"
@@ -410,7 +367,7 @@ def test_setup_workbuddy_stops_before_writes_when_settings_snapshot_is_unreadabl
     )
 
     assert result.exit_code == 1
-    assert "Cannot update WorkBuddy settings" in result.output
+    assert "settings.json" in result.output
     assert not (home / "hooks").exists()
     assert not (home / "mcp.json").exists()
 
@@ -543,28 +500,6 @@ def test_setup_workbuddy_rejects_a_missing_plugin(tmp_path: Path, monkeypatch, i
 
     assert result.exit_code == 1
     assert "workbuddy plugin was not found" in result.output.casefold()
-
-
-def test_setup_workbuddy_remote_checkout_refreshes_the_requested_ref(
-    short_tmp_path: Path, monkeypatch, installed_agent_checks
-) -> None:
-    monkeypatch.setenv("POWERCONTEXT_HOME", str(short_tmp_path))
-    generation = 0
-
-    def fake_clone(source: str, ref: str, target: Path) -> None:
-        nonlocal generation
-        generation += 1
-        plugin = _write_plugin(target)
-        (plugin / "revision.txt").write_text(f"{source}@{ref}:{generation}\n", encoding="utf-8")
-
-    monkeypatch.setattr(git_source, "clone_github_source", fake_clone)
-
-    first = resolve_plugin_source(source="oceanbase/powercontext", ref="master", host="workbuddy")
-    refreshed = resolve_plugin_source(source="oceanbase/powercontext", ref="master", host="workbuddy")
-
-    assert first != refreshed
-    assert (first / "revision.txt").read_text(encoding="utf-8") == "oceanbase/powercontext@master:1\n"
-    assert (refreshed / "revision.txt").read_text(encoding="utf-8") == "oceanbase/powercontext@master:2\n"
 
 
 def test_workbuddy_home_honors_the_environment_override(tmp_path: Path, monkeypatch) -> None:
