@@ -46,6 +46,8 @@ async fn main() {
         let dir = std::path::Path::new(&args[2]);
         let mut ca = CertificateParams::new(vec![]).unwrap();
         ca.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        // Python 3.13+ verifies fixture chains with OpenSSL's strict X.509 rules.
+        ca.use_authority_key_identifier_extension = true;
         ca.distinguished_name
             .push(rcgen::DnType::CommonName, "Desktop test CA");
         ca.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
@@ -55,6 +57,7 @@ async fn main() {
         let mut leaf =
             CertificateParams::new(vec!["localhost".into(), "127.0.0.1".into()]).unwrap();
         leaf.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        leaf.use_authority_key_identifier_extension = true;
         let key = KeyPair::generate().unwrap();
         let cert = leaf.signed_by(&key, &issuer).unwrap();
         std::fs::write(dir.join("ca.pem"), ca_cert.pem()).unwrap();
