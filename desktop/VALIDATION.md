@@ -66,6 +66,12 @@ found that note through FTS, and read its exact Atomic Memory revision. Both cop
 verified by pasting the actual clipboard into the app editor: full text remained unchanged and
 reference JSON retained `family`, `artifact_id` and `revision`. An independent HTTP read returned
 the same persisted exact text. Test paste-back drafts were cleared without saving duplicates.
+The saved connection and qualification choice survived application restart. After read-only DMG
+verification, the app was copied to a separate directory and launched from that copy; its executable
+SHA-256 matched the built app (`ba8ee45b5895572737a8b639535dee4a5725e54c0eda6a10cc49169974f9441f`).
+The copied app reconnected, selected the Scope, searched and read the original exact revision.
+The independent demo Server remained alive after Desktop exited, and its persisted note also
+survived restarting the Server.
 
 This establishes those workflows on the observed host and build. It does not establish actual IME
 composition (Chinese text was pasted), screen-reader behavior, Intel/Windows execution, Gatekeeper
