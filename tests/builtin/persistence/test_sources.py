@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
@@ -35,6 +36,7 @@ from powercontext.builtin.runtime import SubmitSourceObservation
 from powercontext.builtin.runtime.relational import RelationalContexts
 from powercontext.sources import (
     AdapterSourceDefinition,
+    MemoryEvidenceDeclaration,
     Source,
     SourceDefinitionRegistry,
     SourceMaterialization,
@@ -261,6 +263,94 @@ def test_native_generated_alias_source_survives_read_replay_and_restart(tmp_path
             assert resolved == source
             assert await context.sources.add(resolved) == source
             assert await context.sources.journal.position(resolved) == 1
+
+    asyncio.run(scenario())
+
+
+def test_precanonical_generated_alias_source_rows_remain_readable_and_replayable() -> None:
+    async def scenario() -> None:
+        registry = SourceDefinitionRegistry((
+            AdapterSourceDefinition(SerializationAliasAdapter(NativeCamelCaseSource), version="2"),
+        ))
+        repository = SourceRepository(registry)
+        source = NativeCamelCaseSource(
+            name="legacy-2", definition_version="2", materialization=SourceMaterialization.CAPTURED, body="Retained."
+        )
+        material = source.model_dump(mode="json", by_alias=True)
+        material["definitionVersion"] = material.pop("definition_version")
+        payload = json.dumps({
+            "encoding": "powercontext-source-v1",
+            "representation": "native",
+            "value": material,
+        }).encode()
+        async with (
+            repository_profile() as (profile, _repositories),
+            profile.database.transaction() as connection,
+        ):
+            await connection.execute(
+                insert(SOURCES_TABLE).values(
+                    scope_id="scope-a",
+                    source_type="serialization-alias",
+                    source_id=source.name,
+                    payload=payload,
+                    journal_position=1,
+                )
+            )
+            ref = SourceRef(source_type="serialization-alias", source_id=source.name)
+            loaded = await repository.get(connection, "scope-a", ref)
+            assert loaded.value == source
+            assert await repository.add(connection, "scope-a", source) == loaded
+            assert await repository.journal_position(connection, "scope-a") == 1
+
+    asyncio.run(scenario())
+
+
+def test_explicit_name_alias_evidence_survives_restart_without_the_native_definition(tmp_path) -> None:
+    class AliasedSource(NativeCamelCaseSource):
+        name: str = Field(alias="source_name")
+        business_name: str = Field(alias="name")
+        description: str | None = Field(default="captured description", exclude=True)
+
+    class UpdatedSource(AliasedSource):
+        description: str | None = Field(default="current description", exclude=True)
+
+    async def scenario() -> None:
+        declaration = MemoryEvidenceDeclaration(authority="repository_attested", verification="verified")
+        registry = SourceDefinitionRegistry((
+            AdapterSourceDefinition(
+                SerializationAliasAdapter(AliasedSource),
+                version="2",
+                memory_evidence=declaration,
+            ),
+        ))
+        source = AliasedSource(
+            source_name="native-alias",
+            name="business label",
+            definition_version="2",
+            materialization=SourceMaterialization.CAPTURED,
+            body="Retained.",
+        )
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'explicit-alias.db'}")
+        repository = SourceRepository(registry)
+        async with (
+            SQLiteProfile.open(config, tables=SHARED_TABLES) as profile,
+            profile.database.transaction() as connection,
+        ):
+            stored = await repository.add(connection, "scope-a", source)
+            assert (await repository.get(connection, "scope-a", stored.ref)).value == source
+            assert await repository.add(connection, "scope-a", source) == stored
+            evidence = await repository.evidence(connection, "scope-a", (stored.ref,))
+            assert evidence[0].declaration == declaration
+        async with (
+            SQLiteProfile.open(config, tables=SHARED_TABLES) as profile,
+            profile.database.transaction() as connection,
+        ):
+            updated = SourceDefinitionRegistry((
+                AdapterSourceDefinition(SerializationAliasAdapter(UpdatedSource), version="2"),
+            ))
+            loaded = await SourceRepository(updated).get(connection, "scope-a", stored.ref)
+            assert loaded.value.description == "current description"
+            assert await SourceRepository(()).historical_evidence(connection, "scope-a", (stored.ref,)) == evidence
 
     asyncio.run(scenario())
 

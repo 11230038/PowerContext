@@ -25,7 +25,7 @@ import rfc8785
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
-from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
+from pydantic import AliasGenerator, BaseModel, ConfigDict, JsonValue, TypeAdapter
 from referencing import Registry
 from referencing.exceptions import Unresolvable
 from sqlalchemy import func, insert, select, tuple_, update
@@ -79,6 +79,9 @@ class _StoredSourcePayload(BaseModel):
     encoding: Literal["powercontext-source-v1"]
     representation: Literal["native", "observation"]
     value: dict[str, JsonValue]
+    # Server-owned header permits historical reads without adapter code. Never hash it.
+    source: Source | None = None
+    source_keys: dict[str, str] | None = None
 
 
 class StoredSource(BaseModel):
@@ -158,6 +161,8 @@ class SourceRepository:
                 return StoredSource(ref=ref, value=source, journal_position=stored.journal_position), False
             if stored.value != source:
                 raise StoredPayloadConflictError("source", (scope_id, ref))
+            if representation == "native":
+                await self._retain_native_header(connection, scope_id, ref, existing, source)
             return stored, False
 
         position = await _next_journal_position(connection, scope_id)
@@ -357,8 +362,7 @@ class SourceRepository:
                 raise InvalidStoredPayloadError("source", reference.source_type, "payload is not JSON") from error
             return source, material
         material = envelope.value
-        model = SourceObservation if envelope.representation == "observation" else Source
-        source = load_model(model, rfc8785.dumps(material), kind="source", name=reference.source_type)
+        source = self._historical_source(reference, envelope)
         decoded = SourceRef(
             source_type=source.source_type if isinstance(source, SourceObservation) else reference.source_type,
             source_id=source.name,
@@ -390,6 +394,40 @@ class SourceRepository:
         else:
             self._validate_unbound_material(reference, envelope, source)
         return source, material
+
+    def _historical_source(self, reference: SourceRef, envelope: _StoredSourcePayload) -> Source:
+        """Decode identity independently of retained material and today's business defaults."""
+
+        material = envelope.value
+        if envelope.representation == "observation":
+            return load_model(SourceObservation, rfc8785.dumps(material), kind="source", name=reference.source_type)
+        if envelope.source is not None:
+            keys = envelope.source_keys or {key: key for key in ("name", "definition_version", "materialization")}
+            for key, alias in keys.items():
+                value = getattr(envelope.source, key)
+                if alias not in material or material[alias] != value:
+                    raise IdentityMismatchError("source-envelope", value, material.get(alias))
+            return envelope.source
+        # Legacy aliased rows need their registered decoder once; canonical rows do not.
+        with suppress(SourceDefinitionNotFoundError):
+            definition = self._registry.definition_for_name(reference.source_type)
+            if any(
+                (definition.source_class.model_fields[key].serialization_alias or key) != key
+                for key in ("name", "definition_version", "materialization")
+            ):
+                source, _ = self._decode_envelope(reference.source_type, envelope)
+                return source
+        if {"name", "definition_version", "materialization"} <= material.keys():
+            return load_model(Source, rfc8785.dumps(material), kind="source", name=reference.source_type)
+        header = material
+        with suppress(SourceDefinitionNotFoundError):
+            definition = self._registry.definition_for_name(reference.source_type)
+            header = _normalize_native_material(definition.source_class, material)
+        try:
+            return load_model(Source, rfc8785.dumps(header), kind="source", name=reference.source_type)
+        except InvalidStoredPayloadError:
+            source, _ = self._decode_envelope(reference.source_type, envelope)
+            return source
 
     def _validate_unbound_material(self, reference: SourceRef, envelope: _StoredSourcePayload, source: Source) -> None:
         """Keep supported exact-read errors when no historical schema is available.
@@ -665,6 +703,41 @@ class SourceRepository:
             journal_position=int(row["journal_position"]),
         )
 
+    async def _retain_native_header(
+        self, connection: AsyncConnection, scope_id: str, ref: SourceRef, row: Mapping[Any, Any], source: Source
+    ) -> None:
+        """Enrich only an identical replay's unreconstructible legacy header.
+
+        The retained value, binding, manifest, digest and journal position never change.
+        This grants no authority and does not publish another processing intent.
+        """
+
+        payload = stored_bytes(row["payload"], column="payload")
+        try:
+            envelope = load_model(_StoredSourcePayload, payload, kind="source-envelope", name=ref.source_type)
+        except InvalidStoredPayloadError:
+            envelope = _StoredSourcePayload(
+                encoding="powercontext-source-v1",
+                representation="native",
+                value=_JSON_OBJECT.validate_json(payload, strict=True),
+            )
+        if envelope.source is not None:
+            return
+        header = _source_header(source)
+        with suppress(InvalidStoredPayloadError):
+            if load_model(Source, rfc8785.dumps(envelope.value), kind="source", name=ref.source_type) == header:
+                return
+        enriched = envelope.model_copy(update={"source": header, "source_keys": _source_keys(source, envelope.value)})
+        await connection.execute(
+            update(SOURCES_TABLE)
+            .where(
+                SOURCES_TABLE.c.scope_id == scope_id,
+                SOURCES_TABLE.c.source_type == ref.source_type,
+                SOURCES_TABLE.c.source_id == ref.source_id,
+            )
+            .values(payload=rfc8785.dumps(enriched.model_dump(mode="json", exclude_none=True)))
+        )
+
     def _decode_envelope(
         self,
         source_type: str,
@@ -683,11 +756,15 @@ class SourceRepository:
         definition = self._definition_by_name(source_type)
         source = load_model(
             definition.source_class,
-            payload,
+            rfc8785.dumps(_normalize_native_material(definition.source_class, envelope.value)),
             kind="source",
             name=source_type,
         )
         self._registry.definition_for_source(source)
+        if envelope.source is not None:
+            for key in ("name", "definition_version", "materialization"):
+                if getattr(envelope.source, key) != getattr(source, key):
+                    raise IdentityMismatchError("source-envelope", envelope.source, _source_header(source))
         return source, SourceRef(source_type=definition.name, source_id=source.name)
 
     def _decode_legacy_payload(self, source_type: str, payload: bytes) -> tuple[Source, SourceRef]:
@@ -702,9 +779,13 @@ class SourceRepository:
             )
             decoded = SourceRef(source_type=source.source_type, source_id=source.name)
         else:
+            try:
+                material = _JSON_OBJECT.validate_json(payload, strict=True)
+            except ValueError as error:
+                raise InvalidStoredPayloadError("source", source_type, "payload is not JSON") from error
             source = load_model(
                 definition.source_class,
-                payload,
+                rfc8785.dumps(_normalize_native_material(definition.source_class, material)),
                 kind="source",
                 name=source_type,
             )
@@ -743,6 +824,55 @@ def _source_material_digest_material(material: Mapping[str, JsonValue]) -> str:
     return f"sha256:{sha256(rfc8785.dumps(material)).hexdigest()}"
 
 
+def _source_header(source: Source) -> Source:
+    return Source(**{key: getattr(source, key) for key in Source.model_fields})
+
+
+def _source_keys(source: Source, material: dict[str, JsonValue] | None = None) -> dict[str, str]:
+    """Retain declared identity spellings, including pre-canonical generated keys."""
+    keys = {
+        key: type(source).model_fields[key].serialization_alias or key
+        for key in ("name", "definition_version", "materialization")
+    }
+    generator = type(source).model_config.get("alias_generator")
+    if isinstance(generator, AliasGenerator):
+        generator = generator.serialization_alias or generator.alias
+    if material is not None and generator is not None:
+        for key, alias in keys.items():
+            if alias not in material:
+                keys[key] = generator(key)
+    return keys
+
+
+def _normalize_native_material(source_class: type[Source], material: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    """Read pre-canonical inherited envelope aliases, never business-field aliases.
+
+    Derive spellings from the registered generator, not a version/key allowlist.
+    Explicit adapter aliases and conflicting identities retain strict validation.
+    """
+
+    generator = source_class.model_config.get("alias_generator")
+    if isinstance(generator, AliasGenerator):
+        generator = generator.serialization_alias or generator.alias
+    if generator is None:
+        return material
+    normalized = dict(material)
+    for key in Source.model_fields:
+        if source_class.model_fields[key].validation_alias != key:
+            continue
+        alias = generator(key)
+        if any(
+            field_name != key and alias in (field.alias, field.validation_alias, field.serialization_alias)
+            for field_name, field in source_class.model_fields.items()
+        ):
+            continue
+        if alias != key and alias in normalized:
+            if key in normalized and normalized[key] != normalized[alias]:
+                raise IdentityMismatchError("source", normalized[key], normalized[alias])
+            normalized[key] = normalized.pop(alias)
+    return normalized
+
+
 def _dump_source(
     source: Source,
     *,
@@ -754,8 +884,10 @@ def _dump_source(
             encoding="powercontext-source-v1",
             representation=representation,
             value=_JSON_OBJECT.validate_python(source.model_dump(mode="json", by_alias=True)),
+            source=None if representation == "observation" else _source_header(source),
+            source_keys=None if representation == "observation" else _source_keys(source),
         )
-        return rfc8785.dumps(envelope.model_dump(mode="json"))
+        return rfc8785.dumps(envelope.model_dump(mode="json", exclude_none=True))
     except (TypeError, ValueError) as error:
         raise InvalidStoredPayloadError("source", name, "value is not JSON serializable") from error
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
+from typing import cast
 
 import pytest
 from sqlalchemy import event, text
@@ -31,8 +32,15 @@ from powercontext.builtin.artifacts.atomic_memory.extraction import (
     AtomicMemoryExtractionOutput,
 )
 from powercontext.builtin.inference import GenerationResult
-from powercontext.builtin.runtime import BuiltinConfig, SubmitSourceObservation, open_builtin_contexts
+from powercontext.builtin.runtime import (
+    BuiltinConfig,
+    SubmitSourceObservation,
+    open_builtin_contexts,
+    open_builtin_runtime,
+)
 from powercontext.builtin.runtime.atomic_memory_rebuild import rebuild_atomic_memory_projection
+from powercontext.builtin.runtime.relational import RelationalContexts
+from powercontext.builtin.scope import ScopeDraft
 from powercontext.builtin.sources import CONTENT_SOURCE_DEFINITION
 from powercontext.sources import AdapterSourceDefinition, SourceDefinitionRegistry, SourceRef
 from powercontext.sources.evidence import MemoryEvidenceDeclaration
@@ -224,5 +232,47 @@ def test_generated_trust_claims_do_not_upgrade_neutral_evidence(migration_backen
             assert tuple((item.source_ref, item.declaration) for item in annotation.sources) == (
                 (SourceRef(source_type="content", source_id="forged"), MemoryEvidenceDeclaration()),
             )
+
+    asyncio.run(scenario())
+
+
+def test_shared_merge_and_restore_preserve_source_evidence(migration_backend: MigrationBackend, tmp_path) -> None:
+    declaration = MemoryEvidenceDeclaration(authority="repository_attested", verification="verified")
+    registry = SourceDefinitionRegistry((replace(CONTENT_SOURCE_DEFINITION, memory_evidence=declaration),))
+
+    async def scenario() -> None:
+        async with open_builtin_runtime(
+            BuiltinConfig(database=migration_backend.config),
+            source_registry=registry,
+            scheduler_path=tmp_path / "scheduler.db",
+        ) as runtime:
+            assert runtime.scopes is not None
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Evidence", summary="Shared merge evidence", idempotency_key="source-evidence")
+            )
+            contexts = cast(RelationalContexts, runtime._provider)
+            source = SourceRef(source_type="content", source_id="release")
+            await contexts.records.capture_source(scope.scope_id, "content", "release", "Exact release material.", {})
+            for identity in ("a", "b"):
+                await _commit(contexts, scope.scope_id, identity, identity + " rule.", sources=(source,))
+            memory = contexts.atomic_memory.for_scope(scope.scope_id)
+            accepted = await memory.evidence("a", revision=1)
+            assert runtime.artifact_merge is not None
+            merge = runtime.artifact_merge.for_scope(scope.scope_id, "atomic-memory")
+            a, b = await merge.get("a"), await merge.get("b")
+            await merge.merge(
+                (a.as_read(), b.as_read()),
+                AtomicMemoryContent(kind="fact", text="Combined release rule."),
+                artifact_id="combined",
+                lineage=ArtifactLineage(sources=(source,), artifacts=(a.ref, b.ref)),
+            )
+            annotation = await memory.evidence("combined", revision=1)
+            assert annotation.sources == accepted.sources
+            assert annotation.sources[0].declaration == declaration
+            restored = await merge.restore("a")
+            assert restored.primary.ref.revision == 2
+            assert (await memory.evidence("a", revision=2)).sources[0].declaration == declaration
+            assert await memory.evidence("combined", revision=1) == annotation
+            assert await memory.evidence("a", revision=1) == accepted
 
     asyncio.run(scenario())
