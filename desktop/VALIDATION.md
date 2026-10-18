@@ -1,6 +1,6 @@
 # Desktop validation
 
-Desktop is an unsigned internal Windows preview. Passing CI does not establish release qualification.
+Desktop is an unsigned internal Windows and macOS preview. Passing CI does not establish release qualification.
 
 ## Reproducible checks
 
@@ -22,11 +22,54 @@ cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
 
 ## Compatibility scope
 
-[compatibility.json](src-tauri/src/connections/compatibility.json) preserves the recorded Server sources, normalized OpenAPI contract digests and qualification-wheel digests for the historical profiles below. No product record currently matches this build’s bundled contract; ordinary builds keep business operations unavailable until an independently verified matching profile is added. Historical records are disabled in the selector, and saved unavailable selections remain visible until explicitly replaced. CI builds have their own artifact identities and do not change product qualification.
+[compatibility.json](src-tauri/src/connections/compatibility.json) preserves the recorded Server sources, normalized OpenAPI contract digests and qualification-wheel digests for the historical profiles below. The current contract is qualified by `sqlite-atomic-caf2a35a-v1` below; ordinary builds require explicitly selecting it and checking the connection before business operations become available. Historical records are disabled in the selector, and saved unavailable selections remain visible until explicitly replaced. CI builds have their own artifact identities and do not change product qualification.
 
 The real Server harness covers SQLite with anonymous loopback, static Bearer, HTTPS with explicit CA/base path, and injected-provider/enforced access. It exercises save/search/exact reads, identity changes, binding revocation, ambiguous writes without replay and Scope pagination. Installed UI checks cover repeated launches preserving the existing editor, late committed-save responses preserving a new Scope draft, explicit connection/Scope selection, clipboard copies, connection isolation, draft cancellation, byte limits and independent Server survival after Desktop exit.
 
 Selecting a compatibility profile does not attest the remote binary identity. Existing `sqlite-1.1.1-v1` / `sqlite-63f918b7-v1` / `sqlite-ab43e3a7-v1` / `sqlite-f1089f4e-v1` / `sqlite-6e237568-v1` / `sqlite-legacy-58f7f4f6-v1` selections require explicitly choosing an available matching profile and rechecking the connection. Desktop reads memories only through Atomic Memory references, so Servers that answer only with Memory entry citations are not qualified. CLI diagnostics separately verify the registered executable path and digest, then validate the diagnostic response schema. The observed version is optional report information; a registration does not require a version.
+
+### Current Server protocol qualification
+
+`sqlite-atomic-caf2a35a-v1` records Server commit `caf2a35aa5c626e013584a2c3a37dcd94e0d49bf`,
+normalized OpenAPI contract digest `e43c7034b6930688c350c68af5e7bd6083b123783b92d0a50eebbebd45aa7da7`,
+and wheel digest `4ac43be2f914f8075f97b896b9e2773fcfeff0b5fe354241c6d02d44dbb4a955`.
+The qualification wheel is `powercontext-1.3.1.dev89+gcaf2a35aa.d20261018-py3-none-any.whl`.
+All 512 packaged runtime files match the recorded commit byte for byte. The sorted runtime
+source-manifest digest (one `wheel/path sha256` entry per line, with a final newline) is
+`a5c0fba7746b38b0f69db2a07689353f98f2f0526f9315684687704d0aeb3ee2`.
+The wheel was built before Desktop-only commits; those commits do not change Server sources.
+
+The native real-Server harness passed on macOS 26.5.2 ARM64, Python 3.14.7 and Rust 1.95.0.
+It used the isolated wheel and SQLite in four modes: anonymous loopback, static Bearer,
+HTTPS with an explicit CA and base path, and an injected authentication provider with enforced access.
+It exercised the ten recorded operations, including Atomic Memory save/search/exact revision reads,
+identity changes, revocation with an unchanged identity, Scope pagination, committed writes with lost
+responses without replay, and independent Server survival after the native client exited.
+Fixture certificates include Authority Key Identifier extensions for strict X.509 verification.
+The tested native client source includes the macOS host support and strict fixture-certificate change.
+
+This is protocol qualification of that source and wheel, not binary attestation of arbitrary remote
+Servers. Users must check their deployed source before selecting the profile. Windows and Intel
+native checks, installed UI workflows, signing and notarization require their own evidence.
+Reproduce with `uv build --wheel --out-dir desktop/.artifacts/server-wheel`,
+`fixture_qualification.py --server-commit <the recorded Server commit>`,
+`cargo build --locked --manifest-path desktop/src-tauri/Cargo.toml --example server_probe`,
+and `uv run python desktop/tests/real_server.py`. New builds have their own wheel identities.
+
+### macOS installed application workflow
+
+The normal release app (without `ci-fixtures`) was operated on macOS 26.5.2 ARM64 against the
+qualified wheel above on a dedicated loopback Server and SQLite workspace. The UI saved its
+connection profile, explicitly selected `sqlite-atomic-caf2a35a-v1`, checked/activated the connection,
+searched by Scope title and selected its exact ID. It saved a multiline Chinese/English note,
+found that note through FTS, and read its exact Atomic Memory revision. Both copy buttons were
+verified by pasting the actual clipboard into the app editor: full text remained unchanged and
+reference JSON retained `family`, `artifact_id` and `revision`. An independent HTTP read returned
+the same persisted exact text. Test paste-back drafts were cleared without saving duplicates.
+
+This establishes those workflows on the observed host and build. It does not establish actual IME
+composition (Chinese text was pasted), screen-reader behavior, Intel/Windows execution, Gatekeeper
+acceptance, signing or notarization.
 
 ### Atomic Memory protocol qualification
 
