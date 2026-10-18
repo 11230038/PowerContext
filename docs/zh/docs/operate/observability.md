@@ -163,6 +163,7 @@ role/instance。Target 或 sample 缺失不等于零故障；不要把各进程 
 安装 `tracing-otlp` 并启用 tracing 后，Server 自动组合的 worker 在启动时仅捕获 W3C `traceparent`/`tracestate`。
 每个 child 创建自己的 provider/resource，加入对应 supervisor execution，并为真实 family、Topic Memory model composition
 启用 instrumentation。Memory 使用已有 commit stages；Topic Memory 增加 `topic_memory.prepare` 和 `topic_memory.commit`。
+显式 Dream 派发复用同一个 child span，但不产生 model span。
 Child 的 `artifact_processing.worker.execute` span 描述 child result；业务完成仍由 supervisor 验证 acknowledgement。
 
 Scheduled/coalesced invocation 使用独立 supervisor trace，不继承 capture request ID，不让 HTTP request 一直保持打开，

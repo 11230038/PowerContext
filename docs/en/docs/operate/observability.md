@@ -174,7 +174,8 @@ missing sample must not be interpreted as zero failures. Do not sum process snap
 With tracing enabled and `tracing-otlp` installed, Server-composed workers capture only W3C `traceparent`/`tracestate`
 when launched. Each child creates its own provider/resource, joins that supervisor execution, and instruments its real
 family or Topic Memory model composition. Memory processing includes the existing commit stages; Topic Memory adds
-`topic_memory.prepare` and `topic_memory.commit`. The child `artifact_processing.worker.execute` span describes a child
+`topic_memory.prepare` and `topic_memory.commit`. Explicit Dream dispatch runs under the same child span but
+does not emit model spans. The child `artifact_processing.worker.execute` span describes a child
 result; the supervisor acknowledgement remains the evidence of verified business completion.
 
 A scheduled/coalesced invocation starts an independent supervisor trace. It does not inherit a capture request ID,
