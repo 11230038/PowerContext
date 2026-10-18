@@ -107,8 +107,7 @@ class PiInstaller:
                 shutil.copytree(package, candidate, ignore=shutil.ignore_patterns("node_modules", ".git"))
                 preserve_installed_guidance(destination, candidate)
                 (candidate / marker).write_text("powercontext-pi\n", encoding="utf-8")
-                publish([(candidate, destination)])
-            _run_pi("install", str(destination))
+                publish([(candidate, destination)], action=lambda: _run_pi("install", str(destination)))
             user_packages = False
             registered_source = None
             for line in _run_pi("list").splitlines():

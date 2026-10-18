@@ -147,8 +147,9 @@ def test_setup_pi_reuses_its_owned_path_and_preserves_other_registrations(
     assert (project_package / "package.json").is_file()
 
 
+@pytest.mark.parametrize("owned", [False, True], ids=["checkout", "owned-package"])
 def test_setup_pi_keeps_the_existing_package_when_refresh_installation_fails(
-    tmp_path: Path, monkeypatch, installed_agent_checks
+    tmp_path: Path, monkeypatch, installed_agent_checks, owned: bool
 ) -> None:
     import powercontext.cli.pi as pi_cli
 
@@ -157,6 +158,8 @@ def test_setup_pi_keeps_the_existing_package_when_refresh_installation_fails(
     _write_pi_package(checkout)
     existing = _write_pi_package(tmp_path / "existing")
     installed_packages = {str(existing)}
+    (existing / "extensions/powercontext.ts").write_text("// working extension\n", encoding="utf-8")
+    fail_install = False
 
     monkeypatch.setenv("POWERCONTEXT_HOME", str(data_dir))
     monkeypatch.setattr(pi_cli, "which", lambda _name: "/usr/bin/pi")
@@ -164,22 +167,31 @@ def test_setup_pi_keeps_the_existing_package_when_refresh_installation_fails(
     def fake_pi(*arguments: str) -> str:
         command, *values = arguments
         if command == "list":
-            return "\n".join(["User packages:", f"  {existing}", f"    {existing}"])
+            return "User packages:\n" + "".join(f"  {path}\n    {path}\n" for path in installed_packages)
         if command == "install":
-            message = "`pi install` failed: simulated Pi installation failure"
-            raise SetupError(message)
+            if fail_install:
+                message = "`pi install` failed: simulated Pi installation failure"
+                raise SetupError(message)
+            installed_packages.add(values[0])
+            return ""
         if command == "remove":
             installed_packages.discard(values[0])
             return ""
         raise AssertionError
 
     monkeypatch.setattr(pi_cli, "_run_pi", fake_pi)
+    cli = create_cli([setup_app])
+    if owned:
+        result = CliRunner().invoke(cli, ["setup", "pi", "--source", str(existing)])
+        assert result.exit_code == 0, result.output
+    previous = {path: (Path(path) / "extensions/powercontext.ts").read_bytes() for path in installed_packages}
+    fail_install = True
 
-    result = CliRunner().invoke(create_cli([setup_app]), ["setup", "pi", "--source", str(checkout)])
+    result = CliRunner().invoke(cli, ["setup", "pi", "--source", str(checkout)])
 
     assert result.exit_code == 1
     assert "simulated Pi installation failure" in result.output
-    assert installed_packages == {str(existing)}
+    assert {path: (Path(path) / "extensions/powercontext.ts").read_bytes() for path in installed_packages} == previous
 
 
 def test_setup_pi_does_not_echo_source_credentials(tmp_path: Path, monkeypatch, installed_agent_checks) -> None:

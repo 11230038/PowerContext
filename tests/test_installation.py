@@ -21,8 +21,10 @@ from pathlib import Path
 from subprocess import CompletedProcess
 
 import pytest
+from typer.testing import CliRunner
 
 from powercontext.cli import openclaw
+from powercontext.cli.app import create_cli
 from powercontext.cli.installation import SetupError, setup
 
 ROOT = Path(__file__).parents[1]
@@ -103,6 +105,47 @@ def test_connection_can_be_configured_without_reinstalling(tmp_path, monkeypatch
     assert load_client_settings("workbuddy")["server_url"] == "https://memory.example"
     mcp = json.loads((Path(installed["workbuddy_home"]) / "mcp.json").read_text())
     assert "https://memory.example" in mcp["mcpServers"]["powercontext"]["url"]
+
+
+@pytest.mark.parametrize("fail", [False, True], ids=["success", "rollback"])
+def test_connection_readers_keep_a_configured_endpoint_during_update(
+    tmp_path, monkeypatch, installed_agent_checks, fail
+):
+    from powercontext.cli import installation
+    from powercontext.client.transport_policy import load_client_settings
+
+    monkeypatch.setenv("WORKBUDDY_HOME", str(tmp_path / "workbuddy"))
+    cli = create_cli()
+    runner = CliRunner()
+    result = runner.invoke(cli, ["setup", "workbuddy", "--source", str(ROOT), "--server-url", "https://old.example"])
+    assert result.exit_code == 0, result.output
+    client = tmp_path / "clients.json"
+    observed = []
+    write, replace = installation.write_bytes, installation.os.replace
+
+    def read_endpoint():
+        observed.append(load_client_settings("workbuddy").get("server_url"))
+
+    def write_connection(path, value):
+        if path == client:
+            read_endpoint()
+        write(path, value)
+        if path == client and fail:
+            raise OSError("connection write failed")  # noqa: TRY003
+
+    def replace_file(source, target):
+        if target == client:
+            read_endpoint()
+        replace(source, target)
+        if target == client:
+            read_endpoint()
+
+    monkeypatch.setattr(installation, "write_bytes", write_connection)
+    monkeypatch.setattr(installation.os, "replace", replace_file)
+    result = runner.invoke(cli, ["config", "agent", "workbuddy", "--server-url", "https://new.example"])
+    assert result.exit_code == int(fail), result.output
+    assert set(observed) <= {"https://old.example", "https://new.example"}
+    assert load_client_settings("workbuddy")["server_url"] == ("https://old.example" if fail else "https://new.example")
 
 
 @pytest.mark.parametrize("host", ["kimi-code", "zcode", "workbuddy"])

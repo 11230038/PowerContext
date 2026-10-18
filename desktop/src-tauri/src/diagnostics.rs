@@ -363,7 +363,7 @@ fn execute(
     };
     let result = crate::diagnostic_process::run(
         &config.executable,
-        &kind.arguments(),
+        kind.arguments(),
         Duration::from_secs(timeout),
         cancelled.clone(),
     )?;

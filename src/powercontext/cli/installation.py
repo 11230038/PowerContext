@@ -20,6 +20,7 @@ import json
 import os
 import shutil
 import tempfile
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,8 +56,8 @@ def write_bytes(path: Path, value: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def publish(replacements=(), writes=None) -> None:  # noqa: C901
-    """Publish a local file change, restoring previous contents if writing fails."""
+def publish(replacements=(), writes=None, *, action: Callable[[], object] | None = None) -> None:  # noqa: C901
+    """Publish local changes, restoring previous contents if writing or the action fails."""
     previous: list[tuple[Path, Path | None]] = []
     changes = [(target, source) for source, target in replacements] + list((writes or {}).items())
     try:
@@ -65,16 +66,22 @@ def publish(replacements=(), writes=None) -> None:  # noqa: C901
             backup = None
             if target.exists() or target.is_symlink():
                 backup = target.with_name(f".{target.name}.{uuid4().hex}.bak")
-                os.replace(target, backup)
+                if value is None or (target.is_dir() and not target.is_symlink()):
+                    os.replace(target, backup)
+                else:
+                    shutil.copy2(target, backup, follow_symlinks=False)
             previous.append((target, backup))
             if isinstance(value, Path):
                 os.replace(value, target)
             elif value is not None:
                 write_bytes(target, value)
+        if action is not None:
+            action()
     except BaseException as error:
         for target, backup in reversed(previous):
             try:
-                _remove(target)
+                if backup is None or (target.is_dir() and not target.is_symlink()):
+                    _remove(target)
                 if backup is not None:
                     os.replace(backup, target)
             except OSError:
