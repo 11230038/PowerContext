@@ -60,6 +60,12 @@ def publish(replacements=(), writes=None, *, action: Callable[[], object] | None
     """Publish local changes, restoring previous contents if writing or the action fails."""
     previous: list[tuple[Path, Path | None]] = []
     changes = [(target, source) for source, target in replacements] + list((writes or {}).items())
+    for target, value in changes:
+        if value is not None and not target.exists() and not target.is_symlink():
+            backup = next(target.parent.glob(f".{target.name}.*.bak"), None)
+            if backup is not None:
+                message = f"Restore {target} from {backup} before retrying setup"
+                raise SetupError(message)
     try:
         for target, value in changes:
             target.parent.mkdir(parents=True, exist_ok=True)
