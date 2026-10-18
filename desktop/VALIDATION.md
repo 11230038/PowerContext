@@ -70,3 +70,32 @@ pnpm --dir desktop tauri build --bundles nsis --ci --features ci-fixtures -- --l
 - Maintainer ownership and approved performance budgets.
 
 Hosted Windows CI and developer-machine checks do not replace these platform and product gates. This preview does not close #1654 or #1428.
+
+## macOS native validation
+
+Run on each target architecture with the pinned tools:
+
+```sh
+cd desktop
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm test
+pnpm build
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
+cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test --locked --manifest-path src-tauri/Cargo.toml
+pnpm ipc:check
+cargo run --locked --manifest-path src-tauri/Cargo.toml --example credential_probe
+pnpm desktop:build
+open "src-tauri/target/release/bundle/macos/PowerContext Desktop Preview.app"
+```
+
+Check that the Home page renders, Settings shows the native host ready, and a missing diagnostic
+registration produces the missing-CLI state. The synthetic native Keychain probe verifies persistence
+across processes and removes its own entry. Native process tests exercise output limits, timeout,
+cancellation and descendant termination. The registered-launcher test executes a real synthetic CLI
+and checks digest rejection and allowlisted projection; it does not qualify a real CLI installation.
+
+Use a disposable Server and Scope for installed save/search/read/copy checks. Unit tests do not prove
+those installed workflows. Validate actual Chinese IME, accessibility, Gatekeeper, signing and
+notarization independently before distributing outside the internal preview.
