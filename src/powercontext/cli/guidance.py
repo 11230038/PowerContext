@@ -38,15 +38,22 @@ class HostGuidance:
     """Distribution facts; supported capabilities are read from capabilities.toml."""
 
     plugin: str
-    installer: str | None = None
-    server_default: str | None = None
-    server_option: bool = True
-    empty_server_uses_default: bool = True
-    capture_prompts: bool = False
-    allow_insecure_http: bool = False
-    target_option: bool = False
+    source_files: tuple[str, ...] = ("package.json",)
+    package_name: str | None = None
     variables: tuple[str, ...] = ()
     script_evidence: tuple[str, ...] = ()
+
+    def recognizes(self, path: Path) -> bool:
+        """Identify a host package without requiring optional build output."""
+        if not all((path / name).is_file() for name in self.source_files):
+            return False
+        if self.package_name is None:
+            return True
+        try:
+            manifest = json.loads((path / self.source_files[0]).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return isinstance(manifest, dict) and manifest.get("name") == self.package_name
 
     @property
     def skill(self) -> Path:
@@ -56,66 +63,51 @@ class HostGuidance:
 HOST_GUIDANCE = {
     "codex": HostGuidance(
         "integrations/codex/plugins/powercontext",
-        "powercontext.cli.system:install_codex_plugin",
-        empty_server_uses_default=False,
         variables=("PLUGIN_ROOT",),
         script_evidence=("scripts/scope_binding.py",),
     ),
     "claude-code": HostGuidance(
         "integrations/claude-code/plugins/powercontext",
-        "powercontext.cli.system:install_claude_code_plugin",
-        server_default="http://127.0.0.1:8000",
-        empty_server_uses_default=False,
-        capture_prompts=True,
-        allow_insecure_http=True,
         variables=("PLUGIN_ROOT",),
         script_evidence=("scripts/workspace_scope.py",),
     ),
     "dsh": HostGuidance(
         "integrations/dsh/plugins/powercontext",
-        "powercontext.cli.dsh:install_dsh_plugin",
-        server_default="http://127.0.0.1:8000",
-        allow_insecure_http=True,
-        target_option=True,
+        package_name="powercontext-dsh",
     ),
     "openclaw": HostGuidance(
         "integrations/openclaw/plugins/memory-powercontext",
-        "powercontext.cli.openclaw:install_openclaw_plugin",
-        server_default="http://127.0.0.1:8000",
-        empty_server_uses_default=False,
-        allow_insecure_http=True,
+        package_name="@oceanbase/openclaw-memory-powercontext",
     ),
     "opencode": HostGuidance(
         "integrations/opencode/plugins/powercontext",
-        "powercontext.cli.opencode:install_opencode_plugin",
-        server_default="http://127.0.0.1:8000",
+        package_name="powercontext-opencode",
     ),
     "pi": HostGuidance(
         "integrations/pi/plugins/powercontext",
-        "powercontext.cli.pi:install_pi_plugin",
-        server_default="http://127.0.0.1:8000",
+        package_name="powercontext-pi",
     ),
     "hermes": HostGuidance(
         "integrations/hermes/plugins/powercontext",
-        "powercontext.cli.hermes:install_hermes_plugin",
-        server_option=False,
+        source_files=("plugin.yaml", "__init__.py"),
     ),
     "workbuddy": HostGuidance(
         "integrations/workbuddy/plugins/powercontext",
-        "powercontext.cli.workbuddy:install_workbuddy_plugin",
-        empty_server_uses_default=False,
         variables=("POWERCONTEXT_PYTHON", "POWERCONTEXT_SCOPE_BINDING_SCRIPT"),
         script_evidence=("scripts/workspace_scope.py",),
+        source_files=("hooks/workbuddy_powercontext_hook.py", "scripts/workspace_scope.py"),
     ),
     "zcode": HostGuidance(
         "integrations/zcode/plugins/powercontext",
-        "powercontext.cli.zcode:install_zcode_plugin",
-        server_default="http://127.0.0.1:8000",
-        capture_prompts=True,
-        allow_insecure_http=True,
         script_evidence=("scripts/scope.mjs",),
+        source_files=(".zcode-plugin/plugin.json", "hooks/user_prompt_submit.mjs"),
+        package_name="powercontext",
     ),
-    "kimi-code": HostGuidance("integrations/kimi-code/plugins/powercontext"),
+    "kimi-code": HostGuidance(
+        "integrations/kimi-code/plugins/powercontext",
+        source_files=("kimi.plugin.json",),
+        package_name="powercontext",
+    ),
     "agent-plugin": HostGuidance("integrations/agent-plugin/powercontext"),
     "minimax": HostGuidance("integrations/minimax/plugins/powercontext"),
 }

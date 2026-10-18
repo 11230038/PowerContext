@@ -32,6 +32,8 @@ from powercontext.cli.guidance import (
     merge_guidance,
     refresh_skill,
 )
+from powercontext.cli.installation import setup as install_plugin
+from tests.install_support import configure_opencode
 
 
 @pytest.fixture
@@ -171,17 +173,16 @@ def test_installed_skill_refresh_preserves_notes_extra_files_and_mtimes(tmp_path
 
 
 @pytest.mark.parametrize("host", ["workbuddy", "opencode"])
-def test_real_skill_installers_preserve_local_notes_on_repeat(tmp_path: Path, host: str) -> None:
-    from powercontext.cli.opencode import _install_skill
-    from powercontext.cli.workbuddy import _install_workbuddy_skill
+def test_real_skill_installers_preserve_local_notes_on_repeat(tmp_path: Path, host: str, monkeypatch) -> None:
 
     target = tmp_path / "skills/powercontext-project-context"
 
+    package = ROOT / HOST_GUIDANCE[host].plugin
+    configure_opencode(monkeypatch, tmp_path)
+    monkeypatch.setenv("WORKBUDDY_HOME", str(tmp_path))
+
     def install() -> None:
-        if host == "workbuddy":
-            _install_workbuddy_skill(ROOT / HOST_GUIDANCE[host].plugin, target.parent, tmp_path / "hooks")
-        else:
-            _install_skill(ROOT / FILE_HOSTS[host], target)
+        install_plugin(host, source=str(package))
 
     install()
     skill = target / "SKILL.md"
@@ -220,7 +221,9 @@ def pre_marker_packages(tmp_path: Path) -> dict[str, Path]:
     for host, files in skills.items():
         plugin = tmp_path / "old-packages" / host
         shutil.copytree(
-            ROOT / HOST_GUIDANCE[host].plugin, plugin, ignore=shutil.ignore_patterns("skills", "__pycache__")
+            ROOT / HOST_GUIDANCE[host].plugin,
+            plugin,
+            ignore=shutil.ignore_patterns("skills", "__pycache__", "node_modules"),
         )
         for name, content in files.items():
             destination = plugin / "skills/powercontext-project-context" / name
@@ -235,29 +238,28 @@ def test_pre_marker_downgrade_rejects_before_losing_user_content(
     tmp_path: Path, monkeypatch, pre_marker_packages: dict[str, Path], host: str
 ) -> None:
     from powercontext.cli.guidance import SKILL_DIRECTORY, preserve_installed_guidance
-    from powercontext.cli.opencode import _install_skill
     from powercontext.cli.system import SetupError
-    from powercontext.cli.workbuddy import install_workbuddy_plugin
 
     home = tmp_path / "installed"
     target = home / SKILL_DIRECTORY
     monkeypatch.setenv("WORKBUDDY_HOME", str(home))
     monkeypatch.setenv("POWERCONTEXT_HOME", str(tmp_path / "data"))
     if host == "workbuddy":
-        install_workbuddy_plugin(source=str(ROOT), ref="master")
+        install_plugin("workbuddy", source=str(str(ROOT)), ref="master")
     elif host == "opencode":
-        _install_skill(ROOT / FILE_HOSTS[host], target)
+        configure_opencode(monkeypatch, home)
+        install_plugin(host, source=str(ROOT))
     else:
         shutil.copytree(ROOT / FILE_HOSTS[host], target)
     skill = target / "SKILL.md"
     skill.write_bytes(skill.read_bytes() + b"\r\nUser notes must survive a downgrade.\r\n")
     (target / "my-notes.md").write_text("Keep my additional file.\n", encoding="utf-8")
     before = {path: data for path, (data, _) in snapshot(home).items()}
-    with pytest.raises((GuidanceError, SetupError, OSError), match=r"unmarked|pre-marker"):
+    with pytest.raises((GuidanceError, SetupError, OSError), match=r"unmarked|pre-marker|explicit migration"):
         if host == "workbuddy":
-            install_workbuddy_plugin(source=str(pre_marker_packages[host]), ref="master")
+            install_plugin("workbuddy", source=str(str(pre_marker_packages[host])), ref="master")
         elif host == "opencode":
-            _install_skill(pre_marker_packages[host] / SKILL_DIRECTORY, target)
+            install_plugin(host, source=str(pre_marker_packages[host]))
         else:
             preserve_installed_guidance(home, pre_marker_packages[host])
     assert {path: data for path, (data, _) in snapshot(home).items()} == before
@@ -276,7 +278,7 @@ def test_workbuddy_legacy_upgrade_uses_previous_interpreter_without_accepting_ed
     old_python = (tmp_path / "old environment/python").as_posix()
     new_python = (tmp_path / "new environment/python3").as_posix()
     monkeypatch.setattr(workbuddy, "_python_executable", lambda: old_python)
-    workbuddy.install_workbuddy_plugin(source=str(pre_marker_packages["workbuddy"]), ref="master")
+    install_plugin("workbuddy", source=str(str(pre_marker_packages["workbuddy"])), ref="master")
     scope = home / "skills/powercontext-project-context/references/scope-memory.md"
     assert old_python in scope.read_text(encoding="utf-8")
     if edited:
@@ -285,10 +287,10 @@ def test_workbuddy_legacy_upgrade_uses_previous_interpreter_without_accepting_ed
     monkeypatch.setattr(workbuddy, "_python_executable", lambda: new_python)
     if edited:
         with pytest.raises(SetupError, match="unrecognized content"):
-            workbuddy.install_workbuddy_plugin(source=str(ROOT), ref="master")
+            install_plugin("workbuddy", source=str(str(ROOT)), ref="master")
         assert {path: data for path, (data, _) in snapshot(home).items()} == before
     else:
-        workbuddy.install_workbuddy_plugin(source=str(ROOT), ref="master")
+        install_plugin("workbuddy", source=str(str(ROOT)), ref="master")
         updated = scope.read_text(encoding="utf-8")
         assert new_python in updated
         assert old_python not in updated
@@ -337,9 +339,10 @@ def test_unchanged_pre_marker_staging_keeps_additional_user_files(
 
 @pytest.mark.parametrize("host", ["workbuddy", "opencode", "hermes", "zcode"])
 @pytest.mark.parametrize("damage", ["reference", "manifest", "invalid-manifest"])
-def test_incomplete_package_never_uses_old_files_to_repair_it(tmp_path: Path, host: str, damage: str) -> None:
+def test_incomplete_package_never_uses_old_files_to_repair_it(
+    tmp_path: Path, host: str, damage: str, monkeypatch
+) -> None:
     from powercontext.cli.guidance import SKILL_DIRECTORY, preserve_installed_guidance
-    from powercontext.cli.opencode import _install_skill
     from powercontext.cli.system import SetupError
     from powercontext.cli.workbuddy import _install_workbuddy_skill
 
@@ -348,12 +351,18 @@ def test_incomplete_package_never_uses_old_files_to_repair_it(tmp_path: Path, ho
     installed = tmp_path / "installed"
     target = installed / SKILL_DIRECTORY
     shutil.copytree(ROOT / FILE_HOSTS[host], source)
+    if host == "opencode":
+        configure_opencode(monkeypatch, installed)
+        (package / "package.json").write_text('{"name":"powercontext-opencode"}', encoding="utf-8")
+        (package / "lib").mkdir()
+        for name in ("index.js", "tui.js"):
+            (package / "lib" / name).write_text("export default {}", encoding="utf-8")
 
     def install() -> None:
         if host == "workbuddy":
             _install_workbuddy_skill(package, target.parent, installed / "hooks")
         elif host == "opencode":
-            _install_skill(source, target)
+            install_plugin(host, source=str(package))
         else:
             preserve_installed_guidance(installed, package)
 

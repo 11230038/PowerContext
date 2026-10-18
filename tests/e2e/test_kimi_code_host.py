@@ -36,7 +36,8 @@ from pydantic import AnyHttpUrl, SecretStr
 
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime.config import InferenceConfig, RuntimeConfig
-from powercontext.cli.kimi_code import install_kimi_plugin, run_kimi_diagnostics
+from powercontext.cli.installation import setup as install_plugin
+from powercontext.cli.kimi_code import KimiInstaller
 from powercontext.server.factory import create_server_app
 from powercontext.server.settings import BearerAuthConfig, ServerSettings
 
@@ -304,9 +305,9 @@ def test_real_kimi_memory_capture_recall_and_fail_open(tmp_path: Path, monkeypat
             '[[permission.rules]]\ndecision = "allow"\npattern = "mcp__plugin_powercontext_powercontext__*"\n',
             encoding="utf-8",
         )
-        installed = install_kimi_plugin(source=REPOSITORY, server_url=endpoint, scope_id=scope_id)
-        install_kimi_plugin(source=REPOSITORY)
-        diagnostics = run_kimi_diagnostics()
+        installed = install_plugin("kimi-code", source=str(REPOSITORY), server_url=endpoint, scope_id=scope_id)
+        install_plugin("kimi-code", source=str(REPOSITORY))
+        diagnostics = KimiInstaller().verify()
         assert all(check.ok for check in diagnostics.values()), diagnostics
         command = [node, str(cli)] if cli.suffix in {".mjs", ".js", ".cjs"} else [str(cli)]
         version = subprocess.run([*command, "--version"], capture_output=True, text=True, check=True, timeout=15)
@@ -392,7 +393,7 @@ def test_real_kimi_memory_capture_recall_and_fail_open(tmp_path: Path, monkeypat
         history = subprocess.run(
             [
                 node,
-                str(Path(installed.plugin_path) / "scripts/status.mjs"),
+                str(Path(installed["plugin_path"]) / "scripts/status.mjs"),
                 "--cwd",
                 str(workspace),
                 "--session-id",
@@ -410,27 +411,27 @@ def test_real_kimi_memory_capture_recall_and_fail_open(tmp_path: Path, monkeypat
         assert observed["stages"]["prepare"]["state"] == "ready"
         assert observed["stages"]["capture"]["state"] == "accepted"
         assert observed["stages"]["injection"]["state"] == "emitted"
-        diagnostics = run_kimi_diagnostics(runtime=True, cwd=workspace)
+        diagnostics = KimiInstaller().verify(runtime=True, cwd=workspace)
         assert diagnostics["runtime"].ok, diagnostics
         assert diagnostics["runtime"].checks is not None
         assert diagnostics["runtime"].checks["capture"] == "accepted"
 
-        install_kimi_plugin(source=REPOSITORY, capture_prompts=False)
+        install_plugin("kimi-code", source=str(REPOSITORY), capture_prompts=False)
         count = len(client.get(f"/v1/scopes/{scope_id}/sources").json()["items"])
         invoke("An ordinary task with capture disabled.")
         assert len(client.get(f"/v1/scopes/{scope_id}/sources").json()["items"]) == count
         invoke("Ordinary task with rejected credentials.", token="wrong-synthetic-token")  # noqa: S106
         invoke("Ordinary task with missing credentials.", token=None)
         monkeypatch.delenv("POWERCONTEXT_KIMI_TOKEN")
-        assert run_kimi_diagnostics()["credentials"].detail == "authentication_failed"
+        assert KimiInstaller().verify()["credentials"].detail == "authentication_failed"
         monkeypatch.setenv("POWERCONTEXT_KIMI_TOKEN", "wrong-synthetic-token")
-        assert run_kimi_diagnostics()["scope"].detail == "authentication_failed"
+        assert KimiInstaller().verify()["scope"].detail == "authentication_failed"
         monkeypatch.setenv("POWERCONTEXT_KIMI_TOKEN", "kimi-synthetic-server-token")
         server.should_exit = True
         server_thread.join(timeout=10)
         assert not server_thread.is_alive(), "PowerContext Server must actually stop before outage acceptance"
         invoke("An ordinary task during a PowerContext outage.")
-        assert run_kimi_diagnostics()["server"].detail == "server_unavailable"
+        assert KimiInstaller().verify()["server"].detail == "server_unavailable"
         basic_app = create_server_app(
             settings=ServerSettings(
                 database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'basic.db'}"),
@@ -448,8 +449,8 @@ def test_real_kimi_memory_capture_recall_and_fail_open(tmp_path: Path, monkeypat
             new_scope.raise_for_status()
             gateway.scope_id = new_scope.json()["scope_id"]
             monkeypatch.delenv("POWERCONTEXT_KIMI_TOKEN")
-            install_kimi_plugin(source=REPOSITORY, server_url=basic_endpoint, scope_id=gateway.scope_id)
-            assert all(check.ok for check in run_kimi_diagnostics().values())
+            install_plugin("kimi-code", source=str(REPOSITORY), server_url=basic_endpoint, scope_id=gateway.scope_id)
+            assert all(check.ok for check in KimiInstaller().verify().values())
             start = len(gateway.requests)
             invoke("PC_KIMI_SAVE: Save explicitly without Generation.", token=None)
             assert any(
@@ -465,7 +466,7 @@ def test_real_kimi_memory_capture_recall_and_fail_open(tmp_path: Path, monkeypat
                     "host_version": version.stdout.strip(),
                     "platform": os.name,
                     "inference": "controlled",
-                    "installation": installed.plugin_path,
+                    "installation": installed["plugin_path"],
                     "explicit_memory": True,
                     "exact_readback": True,
                     "source_generation": True,

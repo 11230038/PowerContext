@@ -12,21 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+"""Installation failure restores exact user configuration bytes."""
+
 from pathlib import Path
 
 import pytest
 
-from powercontext.cli import system, workbuddy
+from powercontext.cli import installation
 
 
-@pytest.mark.parametrize("host", ["claude-code", "workbuddy"])
-def test_setup_rollback_restores_exact_configuration_bytes(tmp_path: Path, monkeypatch, host: str) -> None:
+def test_failed_local_publication_restores_exact_configuration_bytes(tmp_path, monkeypatch):
     original = b'{\r\n  "custom": true,\n  "note": "keep original line endings"\r\n}\r\n'
-    settings = tmp_path / "settings.json"
-    settings.write_bytes(b"{}\n")
-    if host == "claude-code":
-        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
-        system._restore_claude_settings(original)
-    else:
-        workbuddy._restore_file(settings, original)
+    home = tmp_path / "workbuddy"
+    home.mkdir()
+    settings = home / "settings.json"
+    settings.write_bytes(original)
+    monkeypatch.setenv("WORKBUDDY_HOME", str(home))
+    write = installation.write_bytes
+
+    def fail_settings(path, content):
+        if path == settings:
+            raise OSError("settings write failed")  # noqa: TRY003
+        write(path, content)
+
+    monkeypatch.setattr(installation, "write_bytes", fail_settings)
+    with pytest.raises(OSError, match="settings write failed"):
+        installation.installers()["workbuddy"]().install(installation.PluginSource(str(Path(__file__).parents[1])))
     assert settings.read_bytes() == original
+    assert not (home / "hooks/workbuddy_powercontext_hook.py").exists()
