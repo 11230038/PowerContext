@@ -147,6 +147,46 @@ def test_setup_pi_reuses_its_owned_path_and_preserves_other_registrations(
     assert (project_package / "package.json").is_file()
 
 
+@pytest.mark.parametrize("installed", [False, True])
+def test_setup_pi_rejects_filtered_legacy_migration_without_changing_host(
+    tmp_path: Path, monkeypatch, installed_agent_checks, installed: bool
+) -> None:
+    import powercontext.cli.pi as pi_cli
+
+    package = _write_pi_package(tmp_path / "checkout")
+    legacy = _write_pi_package(tmp_path / "legacy")
+    home = tmp_path / "home"
+    monkeypatch.setenv("POWERCONTEXT_HOME", str(home / "data"))
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(home / "agent"))
+    monkeypatch.setenv("POWERCONTEXT_CLIENT_CONFIG_FILE", str(home / "clients.json"))
+    monkeypatch.setattr(pi_cli, "which", lambda _name: "pi")
+    destination = home / "data/plugins/pi"
+    if installed:
+        destination.mkdir(parents=True)
+        (destination / ".powercontext-owned").write_text("powercontext-pi\n", encoding="utf-8")
+        (destination / "release.txt").write_text("old release", encoding="utf-8")
+    registry = {"packages": [{"source": str(legacy), "extensions": [], "skills": []}]}
+    settings = home / "agent/settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps(registry), encoding="utf-8")
+
+    def native_command(*arguments):
+        if arguments[0] == "list":
+            return f"User packages:\n  {legacy} (filtered)\n    {legacy}\n"
+        if arguments[0] == "install":
+            registry["packages"].append(arguments[1])
+            settings.write_text(json.dumps(registry), encoding="utf-8")
+        return ""
+
+    monkeypatch.setattr(pi_cli, "_run_pi", native_command)
+    before = {path: path.read_bytes() for path in home.rglob("*") if path.is_file()}
+    result = CliRunner().invoke(create_cli([setup_app]), ["setup", "pi", "--source", str(package), "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "resource filters" in json.loads(result.output)["hosts"]["pi"]["error"]
+    assert {path: path.read_bytes() for path in home.rglob("*") if path.is_file()} == before
+
+
 @pytest.mark.parametrize("owned", [False, True], ids=["checkout", "owned-package"])
 def test_setup_pi_keeps_the_existing_package_when_refresh_installation_fails(
     tmp_path: Path, monkeypatch, installed_agent_checks, owned: bool

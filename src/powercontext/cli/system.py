@@ -1384,9 +1384,13 @@ class ClaudeInstaller:
             raise SetupError(  # noqa: TRY003
                 f"Claude Code marketplace `powercontext` uses {_describe_claude_marketplace_source(market)}, but setup requested {location}. Remove it with `claude plugin marketplace remove powercontext`, then rerun setup."
             )
+        installed = _claude_plugin(_run_claude_json("plugin", "list"), scope="user")
         if market is None:
             _run_claude("plugin", "marketplace", "add", location, "--scope", "user")
-        _run_claude("plugin", "install", f"{PLUGIN_NAME}@{CLAUDE_MARKETPLACE_NAME}", "--scope", "user")
+        else:
+            _run_claude("plugin", "marketplace", "update", CLAUDE_MARKETPLACE_NAME)
+        operation = "install" if installed is None else "update"
+        _run_claude("plugin", operation, f"{PLUGIN_NAME}@{CLAUDE_MARKETPLACE_NAME}", "--scope", "user")
         plugin = _require_claude_plugin(_run_claude_json("plugin", "list"), scope="user")
         config_dir = _claude_config_dir()
         return {

@@ -53,6 +53,53 @@ def test_configure_openclaw_changes_only_connection_settings(monkeypatch):
     ]
 
 
+@pytest.mark.parametrize("failure", [None, "local_write", "native_rejection"])
+def test_config_agent_openclaw_keeps_connection_settings_consistent(
+    tmp_path: Path, monkeypatch, failure: str | None
+) -> None:
+    from powercontext.cli import installation
+    from powercontext.cli.config import app as config_app
+
+    clients = tmp_path / "clients.json"
+    previous = {"version": 1, "hosts": {"openclaw": {"server_url": "https://old.example"}}}
+    clients.write_text(json.dumps(previous), encoding="utf-8")
+    native = tmp_path / "openclaw.json"
+    native.write_text(json.dumps({"endpoint": "https://old.example"}), encoding="utf-8")
+    monkeypatch.setenv("POWERCONTEXT_CLIENT_CONFIG_FILE", str(clients))
+    monkeypatch.setattr(openclaw_cli, "openclaw_executable", lambda: "openclaw")
+
+    def native_command(_executable, *arguments):
+        if arguments[:2] == ("config", "set"):
+            if failure == "native_rejection":
+                message = "Native configuration rejected"
+                raise SetupError(message)
+            settings = json.loads(native.read_text(encoding="utf-8"))
+            for update in json.loads(arguments[-1]):
+                settings[update["path"].rsplit(".", 1)[1]] = update["value"]
+            native.write_text(json.dumps(settings), encoding="utf-8")
+        return CompletedProcess([], 0, "{}", "")
+
+    monkeypatch.setattr(openclaw_cli, "run_openclaw", native_command)
+    write_bytes = installation.write_bytes
+
+    def write(path, value):
+        if failure == "local_write" and path == clients:
+            message = "Connection file is read-only"
+            raise PermissionError(message)
+        write_bytes(path, value)
+
+    monkeypatch.setattr(installation, "write_bytes", write)
+    result = CliRunner().invoke(
+        create_cli([config_app]),
+        ["config", "agent", "openclaw", "--server-url", "https://new.example", "--json"],
+    )
+
+    assert result.exit_code == (1 if failure else 0), result.output
+    expected = "https://old.example" if failure else "https://new.example"
+    assert json.loads(native.read_text(encoding="utf-8"))["endpoint"] == expected
+    assert json.loads(clients.read_text(encoding="utf-8"))["hosts"]["openclaw"]["server_url"] == expected
+
+
 def test_install_openclaw_plugin_builds_installs_and_configures(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

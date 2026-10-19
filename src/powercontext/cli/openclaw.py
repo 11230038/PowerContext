@@ -237,12 +237,15 @@ class OpenClawInstaller:
             }
 
     def configure(self, connection):
-        run_openclaw(openclaw_executable(), "plugins", "inspect", OPENCLAW_PLUGIN_NAME, "--json")
+        executable = openclaw_executable()
+        run_openclaw(executable, "plugins", "inspect", OPENCLAW_PLUGIN_NAME, "--json")
         endpoint = connection.server_url
-        configure_openclaw(
-            executable=openclaw_executable(), server_url=endpoint, allow_insecure_http=connection.allow_insecure_http
+        publish(
+            writes=setup_transport_updates(connection),
+            action=lambda: configure_openclaw(
+                executable=executable, server_url=endpoint, allow_insecure_http=connection.allow_insecure_http
+            ),
         )
-        publish(writes=setup_transport_updates(connection))
         return {"server_url": endpoint}
 
     def enable(self) -> None:  # noqa: C901 - initialize only absent native activation settings.

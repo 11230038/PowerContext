@@ -151,9 +151,11 @@ def setup(
     json_output: bool = False,
     **options: Any,
 ) -> dict[str, Any]:
+    from powercontext.cli.authorization import validate_setup_authorization
     from powercontext.cli.transport import prepare_setup_transport
 
     try:
+        validate_setup_authorization(host)
         connection = prepare_setup_transport(
             host,
             server_url=server_url,

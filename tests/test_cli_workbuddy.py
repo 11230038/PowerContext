@@ -91,6 +91,39 @@ def _shell_argument(value: str | Path) -> str:
     return shlex.quote(text)
 
 
+@pytest.mark.parametrize("installed", [False, True])
+@pytest.mark.parametrize("from_environment_file", [False, True])
+def test_setup_workbuddy_rejects_invalid_credentials_without_changing_host(
+    tmp_path: Path, monkeypatch, installed_agent_checks, installed: bool, from_environment_file: bool
+) -> None:
+    checkout = tmp_path / "checkout"
+    plugin = _write_plugin(checkout)
+    home = tmp_path / "home"
+    monkeypatch.setenv("WORKBUDDY_HOME", str(home / "workbuddy"))
+    monkeypatch.setenv("POWERCONTEXT_HOME", str(home / "data"))
+    monkeypatch.setenv("POWERCONTEXT_CLIENT_CONFIG_FILE", str(home / "clients.json"))
+    env_file = tmp_path / "setup.env"
+    env_file.write_text("", encoding="utf-8")
+    arguments = ["setup", "--env-file", str(env_file), "workbuddy", "--source", str(checkout), "--json"]
+    cli = create_cli([setup_app])
+    if installed:
+        result = CliRunner().invoke(cli, arguments)
+        assert result.exit_code == 0, result.output
+    before = {path: path.read_bytes() for path in home.rglob("*") if path.is_file()}
+    (plugin / "hooks/workbuddy_powercontext_hook.py").write_text("# replacement\n", encoding="utf-8")
+    if from_environment_file:
+        env_file.write_text('POWERCONTEXT_CLIENT_API_TOKEN="invalid token"\n', encoding="utf-8")
+    else:
+        monkeypatch.setenv("POWERCONTEXT_WORKBUDDY_AUTHORIZATION", "invalid token")
+
+    result = CliRunner().invoke(cli, arguments)
+
+    assert result.exit_code == 1, result.output
+    assert "single-token credential" in json.loads(result.output)["hosts"]["workbuddy"]["error"]
+    assert "invalid token" not in result.output
+    assert {path: path.read_bytes() for path in home.rglob("*") if path.is_file()} == before
+
+
 def test_setup_workbuddy_installs_from_a_local_checkout(tmp_path: Path, monkeypatch, installed_agent_checks) -> None:
     checkout = tmp_path / "powercontext"
     _write_plugin(checkout)

@@ -101,13 +101,7 @@ class PiInstaller:
             marker = ".powercontext-owned"
             if destination.exists() and not (destination / marker).is_file():
                 raise SetupError(f"Pi package path {destination} is not owned by PowerContext")  # noqa: TRY003
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(prefix=".powercontext-", dir=destination.parent) as temporary:
-                candidate = Path(temporary) / "package"
-                shutil.copytree(package, candidate, ignore=shutil.ignore_patterns("node_modules", ".git"))
-                preserve_installed_guidance(destination, candidate)
-                (candidate / marker).write_text("powercontext-pi\n", encoding="utf-8")
-                publish([(candidate, destination)], action=lambda: _run_pi("install", str(destination)))
+            superseded = []
             user_packages = False
             registered_source = None
             for line in _run_pi("list").splitlines():
@@ -121,9 +115,22 @@ class PiInstaller:
                         and resolved.resolve() != destination.resolve()
                         and HOST_GUIDANCE["pi"].recognizes(resolved)
                     ):
-                        _run_pi("remove", registered_source)
+                        if registered_source.endswith(" (filtered)"):
+                            raise SetupError(  # noqa: TRY003
+                                f"Pi package {resolved} has resource filters. Migrate its package entry and filters to {destination} in Pi settings before retrying setup."
+                            )
+                        superseded.append(registered_source)
                 elif user_packages and line.startswith("  "):
                     registered_source = line.strip()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix=".powercontext-", dir=destination.parent) as temporary:
+                candidate = Path(temporary) / "package"
+                shutil.copytree(package, candidate, ignore=shutil.ignore_patterns("node_modules", ".git"))
+                preserve_installed_guidance(destination, candidate)
+                (candidate / marker).write_text("powercontext-pi\n", encoding="utf-8")
+                publish([(candidate, destination)], action=lambda: _run_pi("install", str(destination)))
+            for registered_source in superseded:
+                _run_pi("remove", registered_source)
             return {
                 "package": PI_PACKAGE_NAME,
                 "package_path": str(destination),

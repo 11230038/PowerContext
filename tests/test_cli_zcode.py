@@ -154,6 +154,26 @@ def test_zcode_setup_rejects_invalid_origin_without_changing_installation(
     assert {path: path.read_bytes() for path in home.rglob("*") if path.is_file()} == before
 
 
+@pytest.mark.parametrize("authorization", ["raw-token", "Bearer invalid token"])
+def test_zcode_setup_rejects_invalid_runtime_authorization_before_installation(
+    tmp_path: Path, monkeypatch, authorization: str
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setattr(zcode, "zcode_config_file", lambda: home / ".zcode/cli/config.json")
+    monkeypatch.setattr(zcode, "zcode_executable", lambda: "zcode")
+    monkeypatch.setenv("POWERCONTEXT_ZCODE_AUTHORIZATION", authorization)
+    monkeypatch.setenv("POWERCONTEXT_CLIENT_CONFIG_FILE", str(home / "clients.json"))
+    checkout = tmp_path / "checkout"
+    _checkout(checkout)
+
+    result = CliRunner().invoke(create_cli([setup_app]), ["setup", "zcode", "--source", str(checkout), "--json"])
+
+    assert result.exit_code == 1, result.output
+    assert "authorization" in json.loads(result.output)["hosts"]["zcode"]["error"].lower()
+    assert authorization not in result.output
+    assert not home.exists()
+
+
 def test_zcode_upgrade_rejects_missing_packaged_reference_and_preserves_installation(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -376,7 +396,7 @@ def test_configuration_preserves_other_headers_and_drops_old_endpoint_authorizat
 
     monkeypatch.setattr(zcode, "zcode_config_file", lambda: tmp_path / "zcode/config.json")
     monkeypatch.setattr(zcode, "zcode_executable", lambda: "zcode")
-    monkeypatch.setenv("POWERCONTEXT_ZCODE_AUTHORIZATION", "synthetic-test-token")
+    monkeypatch.setenv("POWERCONTEXT_ZCODE_AUTHORIZATION", "Bearer synthetic-test-token")
     installed = install_plugin("zcode", source=str(Path(__file__).parents[1]), server_url="https://old.example")
     mcp_path = Path(installed["plugin_path"]) / ".mcp.json"
     mcp = json.loads(mcp_path.read_text())

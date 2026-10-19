@@ -20,6 +20,7 @@ import tomllib
 from email.message import Message
 from io import BytesIO, StringIO
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 from urllib.error import HTTPError
 
@@ -910,14 +911,14 @@ def test_setup_claude_code_installs_and_reports_connection_settings(
     config_dir = tmp_path / "claude"
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
     monkeypatch.setattr(system_cli, "which", lambda name: "/usr/bin/claude" if name == "claude" else None)
-    run_claude_json = Mock(
-        side_effect=lambda *args: (
-            []
-            if args[:3] == ("plugin", "marketplace", "list")
-            else [{"id": "powercontext@powercontext", "scope": "user", "version": "0.1.0", "enabled": True}]
-        )
-    )
-    run_claude = Mock()
+    installed = []
+    run_claude_json = Mock(side_effect=lambda *args: [] if args[:3] == ("plugin", "marketplace", "list") else installed)
+
+    def native_command(*arguments):
+        if arguments[:2] == ("plugin", "install"):
+            installed.append({"id": "powercontext@powercontext", "scope": "user", "version": "0.1.0", "enabled": True})
+
+    run_claude = Mock(side_effect=native_command)
     monkeypatch.setattr(system_cli, "_run_claude_json", run_claude_json)
     monkeypatch.setattr(system_cli, "_run_claude", run_claude)
 
@@ -979,14 +980,14 @@ def test_setup_claude_code_installs_and_reports_connection_settings(
     assert "--server-url http://127.0.0.1:9000" in statusline["command"]
 
 
-def test_setup_claude_code_preserves_the_installed_version_and_capture_preference(
+def test_setup_claude_code_upgrades_and_preserves_disablement_and_capture_preference(
     tmp_path: Path, monkeypatch, installed_agent_checks
 ) -> None:
     config_dir = tmp_path / "claude"
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
     monkeypatch.setattr(system_cli, "which", lambda name: "/usr/bin/claude" if name == "claude" else None)
     config_dir.mkdir()
-    settings = {
+    settings: dict[str, Any] = {
         "enabledPlugins": {"powercontext@powercontext": False},
         "pluginConfigs": {"powercontext@powercontext": {"options": {"capture_prompts": False}}},
     }
@@ -1003,7 +1004,19 @@ def test_setup_claude_code_preserves_the_installed_version_and_capture_preferenc
             )
         ),
     )
-    run_claude = Mock()
+    refreshed = False
+
+    def native_command(*arguments):
+        nonlocal refreshed
+        if arguments[:3] == ("plugin", "marketplace", "update"):
+            refreshed = True
+        if arguments[:2] == ("plugin", "update") and refreshed:
+            installed[0]["version"] = "0.2.0"
+        if arguments[:2] == ("plugin", "install"):
+            settings["enabledPlugins"]["powercontext@powercontext"] = True
+            (config_dir / "settings.json").write_text(json.dumps(settings))
+
+    run_claude = Mock(side_effect=native_command)
     monkeypatch.setattr(system_cli, "_run_claude", run_claude)
 
     result = install_plugin(
@@ -1013,10 +1026,11 @@ def test_setup_claude_code_preserves_the_installed_version_and_capture_preferenc
         server_url="http://127.0.0.1:9000",
     )
 
-    assert result["plugin_version"] == "0.1.1"
-    run_claude.assert_any_call("plugin", "install", "powercontext@powercontext", "--scope", "user")
+    assert result["plugin_version"] == "0.2.0"
+    assert Path(result["cache_dir"]).name == "0.2.0"
 
     persisted = json.loads((config_dir / "settings.json").read_text())
+    assert "0.2.0" in persisted["statusLine"]["command"]
     assert persisted["enabledPlugins"]["powercontext@powercontext"] is False
     assert persisted["pluginConfigs"]["powercontext@powercontext"]["options"]["capture_prompts"] is False
 
@@ -1029,6 +1043,7 @@ def test_setup_claude_code_ignores_a_project_scoped_plugin_when_updating_user_sc
     monkeypatch.setattr(system_cli, "which", lambda _name: "/usr/bin/claude")
     project_plugin = {"id": "powercontext@powercontext", "scope": "project", "version": "0.1.1", "enabled": True}
     user_plugin = {"id": "powercontext@powercontext", "scope": "user", "version": "0.1.2", "enabled": True}
+    installed = [project_plugin]
     monkeypatch.setattr(
         system_cli,
         "_run_claude_json",
@@ -1036,11 +1051,16 @@ def test_setup_claude_code_ignores_a_project_scoped_plugin_when_updating_user_sc
             side_effect=lambda *args: (
                 [{"name": "powercontext", "source": "github", "repo": "oceanbase/powercontext", "ref": "master"}]
                 if args[:3] == ("plugin", "marketplace", "list")
-                else [project_plugin, user_plugin]
+                else installed
             )
         ),
     )
-    run_claude = Mock()
+
+    def native_command(*arguments):
+        if arguments == ("plugin", "install", "powercontext@powercontext", "--scope", "user"):
+            installed.append(user_plugin)
+
+    run_claude = Mock(side_effect=native_command)
     monkeypatch.setattr(system_cli, "_run_claude", run_claude)
 
     result = install_plugin(
@@ -1052,7 +1072,7 @@ def test_setup_claude_code_ignores_a_project_scoped_plugin_when_updating_user_sc
     )
 
     assert result["plugin_version"] == "0.1.2"
-    run_claude.assert_any_call("plugin", "install", "powercontext@powercontext", "--scope", "user")
+    assert project_plugin["version"] == "0.1.1"
 
 
 def test_setup_claude_code_preserves_preexisting_objects_on_failure(

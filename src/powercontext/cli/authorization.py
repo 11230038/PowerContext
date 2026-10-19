@@ -185,6 +185,20 @@ def setup_authorization_value(host: str) -> str | None:
     return values.get(_AUTHORIZATION_ENVIRONMENTS[host]) or values.get("POWERCONTEXT_CLIENT_API_TOKEN")
 
 
+def validate_setup_authorization(host: str) -> None:
+    """Reject invalid explicit credentials before installation changes the host."""
+    if host in _AUTHORIZATION_ENVIRONMENTS:
+        value = setup_authorization_value(host)
+        if value is not None and value.strip():
+            normalize_authorization(value)
+    elif host == "zcode":
+        from powercontext.cli.transport import setup_environment
+
+        value = (setup_environment() | dict(os.environ)).get("POWERCONTEXT_ZCODE_AUTHORIZATION")
+        if value and normalize_authorization(value) != value:
+            raise ValueError("POWERCONTEXT_ZCODE_AUTHORIZATION must be a complete Bearer header")  # noqa: TRY003
+
+
 def configure_codex_desktop_authorization(value: str) -> bool:
     """Persist Codex authorization in the Windows user environment used by Desktop."""
 
@@ -259,5 +273,6 @@ __all__ = [
     "read_codex_desktop_authorization",
     "read_stored_authorization",
     "setup_authorization_value",
+    "validate_setup_authorization",
     "write_stored_authorization",
 ]
