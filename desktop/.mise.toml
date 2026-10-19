@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[tool_alias]
-# The npm package also supports Intel macOS; the standalone release does not.
-pnpm = "npm:pnpm"
-
 [tools]
 node = "24.14.1"
 pnpm = "11.13.1"
