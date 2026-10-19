@@ -17,16 +17,25 @@
 //! Bounded diagnostic execution in a private process group.
 use crate::{diagnostics::OUTPUT_LIMIT, error::SafeError};
 use std::{
+    fs::File,
     io::Read,
-    os::unix::process::CommandExt,
+    os::{
+        fd::{AsRawFd, FromRawFd, IntoRawFd},
+        unix::process::CommandExt,
+    },
     path::Path,
     process::{Command, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc,
     },
     time::{Duration, Instant},
 };
+
+/// The collection threads poll in short slices so a cancellation signal is
+/// observed while a foreign writer keeps the pipe alive without producing data.
+const POLL_SLICE: Duration = Duration::from_millis(50);
 
 pub(crate) struct Output {
     pub stdout: Vec<u8>,
@@ -42,26 +51,68 @@ impl Drop for Group {
     }
 }
 fn collect(
-    mut reader: impl Read + Send + 'static,
+    reader: impl Read + IntoRawFd + Send + 'static,
+    deadline: Instant,
+    cancelled: Arc<AtomicBool>,
     total: Arc<AtomicUsize>,
     exceeded: Arc<AtomicBool>,
-) -> std::thread::JoinHandle<Result<Vec<u8>, SafeError>> {
+) -> mpsc::Receiver<Result<Vec<u8>, SafeError>> {
+    let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
+        // Owning the descriptor lets the closure close the read end exactly once,
+        // even when the caller stops listening before the writer outside the
+        // killed process group releases the pipe.
+        let mut file = unsafe { File::from_raw_fd(reader.into_raw_fd()) };
         let mut output = Vec::new();
         let mut buffer = [0; 8192];
         loop {
-            let n = reader.read(&mut buffer).map_err(|_| SafeError::Storage)?;
-            if n == 0 {
+            if cancelled.load(Ordering::Relaxed) || Instant::now() >= deadline {
                 break;
             }
-            if total.fetch_add(n, Ordering::Relaxed).saturating_add(n) > OUTPUT_LIMIT {
-                exceeded.store(true, Ordering::Relaxed);
-                break;
+            let slice = deadline
+                .saturating_duration_since(Instant::now())
+                .min(POLL_SLICE)
+                .as_millis()
+                .try_into()
+                .unwrap_or(i32::MAX);
+            let mut descriptor = libc::pollfd {
+                fd: file.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let ready = unsafe { libc::poll(&mut descriptor, 1, slice) };
+            if ready <= 0 {
+                // Interrupted or no data yet; the schedule check above ends the loop.
+                continue;
             }
-            output.extend_from_slice(&buffer[..n]);
+            match file.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if total.fetch_add(n, Ordering::Relaxed).saturating_add(n) > OUTPUT_LIMIT {
+                        exceeded.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                    output.extend_from_slice(&buffer[..n]);
+                }
+                Err(_) => {
+                    let _ = sender.send(Err(SafeError::Storage));
+                    return;
+                }
+            }
         }
-        Ok(output)
-    })
+        let _ = sender.send(Ok(output));
+    });
+    receiver
+}
+
+/// Receives one bounded result; the reader always delivers before the deadline
+/// or closes the pipe read end, so this never blocks a surviving writer.
+fn receive(
+    receiver: mpsc::Receiver<Result<Vec<u8>, SafeError>>,
+    deadline: Instant,
+) -> Option<Result<Vec<u8>, SafeError>> {
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    receiver.recv_timeout(remaining).ok()
 }
 pub(crate) fn run(
     executable: &Path,
@@ -79,15 +130,23 @@ pub(crate) fn run(
         .spawn()
         .map_err(|_| SafeError::NotFound)?;
     let group = Group(child.id() as i32);
+    let deadline = Instant::now() + timeout;
     let total = Arc::new(AtomicUsize::new(0));
     let exceeded = Arc::new(AtomicBool::new(false));
     let stdout = collect(
         child.stdout.take().unwrap(),
+        deadline,
+        cancelled.clone(),
         total.clone(),
         exceeded.clone(),
     );
-    let stderr = collect(child.stderr.take().unwrap(), total, exceeded.clone());
-    let deadline = Instant::now() + timeout;
+    let stderr = collect(
+        child.stderr.take().unwrap(),
+        deadline,
+        cancelled.clone(),
+        total,
+        exceeded.clone(),
+    );
     let result = loop {
         if cancelled.load(Ordering::Relaxed) {
             break Err(SafeError::StaleContext);
@@ -106,9 +165,16 @@ pub(crate) fn run(
     };
     drop(group);
     let _ = child.wait();
-    let output = stdout.join().map_err(|_| SafeError::Storage)?;
-    let errors = stderr.join().map_err(|_| SafeError::Storage)?;
-    let exit_code = result?;
+    let exit_code = match result {
+        Ok(code) => code,
+        Err(error) => {
+            // A writer may survive outside the killed group and keep the pipes
+            // open, so never block here; collection threads end by the deadline.
+            return Err(error);
+        }
+    };
+    let output = receive(stdout, deadline).unwrap_or(Ok(Vec::new()));
+    let errors = receive(stderr, deadline).unwrap_or(Ok(Vec::new()));
     if exceeded.load(Ordering::Relaxed) {
         return Err(SafeError::ResponseTooLarge);
     }
@@ -139,6 +205,35 @@ mod tests {
         .unwrap();
         assert_eq!(result.stdout, b"synthetic");
         assert_eq!(result.exit_code, 1);
+    }
+    #[test]
+    fn surviving_pipe_writer_does_not_extend_shutdown() {
+        let directory = tempfile::tempdir().unwrap();
+        let pid_file = directory.path().join("escape.pid");
+        let script = format!(
+            "perl -e 'use POSIX; POSIX::setsid(); open(my $fh, q(>), $ARGV[0]) or die; print $fh $$; close($fh); sleep 300' '{}'",
+            pid_file.display()
+        );
+        let started = Instant::now();
+        let result = shell(
+            &script,
+            Duration::from_millis(200),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let elapsed = started.elapsed();
+        assert_eq!(result.err(), Some(SafeError::Timeout));
+        assert!(
+            elapsed < Duration::from_secs(30),
+            "bounded shutdown blocked {elapsed:?} behind a writer that escaped the killed group"
+        );
+        let pid: i32 = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
     }
     #[test]
     fn timeout_and_live_cancellation_terminate_spawned_descendants() {
