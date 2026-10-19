@@ -107,7 +107,7 @@ CI fixture 使用独立资格记录，不会修改历史生产资格。原生 HT
 uv build --wheel --out-dir desktop/.artifacts/server-wheel
 DESKTOP_FIXTURE_COMMIT=$(git rev-parse HEAD)
 uv run python desktop/tests/fixture_qualification.py --server-commit "$DESKTOP_FIXTURE_COMMIT"
-pnpm --dir desktop tauri build --bundles nsis --ci --features ci-fixtures -- --locked
+pnpm --dir desktop desktop:build:windows:ci
 ```
 
 ## Remaining release qualification

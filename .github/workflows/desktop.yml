@@ -115,7 +115,7 @@ jobs:
         working-directory: .
         run: uv run --no-sync python desktop/tests/real_cli.py
       - name: Build fixture-qualified unsigned internal Windows installer
-        run: pnpm tauri build --bundles nsis --ci --features ci-fixtures -- --locked
+        run: pnpm desktop:build:windows:ci
       - name: Prepare matching WebView2 driver
         run: ./scripts/prepare-webdriver.ps1
       - name: Smoke test installed package
