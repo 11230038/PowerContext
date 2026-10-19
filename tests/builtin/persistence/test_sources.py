@@ -308,6 +308,26 @@ def test_precanonical_generated_alias_source_rows_remain_readable_and_replayable
     asyncio.run(scenario())
 
 
+def test_excluded_native_identity_is_rejected_before_capture() -> None:
+    class ExcludedVersionSource(NativeCamelCaseSource):
+        definition_version: str = Field(default="1", exclude=True)
+
+    async def scenario() -> None:
+        repository = SourceRepository((SerializationAliasAdapter(ExcludedVersionSource),))
+        source = ExcludedVersionSource(
+            name="excluded", materialization=SourceMaterialization.CAPTURED, body="Retained."
+        )
+        async with repository_profile() as (profile, _repositories), profile.database.transaction() as connection:
+            with pytest.raises(InvalidStoredPayloadError):
+                await repository.add(connection, "scope-a", source)
+            ref = SourceRef(source_type="serialization-alias", source_id=source.name)
+            with pytest.raises(RepositoryNotFoundError):
+                await repository.get(connection, "scope-a", ref)
+            assert await repository.journal_position(connection, "scope-a") == 0
+
+    asyncio.run(scenario())
+
+
 def test_explicit_name_alias_evidence_survives_restart_without_the_native_definition(tmp_path) -> None:
     class AliasedSource(NativeCamelCaseSource):
         name: str = Field(alias="source_name")

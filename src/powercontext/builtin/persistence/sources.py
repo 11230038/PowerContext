@@ -914,6 +914,10 @@ def _dump_source(
             source=None if representation == "observation" else _source_header(source),
             source_keys=None if representation == "observation" else _source_keys(source),
         )
+        if envelope.source_keys is not None:
+            for key, alias in envelope.source_keys.items():
+                if alias not in envelope.value:
+                    raise InvalidStoredPayloadError("source", name, f"serialized native identity omits {key!r}")
         return rfc8785.dumps(envelope.model_dump(mode="json", exclude_none=True))
     except (TypeError, ValueError) as error:
         raise InvalidStoredPayloadError("source", name, "value is not JSON serializable") from error
