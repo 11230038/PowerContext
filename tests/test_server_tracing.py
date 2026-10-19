@@ -229,6 +229,127 @@ def test_worker_execution_span_preserves_inference_failure_category(monkeypatch)
     assert private not in rendered
 
 
+def test_topic_memory_dream_worker_records_instrumented_model_span(tmp_path, monkeypatch) -> None:
+    import json
+    from functools import partial
+
+    from pydantic_ai.messages import ModelResponse, TextPart, UserPromptPart
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.models.instrumented import InstrumentedModel
+    from pydantic_ai.usage import RequestUsage
+
+    from powercontext.builtin.artifacts.topic_memory import TopicMemoryContent
+    from powercontext.builtin.runtime import (
+        BuiltinConfig,
+        CaptureSource,
+        CreateDreamRunRequest,
+        GetDreamRunRequest,
+        InferenceConfig,
+        composition,
+    )
+    from powercontext.builtin.runtime.topic_memory_processing import (
+        TopicMemoryWorkerSpec,
+        _run_topic_memory_worker,
+    )
+    from powercontext.builtin.runtime.worker_observability import WorkerObservability, worker_observability
+    from powercontext.builtin.scope import ScopeDraft
+    from tests.e2e.dream_support import Controller, Handle, open_dream_runtime, process_pending
+    from tests.e2e.test_dream_usage import seed_target
+
+    tracing, exporter = _tracing(instrumented=True)
+
+    def respond(messages, _info):
+        value = next(
+            json.loads(part.content)
+            for message in reversed(messages)
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        )
+        evidence_id = next(item["evidence_id"] for item in value["evidence"]["evidence"] if item["kind"] == "source")
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    json.dumps({
+                        "outcome": "proposed",
+                        "reason": "The dream corrects the pending topic.",
+                        "intent": "correct",
+                        "proposal": TopicMemoryContent(
+                            title="Replacement", summary="Issued", detail="# Progress\nIssued."
+                        ).model_dump(mode="json"),
+                        "evidence_ids": [evidence_id],
+                    })
+                )
+            ],
+            usage=RequestUsage(input_tokens=80, output_tokens=45),
+        )
+
+    async def open_model(*_args, **kwargs):
+        model = InstrumentedModel(FunctionModel(respond), kwargs["instrumentation"])
+        return model, model
+
+    monkeypatch.setattr(composition, "_open_pydantic_ai_model", open_model)
+
+    config = BuiltinConfig(
+        database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'topic-dream-trace.db'}"),
+        inference=InferenceConfig(generation_model="openai-chat:controlled-topic-dream"),
+    )
+
+    class WorkerHandle(Handle):
+        async def execute(self):
+            await self.ready.wait()
+            worker = partial(_run_topic_memory_worker, TopicMemoryWorkerSpec(config=config))
+            # Mirror the spawn entrypoint wrapper: only execution context crosses it.
+            token = worker_observability.set(WorkerObservability(tracing, tracing.instrumentation))
+            try:
+                return await worker(self.assignment)
+            finally:
+                worker_observability.reset(token)
+
+    class WorkerController(Controller):
+        async def start(self, assignment):
+            handle = WorkerHandle(self, assignment)
+            self.handles.append(handle)
+            return handle
+
+    async def scenario():
+        async with open_dream_runtime(config, controller=WorkerController()) as runtime:
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Topic dream", summary="Trace", idempotency_key="dream-trace")
+            )
+            source = await runtime.sources.for_scope(scope.scope_id).capture(
+                CaptureSource(
+                    source_id="progress",
+                    content="private topic dream Source sentinel: the user prefers terse updates",
+                    metadata={},
+                )
+            )
+            target, _proposal = await seed_target(runtime, scope.scope_id, source.source_ref, "topic-memory")
+            accepted = await runtime.dream.for_scope(scope.scope_id).create(
+                CreateDreamRunRequest(
+                    operation="revise_topic_memory",
+                    target=target,
+                    artifacts=(target,),
+                    sources=(source.source_ref,),
+                    idempotency_key="dream-trace",
+                )
+            )
+            await process_pending(runtime)
+            completed = await runtime.dream.for_scope(scope.scope_id).get(GetDreamRunRequest(run_id=accepted.run_id))
+            assert (completed.status, completed.outcome) == ("succeeded", "proposed"), completed
+
+    asyncio.run(scenario())
+
+    spans = exporter.get_finished_spans()
+    child = [span for span in spans if span.name.startswith("chat ")]
+    assert child, [span.name for span in spans]
+    for span in child:
+        assert span.events == ()
+        assert span.status.description in (None, "")
+        rendered = repr(span.attributes) + repr(span.events) + str(span.status.description)
+        assert "private topic dream Source sentinel" not in rendered
+    tracing.shutdown()
+
+
 def test_runtime_stage_records_attributes_and_inherits_current_span() -> None:
     tracing, exporter = _tracing()
     parent = tracing.start_span(

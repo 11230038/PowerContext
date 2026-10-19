@@ -135,8 +135,8 @@ this timestamp does not bypass or describe the age of an individual cached probe
 
 | Metric (prefix `powercontext_server_`) | Interpretation |
 | --- | --- |
-| `readiness_state{state}` | One-hot `ready`, `degraded`, `not_ready`; the compatible `runtime_ready` still means able to accept operations |
-| `dependency_state{dependency,state}` | One-hot bounded dependency results; an absent dependency is unconfigured/unobserved, not a healthy zero |
+| `readiness_state{state}` | One-hot `ready`, `degraded`, `not_ready`; it follows the same merged aggregate as `/health/ready`, including access and authentication provider failures. The compatible `runtime_ready` still means able to accept operations |
+| `dependency_state{dependency,state}` | One-hot bounded results for state-shaped checks only: database/runtime/inference dependencies, the artifact-processing supervisor (including `artifact_processing.<family>`), and `access_provider`/`authentication_provider`. Config echo such as `access_mode` and unconfigured dependencies stay absent; absence is unconfigured/unobserved, not a healthy zero |
 | `readiness_evaluated_timestamp_seconds` | Unix seconds of the latest aggregate evaluation, which may use cached probes |
 | `artifact_processing_supervisor_alive`, `artifact_processing_leader`, `artifact_processing_degraded` | Local supervisor task, held fence, and discovery health, by registered family |
 | `artifact_processing_blocked` | Number of locally retained policy-blocked invocations; not worker failures |
@@ -174,8 +174,8 @@ missing sample must not be interpreted as zero failures. Do not sum process snap
 With tracing enabled and `tracing-otlp` installed, Server-composed workers capture only W3C `traceparent`/`tracestate`
 when launched. Each child creates its own provider/resource, joins that supervisor execution, and instruments its real
 family or Topic Memory model composition. Memory processing includes the existing commit stages; Topic Memory adds
-`topic_memory.prepare` and `topic_memory.commit`. Explicit Dream dispatch runs under the same child span but
-does not emit model spans. The child `artifact_processing.worker.execute` span describes a child
+`topic_memory.prepare` and `topic_memory.commit`. Explicit Dream dispatch — including the Topic Memory dream branch —
+runs under the same child span and shares the same model instrumentation, so instrumented model spans appear for both. The child `artifact_processing.worker.execute` span describes a child
 result; the supervisor acknowledgement remains the evidence of verified business completion.
 
 A scheduled/coalesced invocation starts an independent supervisor trace. It does not inherit a capture request ID,

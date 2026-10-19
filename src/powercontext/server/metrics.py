@@ -22,7 +22,7 @@ import re
 from collections.abc import Iterator, Mapping
 from contextlib import suppress
 from time import perf_counter, time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from prometheus_client import (
@@ -43,6 +43,40 @@ from typing_extensions import override
 from powercontext.builtin.runtime.processing_contracts import ArtifactProcessingModelUsageDelta
 from powercontext.limits import MAX_ARTIFACT_FAMILY_LENGTH
 from powercontext.server.context import is_internal_bridge
+
+if TYPE_CHECKING:
+    from typing import Protocol
+
+    class ArtifactProcessingSnapshotSource(Protocol):
+        """Structural source of one bounded processing family snapshot."""
+
+        @property
+        def family_status(self) -> Mapping[str, Mapping[str, int | float | str]]: ...
+
+
+_DEPENDENCY_NAMES = frozenset({
+    "database",
+    "runtime",
+    "inference.generation",
+    "inference.embedding",
+    "inference.rerank",
+    "inference.decision",
+    "artifact_processing_supervisor",
+    "access_provider",
+    "authentication_provider",
+})
+# Access and supervisor checks share the Runtime vocabulary plus their bounded policy states.
+_DEPENDENCY_STATES = (
+    "ready",
+    "unavailable",
+    "timeout",
+    "misconfigured",
+    "not_ready",
+    "disabled",
+    "degraded",
+    "leader",
+    "standby",
+)
 
 _PROCESSING_INSTRUMENTS = (
     (
@@ -213,7 +247,7 @@ class ServerMetrics:
         )
         self.readiness_states = Gauge(
             "powercontext_server_readiness_state",
-            "Latest evaluated aggregate readiness.",
+            "Latest evaluated aggregate readiness, including access and authentication providers.",
             ("state",),
             registry=self.registry,
         )
@@ -224,7 +258,7 @@ class ServerMetrics:
         )
         self.dependency_states = Gauge(
             "powercontext_server_dependency_state",
-            "Latest evaluated dependency state; missing means not configured.",
+            "Latest evaluated state for exposed dependency checks; missing means not configured or not state-shaped.",
             ("dependency", "state"),
             registry=self.registry,
         )
@@ -310,19 +344,12 @@ class ServerMetrics:
                 self.readiness_states.labels(state=candidate).set(int(state == candidate))
             self.dependency_states.clear()
             for dependency, result in checks.items():
-                if dependency not in {
-                    "database",
-                    "runtime",
-                    "inference.generation",
-                    "inference.embedding",
-                    "inference.rerank",
-                    "inference.decision",
-                }:
+                if dependency not in _DEPENDENCY_NAMES and not dependency.startswith("artifact_processing."):
                     continue
                 result = result.split(":", 1)[0]
-                if result not in {"ready", "unavailable", "timeout", "misconfigured", "not_ready"}:
+                if result not in _DEPENDENCY_STATES:
                     result = "unavailable"
-                for candidate in ("ready", "unavailable", "timeout", "misconfigured", "not_ready"):
+                for candidate in _DEPENDENCY_STATES:
                     self.dependency_states.labels(dependency=dependency, state=candidate).set(int(result == candidate))
             self.readiness_evaluated.set(time())
 
@@ -340,10 +367,11 @@ class ServerMetrics:
             with suppress(Exception):
                 self.runtime_scopes.labels(state=state).set(value)
 
-    def set_processing_families(self, families: Mapping[str, Mapping[str, int | float | str]]) -> None:
-        """Refresh bounded scheduler observations using only registered Family labels."""
+    def set_processing_families(self, supervisor: ArtifactProcessingSnapshotSource | None) -> None:
+        """Refresh bounded scheduler observations; supervisor evaluation stays inside the protected path."""
 
         try:
+            families = {} if supervisor is None else supervisor.family_status
             self._processing.replace(families)
         except Exception:
             with suppress(Exception):

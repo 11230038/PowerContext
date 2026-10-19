@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext, suppress
 from pathlib import Path
 
@@ -60,7 +60,7 @@ from powercontext.http import (
 )
 from powercontext.paths import default_scheduler_path
 from powercontext.server.access import HttpAccessLogMiddleware
-from powercontext.server.app import _bind_evidence_access, create_app
+from powercontext.server.app import _bind_evidence_access, access_readiness_checks, create_app
 from powercontext.server.authentication import (
     AuthenticationProvider,
     StaticBearerAuthenticationProvider,
@@ -121,8 +121,7 @@ class _MetricsEndpoint:
                 ),
             )
         runtime = request.app.state.application
-        supervisor = None if runtime is None else runtime.artifact_processing_supervisor
-        self._metrics.set_processing_families({} if supervisor is None else supervisor.family_status)
+        self._metrics.set_processing_families(None if runtime is None else runtime.artifact_processing_supervisor)
         return Response(self._metrics.render(), media_type=CONTENT_TYPE_LATEST)
 
 
@@ -274,6 +273,7 @@ def create_server_app(  # noqa: C901
             app.state.application = runtime
             app.state.access_control = active_access_control
             app.state.authentication_provider = configured_authentication
+            readiness_probe.set_access_checks(_state_access_checks(app))
             capabilities = await _server_capabilities(runtime)
 
             def current_capabilities() -> Capabilities:
@@ -373,6 +373,13 @@ def create_server_app(  # noqa: C901
     if resolved.dashboard.enabled:
         mount_dashboard(app)
     return app
+
+
+def _state_access_checks(app: FastAPI) -> Callable[[], Awaitable[Mapping[str, str]]]:
+    async def checks() -> dict[str, str]:
+        return await access_readiness_checks(app.state)
+
+    return checks
 
 
 def _resolve_security_providers(
@@ -524,14 +531,24 @@ def _scheduled_principal(
 
 
 class _ServerReadinessProbe:
-    def __init__(self, metrics: ServerMetrics | None, *, tracing: ServerTracing) -> None:
+    def __init__(
+        self,
+        metrics: ServerMetrics | None,
+        *,
+        tracing: ServerTracing,
+        access_checks: Callable[[], Awaitable[Mapping[str, str]]] | None = None,
+    ) -> None:
         self._metrics = metrics
         self._tracing = tracing
+        self._access_checks = access_checks
         self._runtime: BuiltinRuntime | None = None
         self._last_status: ReadinessStatus | None = None
 
     def bind(self, runtime: BuiltinRuntime) -> None:
         self._runtime = runtime
+
+    def set_access_checks(self, access_checks: Callable[[], Awaitable[Mapping[str, str]]] | None) -> None:
+        self._access_checks = access_checks
 
     def unbind(self) -> None:
         self._runtime = None
@@ -550,9 +567,28 @@ class _ServerReadinessProbe:
             else:
                 response = await self._check(runtime)
         if self._metrics is not None:
-            self._metrics.observe_readiness(response.status.value, response.checks)
+            await self._publish(response)
         self._observe(response.status)
         return response
+
+    async def _publish(self, response: ReadinessResponse) -> None:
+        """Publish the readiness aggregate that `/health/ready` would return."""
+
+        metrics = self._metrics
+        if metrics is None:
+            return
+        status = response.status
+        checks: dict[str, str] = dict(response.checks)
+        provider = self._access_checks
+        if provider is not None:
+            try:
+                checks = {**checks, **await provider()}
+            except Exception:
+                # An unreadable access layer only means the Server is not ready.
+                checks = {**checks, "access_provider": "not_ready"}
+            if any(checks.get(name) == "not_ready" for name in ("authentication_provider", "access_provider")):
+                status = ReadinessStatus.NOT_READY
+        metrics.observe_readiness(status.value, checks)
 
     @asynccontextmanager
     async def monitor(self) -> AsyncIterator[None]:

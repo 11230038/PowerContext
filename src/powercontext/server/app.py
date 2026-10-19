@@ -1602,14 +1602,20 @@ async def get_readiness(request: Request) -> JSONResponse:
 
 
 async def _access_readiness_checks(request: Request) -> dict[str, str]:
-    mode: str = request.app.state.access_mode
-    access: AccessControlService | None = request.app.state.access_control
+    return await access_readiness_checks(request.app.state)
+
+
+async def access_readiness_checks(state: Any) -> dict[str, str]:
+    """Access and authentication readiness installed on Server application state."""
+
+    mode: str = state.access_mode
+    access: AccessControlService | None = state.access_control
     provider = (
         ("ready" if await access.readiness() else "not_ready")
         if access is not None
         else ("not_ready" if mode == "enforced" else "disabled")
     )
-    authentication: AuthenticationProvider | None = request.app.state.authentication_provider
+    authentication: AuthenticationProvider | None = state.authentication_provider
     if mode == "disabled":
         authentication_status = "disabled"
     elif authentication is None:

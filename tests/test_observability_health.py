@@ -36,6 +36,77 @@ def test_readiness_metrics_distinguish_degraded_and_omit_unconfigured_dependenci
     assert "inference.generation" not in metrics.render().decode()
 
 
+def test_readiness_metrics_expose_access_and_authentication_provider_states():
+    metrics = ServerMetrics()
+    metrics.observe_readiness(
+        "not_ready",
+        {
+            "database": "ready",
+            "runtime": "ready",
+            "authentication_provider": "not_ready",
+            "access_provider": "not_ready",
+            "access_mode": "enforced",
+        },
+    )
+    text = metrics.render().decode()
+    assert 'powercontext_server_readiness_state{state="not_ready"} 1.0' in text
+    assert 'dependency="access_provider",state="not_ready"} 1.0' in text
+    assert 'dependency="authentication_provider",state="not_ready"} 1.0' in text
+    metrics.observe_readiness(
+        "ready", {"database": "ready", "authentication_provider": "disabled", "access_provider": "disabled"}
+    )
+    disabled = metrics.render().decode()
+    assert 'powercontext_server_readiness_state{state="ready"} 1.0' in disabled
+    assert 'dependency="access_provider",state="disabled"} 1.0' in disabled
+    assert 'state="not_ready"} 0.0' in disabled
+
+
+def test_readiness_metric_matches_health_endpoint_when_access_provider_fails(tmp_path):
+    app = create_server_app(settings=_settings(tmp_path / "access-readiness.db"))
+    with TestClient(app) as client:
+
+        class _UnavailableAccess:
+            deployment_id = "powercontext"
+
+            async def require(self, *_args: object, **_kwargs: object) -> None:
+                return None
+
+            async def readiness(self):
+                return False
+
+        app.state.access_control = _UnavailableAccess()
+        ready = client.get("/health/ready")
+        assert ready.status_code == 503
+        assert ready.json()["status"] == "not_ready"
+        assert ready.json()["checks"]["access_provider"] == "not_ready"
+        metrics = client.get("/metrics")
+        assert metrics.status_code == 200
+        assert 'powercontext_server_readiness_state{state="not_ready"} 1.0' in metrics.text
+        assert 'dependency="access_provider",state="not_ready"} 1.0' in metrics.text
+        assert 'powercontext_server_readiness_state{state="ready"} 1.0' not in metrics.text
+
+
+def test_processing_snapshot_failure_keeps_metrics_scrapeable_and_counts_once(tmp_path):
+    app = create_server_app(settings=_settings(tmp_path / "collector-failure.db"))
+    with TestClient(app) as client:
+
+        class _FailingSupervisor:
+            @property
+            def family_status(self):
+                raise RuntimeError
+
+        class _FailingApplication:
+            artifact_processing_supervisor = _FailingSupervisor()
+
+        assert client.get("/metrics").status_code == 200
+        app.state.application = _FailingApplication()
+        failed = client.get("/metrics")
+        assert failed.status_code == 200
+        assert "powercontext_server_metrics_collection_failures_total 1.0" in failed.text
+        assert "powercontext_server_readiness_evaluated_timestamp_seconds" in failed.text
+        assert "powercontext_server_metrics_collection_failures_total 2.0" in client.get("/metrics").text
+
+
 def test_scrape_reads_last_evaluation_without_running_dependency_probes(tmp_path, monkeypatch):
     app = create_server_app(settings=_settings(tmp_path / "scrape.db"))
     with TestClient(app) as client:
@@ -103,16 +174,21 @@ def test_processing_histogram_counts_attempts_not_scrapes_and_bounds_labels():
 
 
 def test_processing_freshness_survives_scrape_without_refreshing_observations():
+    class _ReadySupervisor:
+        @property
+        def family_status(self):
+            return {
+                "memory": {
+                    "supervisor_alive": 1,
+                    "leader": 1,
+                    "blocked": 2,
+                    "oldest_observed_pending_timestamp_seconds": 123,
+                    "discovered_timestamp_seconds": 456,
+                }
+            }
+
     metrics = ServerMetrics()
-    metrics.set_processing_families({
-        "memory": {
-            "supervisor_alive": 1,
-            "leader": 1,
-            "blocked": 2,
-            "oldest_observed_pending_timestamp_seconds": 123,
-            "discovered_timestamp_seconds": 456,
-        }
-    })
+    metrics.set_processing_families(_ReadySupervisor())
     text = metrics.render().decode()
     assert 'oldest_observed_pending_timestamp_seconds{family="memory"} 123.0' in text
     assert 'discovered_timestamp_seconds{family="memory"} 456.0' in text

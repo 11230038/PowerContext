@@ -1591,13 +1591,18 @@ async def _process_topic_dream_if_pending(
     operations = operations_for_binding(assignment.binding_name)
     if not operations or not spec.config.runtime.dream_enabled:
         return False
+    # Mirror the Memory family worker: the dream branch stays observable when the
+    # spawn entrypoint supplied worker tracing or model instrumentation.
+    observation = worker_observability.get()
+    instrumentation = None if observation is None else observation.instrumentation
+    tracing = None if observation is None else observation.tracing
     async with AsyncExitStack() as resources:
         raw_embedding, _ = await _embedding_models(
-            spec.config.inference, resources, None, disable_provider_retries=True
+            spec.config.inference, resources, instrumentation, disable_provider_retries=True
         )
         embedding = None if raw_embedding is None else UsageReportingEmbeddingModel(raw_embedding)
         contexts = await resources.enter_async_context(
-            open_builtin_contexts(spec.config, embedding_model=embedding, _topic_memory_worker=True)
+            open_builtin_contexts(spec.config, embedding_model=embedding, tracing=tracing, _topic_memory_worker=True)
         )
         async with contexts.database.transaction() as connection:
             record = await DreamRepository().next_pending(
@@ -1608,7 +1613,7 @@ async def _process_topic_dream_if_pending(
             )
         if record is None:
             return False
-        generator = await _dream_generator(spec.config.inference, record.run.budget, resources, None)
+        generator = await _dream_generator(spec.config.inference, record.run.budget, resources, instrumentation)
         security = None
         if spec.worker_security is not None:
             from powercontext.server.processing_security import open_worker_security

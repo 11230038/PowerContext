@@ -127,8 +127,8 @@ Inference probe 保留原有正常结果 300 秒、临时失败 30 秒的缓存�
 
 | Metric（前缀 `powercontext_server_`） | 含义 |
 | --- | --- |
-| `readiness_state{state}` | `ready`、`degraded`、`not_ready` 的 one-hot 状态；兼容指标 `runtime_ready` 仍只表示可接收操作 |
-| `dependency_state{dependency,state}` | 有界 dependency 状态；dependency 缺失表示未配置或未观察，不能理解为健康的零值 |
+| `readiness_state{state}` | `ready`、`degraded`、`not_ready` 的 one-hot 状态；与 `/health/ready` 使用同一份合并后的 aggregate，包含 access/authentication provider 的失败。兼容指标 `runtime_ready` 仍只表示可接收操作 |
+| `dependency_state{dependency,state}` | 只对有状态形状的 check 做有界 one-hot：database/runtime/inference 依赖、artifact-processing supervisor（含 `artifact_processing.<family>`）以及 `access_provider`/`authentication_provider`。`access_mode` 等 config 回显和未配置的 dependency 不会出现；缺失表示未配置或未观察，不能理解为健康的零值 |
 | `readiness_evaluated_timestamp_seconds` | 最近一次 aggregate 评估的 Unix 秒，评估可能使用 cached probe |
 | `artifact_processing_supervisor_alive`、`artifact_processing_leader`、`artifact_processing_degraded` | 按已注册 family 记录本进程 supervisor task、fence 持有状态和 discovery 状态 |
 | `artifact_processing_blocked` | 本地保留的 policy-blocked invocation 数量，不表示 worker failure |
@@ -163,7 +163,8 @@ role/instance。Target 或 sample 缺失不等于零故障；不要把各进程 
 安装 `tracing-otlp` 并启用 tracing 后，Server 自动组合的 worker 在启动时仅捕获 W3C `traceparent`/`tracestate`。
 每个 child 创建自己的 provider/resource，加入对应 supervisor execution，并为真实 family、Topic Memory model composition
 启用 instrumentation。Memory 使用已有 commit stages；Topic Memory 增加 `topic_memory.prepare` 和 `topic_memory.commit`。
-显式 Dream 派发复用同一个 child span，但不产生 model span。
+显式 Dream 派发——包括 Topic Memory 的 Dream 分支——复用同一个 child span，并共享同一套 model instrumentation，
+因此两者的 instrumented model span 都会出现。
 Child 的 `artifact_processing.worker.execute` span 描述 child result；业务完成仍由 supervisor 验证 acknowledgement。
 
 Scheduled/coalesced invocation 使用独立 supervisor trace，不继承 capture request ID，不让 HTTP request 一直保持打开，

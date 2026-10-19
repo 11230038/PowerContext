@@ -44,6 +44,7 @@ from powercontext.builtin.runtime.config import BuiltinConfig
 from powercontext.builtin.runtime.processing_registry import canonical_processing_manifest
 from powercontext.cli.env_file import environment_context
 from powercontext.cli.inference_notice import write_inference_capability_notice
+from powercontext.server.app import access_readiness_checks
 from powercontext.server.authz import PrincipalRef
 from powercontext.server.authz.composition import open_builtin_access_control
 from powercontext.server.configuration import (
@@ -518,6 +519,12 @@ async def _run_background_async(settings: ServerSettings, tracing: Any) -> None:
                 await probe()
                 await resources.enter_async_context(probe.monitor())
                 app = create_background_metrics_app(settings, runtime, metrics, access)
+
+                async def background_access_checks() -> dict[str, str]:
+                    return await access_readiness_checks(app.state)
+
+                probe.set_access_checks(background_access_checks)
+                await probe()
                 server = uvicorn.Server(
                     uvicorn.Config(
                         app,
