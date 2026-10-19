@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 from sqlalchemy.ext.asyncio import AsyncConnection
 from typing_extensions import override
 
-from powercontext.artifacts import Artifact
+from powercontext.artifacts import Artifact, ArtifactRef
 from powercontext.builtin.artifacts.experience import Experience, ExperienceContent
 from powercontext.builtin.artifacts.handoff import Handoff, HandoffContent, HandoffService, PreparedHandoff
 from powercontext.builtin.artifacts.prompt import Prompt, PromptContent, PromptError, PromptRegistry
@@ -214,6 +214,34 @@ class PromptManagementWriter(_RepositoryFamilyWriter):
         self._registry.validate(current.artifact_id, validated)
         return cast(Prompt, await self._revise_artifact(connection, scope_id, current, validated, direct_source))
 
+    async def commit_reviewed(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        current: Prompt,
+        content: PromptContent,
+        *,
+        sources: tuple[SourceRef, ...],
+        artifacts: tuple[ArtifactRef, ...],
+    ) -> Prompt:
+        """Publish a reviewed configuration using the normal Prompt validation and Artifact CAS."""
+
+        self._registry.validate(current.artifact_id, content)
+        return cast(
+            Prompt,
+            await self._artifacts.revise(
+                connection,
+                scope_id,
+                current,
+                RepositoryArtifactDraft(
+                    family=self.family,
+                    content=content,
+                    sources=sources,
+                    artifacts=artifacts,
+                ),
+            ),
+        )
+
 
 class ExperienceManagementWriter(_RepositoryFamilyWriter):
     family = Experience.family
@@ -289,6 +317,15 @@ class SkillManagementWriter(_RepositoryFamilyWriter):
                 "cached Skill fields do not match the exact package",
             )
         return canonical, package
+
+    async def canonical_content(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        content: BaseModel,
+    ) -> SkillContent:
+        canonical, _package = await self._canonical_content(connection, scope_id, content)
+        return canonical
 
     async def create(
         self,
@@ -411,6 +448,27 @@ class HandoffManagementWriter:
         return await self._service(scope_id, connection).commit(
             prepared,
             additional_sources=(direct_source,),
+            force_revision=True,
+        )
+
+    async def commit_reviewed(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        current: Handoff,
+        content: HandoffContent,
+        sources: tuple[SourceRef, ...],
+    ) -> Handoff:
+        """Publish the approved revision for later Continue, without acknowledging it."""
+
+        if current.artifact_id != self._handoff_artifact_id or content.generation is not None:
+            raise InvalidBaseAccessRequestError("handoff", "reviewed replacement must target the local singleton")
+        if content.objective != current.content.objective:
+            raise InvalidBaseAccessRequestError("handoff", "reviewed replacement must preserve the objective")
+        prepared = PreparedHandoff(scope_id=scope_id, base=current.as_ref(), content=content)
+        return await self._service(scope_id, connection).commit(
+            prepared,
+            additional_sources=sources,
             force_revision=True,
         )
 

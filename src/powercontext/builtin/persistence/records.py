@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextlib import aclosing
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 import rfc8785
@@ -45,6 +45,18 @@ from powercontext.builtin.persistence.family_management import (
     PreparingFamilyManagementWriter,
 )
 from powercontext.builtin.persistence.processing import ArtifactProcessingPendingRepository
+from powercontext.builtin.persistence.revision_meta import (
+    PendingRollback,
+    bind_rollback,
+    reset_rollback,
+    revision_meta,
+)
+from powercontext.builtin.persistence.rollback import (
+    merged_source_revision,
+    normalize_reason,
+    prepare_profile_command,
+    require_matching_source,
+)
 from powercontext.builtin.persistence.sources import SourceRepository, StoredSource
 from powercontext.builtin.persistence.tables import (
     ARTIFACT_HEADS_TABLE,
@@ -59,6 +71,7 @@ from powercontext.builtin.records import (
     ArtifactListReader,
     ArtifactRecord,
     ArtifactRecordPage,
+    ArtifactRevisionActor,
     ArtifactRevisionPage,
     ArtifactRevisionPreconditionError,
     ArtifactWrite,
@@ -120,6 +133,7 @@ class RelationalRecordService:
         cursor_ttl_seconds: int = _DEFAULT_CURSOR_TTL_SECONDS,
         processing_pending: ArtifactProcessingPendingRepository | None = None,
         source_processing_bindings: tuple[str, ...] = (),
+        tags: RelationalTagService | None = None,
         atomic_memory_tag_hook=None,
         atomic_memory_tag_authorizer=None,
         topic_memory_list_reader: ArtifactListReader | None = None,
@@ -140,7 +154,7 @@ class RelationalRecordService:
         self._source_processing_bindings = source_processing_bindings
         self._topic_memory_list_reader = topic_memory_list_reader
         self._artifact_handles = ArtifactHandleRepository(database)
-        self._tags = RelationalTagService(
+        self._tags = tags or RelationalTagService(
             database,
             artifacts,
             cursor_secret=self._cursor_secret,
@@ -210,6 +224,7 @@ class RelationalRecordService:
         /,
         *,
         handoff_receipt: bool = False,
+        working_note: bool = False,
     ) -> SourceRecord:
         """Preserve the caller-stable identity used by the existing capture API."""
 
@@ -224,7 +239,9 @@ class RelationalRecordService:
         return await self._store_source(
             scope_id,
             source_type,
-            (await CONTENT_SOURCE_ADAPTER.resolve(capture)).model_copy(update={"handoff_receipt": handoff_receipt}),
+            (await CONTENT_SOURCE_ADAPTER.resolve(capture)).model_copy(
+                update={"handoff_receipt": handoff_receipt, "working_note": working_note}
+            ),
         )
 
     async def _store_source(
@@ -416,8 +433,12 @@ class RelationalRecordService:
                 created.append(_artifact_created(scope_id, artifact))
         return tuple(created)
 
-    async def get_artifact(self, scope_id: str, family: str, artifact_id: str, /) -> ArtifactRecord:
+    async def get_artifact(
+        self, scope_id: str, family: str, artifact_id: str, /, *, execution_context=None
+    ) -> ArtifactRecord:
         self._require_family(family)
+        if family == "atomic-memory" and execution_context is not None:
+            return await self._get_authorized_atomic_artifact(scope_id, artifact_id, None, execution_context)
         async with self._database.transaction() as connection:
             try:
                 artifact = await self._artifacts.latest(connection, scope_id, family, artifact_id)
@@ -432,8 +453,12 @@ class RelationalRecordService:
         artifact_id: str,
         revision: int,
         /,
+        *,
+        execution_context=None,
     ) -> ArtifactRecord:
         self._require_family(family)
+        if family == "atomic-memory" and execution_context is not None:
+            return await self._get_authorized_atomic_artifact(scope_id, artifact_id, revision, execution_context)
         async with self._database.transaction() as connection:
             try:
                 artifact = await self._artifacts.get(
@@ -444,6 +469,21 @@ class RelationalRecordService:
             except RepositoryNotFoundError:
                 raise BaseValueNotFoundError("artifact", (scope_id, family, artifact_id, revision)) from None
             return _artifact_record(scope_id, artifact)
+
+    async def _get_authorized_atomic_artifact(
+        self, scope_id: str, artifact_id: str, revision: int | None, execution_context
+    ) -> ArtifactRecord:
+        writer = cast(AtomicMemoryManagementWriter, self._family_writers.get("atomic-memory"))
+        try:
+            record = await writer.application.for_scope(scope_id).get(
+                artifact_id, revision=revision, context=execution_context
+            )
+        except RepositoryNotFoundError:
+            identity = (scope_id, "atomic-memory", artifact_id)
+            if revision is not None:
+                identity = (*identity, revision)
+            raise BaseValueNotFoundError("artifact", identity) from None
+        return _artifact_record(scope_id, record.artifact)
 
     async def list_artifact_revisions(
         self,
@@ -619,6 +659,8 @@ class RelationalRecordService:
         write: ArtifactWrite,
         /,
         *,
+        actor_type: str | None = None,
+        actor_id: str | None = None,
         execution_context=None,
     ) -> ArtifactRecord:
         if write.prompt_key is not None:
@@ -627,6 +669,9 @@ class RelationalRecordService:
             raise BaseOperationNotSupportedError("artifact_family", family, "collection writes")
         writer = self._family_writers.get(family)
         command = writer.validate_replace(write.content)
+        source_revision = merged_source_revision(family, write, command)
+        command = prepare_profile_command(command, source_revision)
+        reason = None if source_revision is None or write.reason is None else normalize_reason(write.reason)
         prepared = command
         if isinstance(writer, AtomicMemoryManagementWriter):
             record = await self.get_artifact(scope_id, family, artifact_id)
@@ -676,7 +721,26 @@ class RelationalRecordService:
                 )
                 try:
                     stored = await self._sources.add(connection, scope_id, source)
-                    revised = await writer.replace(connection, scope_id, current, prepared, stored.ref)
+                    token = await _bind_rollback(
+                        self._artifacts,
+                        connection,
+                        scope_id,
+                        family,
+                        artifact_id,
+                        current,
+                        command,
+                        source_revision,
+                        reason,
+                        writer,
+                        next_revision,
+                        actor_type,
+                        actor_id,
+                    )
+                    try:
+                        revised = await writer.replace(connection, scope_id, current, prepared, stored.ref)
+                    finally:
+                        if token is not None:
+                            reset_rollback(token)
                 except StoredPayloadConflictError as error:
                     raise BaseValueConflictError("source", (scope_id, CONTENT_SOURCE_NAME, source.name)) from error
                 except RevisionConflictError:
@@ -803,6 +867,7 @@ def _artifact_record(
         sources=artifact.lineage.sources,
         artifacts=artifact.lineage.artifacts,
         content_digest=_content_digest(content),
+        **_revision_fields(artifact),
     )
 
 
@@ -827,7 +892,65 @@ def _artifact_collection_item(scope_id: str, artifact: Artifact[Any]) -> Artifac
         sources=artifact.lineage.sources,
         artifacts=artifact.lineage.artifacts,
         content_digest=_content_digest(content),
+        **_revision_fields(artifact),
     )
+
+
+async def _bind_rollback(
+    artifacts: ArtifactRepository,
+    connection: AsyncConnection,
+    scope_id: str,
+    family: str,
+    artifact_id: str,
+    current: Artifact[Any],
+    command: Any,
+    source_revision: int | None,
+    reason: str | None,
+    writer: object,
+    next_revision: int,
+    actor_type: str | None,
+    actor_id: str | None,
+) -> Any:
+    if source_revision is None or reason is None:
+        return None
+    await require_matching_source(
+        artifacts,
+        connection,
+        scope_id,
+        family,
+        artifact_id,
+        current,
+        command,
+        source_revision,
+        writer,
+    )
+    return bind_rollback(
+        PendingRollback(
+            family=family,
+            artifact_id=artifact_id,
+            revision=next_revision,
+            restored_from_revision=source_revision,
+            reason=reason,
+            created_by_type=actor_type,
+            created_by_id=actor_id,
+        )
+    )
+
+
+def _revision_fields(artifact: Artifact[Any]) -> dict[str, Any]:
+    meta = revision_meta(artifact)
+    actor = None
+    if meta.created_by_type in {"user", "service"} and meta.created_by_id is not None:
+        actor = ArtifactRevisionActor(
+            type=cast(Literal["user", "service"], meta.created_by_type),
+            id=meta.created_by_id,
+        )
+    return {
+        "created_at": meta.created_at,
+        "created_by": actor,
+        "restored_from_revision": meta.restored_from_revision,
+        "reason": meta.reason,
+    }
 
 
 def _artifact_etag(revision: int) -> str:

@@ -59,6 +59,7 @@ class DashboardAPI:
         self.app = request.app
         headers = authentication_headers(request.scope)
         headers = {key: value for key, value in headers.items() if key in {"authorization", "cookie"}}
+        headers["X-PowerContext-Dream-Contract"] = "2"
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=request.app, raise_app_exceptions=False),
             base_url=str(request.base_url),
@@ -66,17 +67,26 @@ class DashboardAPI:
         )
 
     async def read(self, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        try:
-            async with asyncio.timeout(20):
-                result = await self.client.request("GET" if payload is None else "POST", path, json=payload)
-        except (TimeoutError, httpx.HTTPError) as error:
-            raise ReadError(503, "service_unavailable") from error
+        result = await self.send("GET" if payload is None else "POST", path, payload)
         if result.is_error:
             code = "service_unavailable"
             with suppress(ValueError, KeyError, TypeError):
                 code = result.json()["error"]["code"]
             raise ReadError(result.status_code, code, result.headers.get("X-PowerContext-Request-ID"))
         return result.json()
+
+    async def send(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        try:
+            async with asyncio.timeout(20):
+                return await self.client.request(method, path, json=payload, headers=headers)
+        except (TimeoutError, httpx.HTTPError) as error:
+            raise ReadError(503, "service_unavailable") from error
 
     async def record(self, scope: str, family: str, artifact: str, revision: int) -> dict[str, Any]:
         if family in {"experience", "skill"}:

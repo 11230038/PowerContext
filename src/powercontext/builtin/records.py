@@ -56,11 +56,20 @@ class SourceRecordPage(_RecordModel):
     next_cursor: str | None
 
 
+class ArtifactRevisionActor(_RecordModel):
+    """Principal that created a rollback revision. Ordinary revisions omit it."""
+
+    type: Literal["user", "service"]
+    id: str
+
+
 class ArtifactWrite(_RecordModel):
     """Complete family-specific content for one Artifact write."""
 
     content: dict[str, JsonValue]
     prompt_key: str | None = None
+    restored_from_revision: int | None = None
+    reason: str | None = None
 
 
 class ArtifactCreated(_RecordModel):
@@ -85,6 +94,10 @@ class ArtifactRecord(_RecordModel):
     sources: tuple[SourceRef, ...]
     artifacts: tuple[ArtifactRef, ...]
     content_digest: str
+    created_at: datetime | None = None
+    created_by: ArtifactRevisionActor | None = None
+    restored_from_revision: int | None = None
+    reason: str | None = None
 
 
 class ArtifactCollectionItem(_RecordModel):
@@ -101,6 +114,10 @@ class ArtifactCollectionItem(_RecordModel):
     summary: str | None = None
     published_at: datetime | None = None
     source_count: int | None = None
+    created_at: datetime | None = None
+    created_by: ArtifactRevisionActor | None = None
+    restored_from_revision: int | None = None
+    reason: str | None = None
 
 
 class LogicalArtifactRecord(_RecordModel):
@@ -261,6 +278,7 @@ class RecordService(Protocol):
         /,
         *,
         handoff_receipt: bool = False,
+        working_note: bool = False,
     ) -> SourceRecord: ...
 
     async def get_source(self, scope_id: str, source_type: str, source_id: str, /) -> SourceRecord: ...
@@ -299,7 +317,9 @@ class RecordService(Protocol):
 
     async def resolve_artifact_handle(self, scope_id: str, handle: StableHandle, /) -> ArtifactRef: ...
 
-    async def get_artifact(self, scope_id: str, family: str, artifact_id: str, /) -> ArtifactRecord: ...
+    async def get_artifact(
+        self, scope_id: str, family: str, artifact_id: str, /, *, execution_context: Any = None
+    ) -> ArtifactRecord: ...
 
     async def get_artifact_revision(
         self,
@@ -308,6 +328,8 @@ class RecordService(Protocol):
         artifact_id: str,
         revision: int,
         /,
+        *,
+        execution_context: Any = None,
     ) -> ArtifactRecord: ...
 
     async def list_artifact_revisions(
@@ -357,6 +379,8 @@ class RecordService(Protocol):
         write: ArtifactWrite,
         /,
         *,
+        actor_type: str | None = None,
+        actor_id: str | None = None,
         execution_context: Any = None,
     ) -> ArtifactRecord: ...
 
