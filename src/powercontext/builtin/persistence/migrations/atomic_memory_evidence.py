@@ -105,7 +105,7 @@ async def require_atomic_memory_evidence_schema(connection: AsyncConnection, tab
 async def _require_shape(connection: AsyncConnection, name: str, statement: str, dialect: str) -> None:
     if dialect == "sqlite":
         actual = await connection.exec_driver_sql(
-            "SELECT type, name, sql FROM sqlite_schema WHERE (name = ? OR tbl_name = ?) "
+            "SELECT type, name, sql FROM sqlite_master WHERE (name = ? OR tbl_name = ?) "
             "AND substr(name, 1, 7) != 'sqlite_' ORDER BY type, name",
             (name, name),
         )
