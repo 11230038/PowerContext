@@ -39,6 +39,13 @@ OWNER_MARKER = ".powercontext-owned"
 DEFAULT_SERVER_URL = "http://127.0.0.1:8000"
 
 
+def _endpoint(value: str) -> str:
+    endpoint = normalize_client_url(value).removesuffix("/mcp").rstrip("/")
+    if urlsplit(endpoint).path:
+        raise SetupError("ZCode Server URL must be an HTTP(S) origin without path, credentials, query, or fragment")  # noqa: TRY003
+    return endpoint
+
+
 def zcode_config_file() -> Path:
     """ZCode's shared user-level plugin configuration file."""
 
@@ -262,10 +269,7 @@ class ZCodeInstaller:
     def configure(self, connection):
         if not (zcode_plugin_dir() / OWNER_MARKER).is_file():
             raise SetupError("PowerContext is not installed in zcode; run powercontext setup zcode")  # noqa: TRY003
-        endpoint = normalize_client_url(connection.server_url).removesuffix("/mcp").rstrip("/")
-        parsed = urlsplit(endpoint)
-        if parsed.path or parsed.query or parsed.fragment or parsed.username or parsed.password:
-            raise SetupError("ZCode Server URL must be an HTTP(S) origin without path, credentials, query, or fragment")  # noqa: TRY003
+        endpoint = _endpoint(connection.server_url)
         destination = zcode_plugin_dir()
         previous = _read_config(destination / "powercontext.json")
         capture = self.capture_prompts if self.capture_prompts is not None else previous.get("capture_prompts", True)

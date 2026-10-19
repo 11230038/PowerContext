@@ -15,6 +15,7 @@
 
 """Installation failure restores exact user configuration bytes."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -81,7 +82,7 @@ def test_retry_preserves_personal_skill_files_after_failed_restore(tmp_path, mon
     assert recovery is not None
     result = runner.invoke(cli, command)
     assert result.exit_code == 1, result.output
-    assert str(recovery) in result.output
+    assert str(recovery) in json.loads(result.output)["hosts"]["workbuddy"]["error"]
     assert (recovery / "personal.md").read_text(encoding="utf-8") == "Keep my own instructions.\n"
     recovery.rename(skill)
     result = runner.invoke(cli, command)

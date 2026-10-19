@@ -227,6 +227,8 @@ def test_setup_persists_adapter_endpoint(host, endpoint, tmp_path, monkeypatch, 
 
     from powercontext.cli.transport import client_config_file
 
+    if host == "zcode":
+        endpoint = endpoint.removesuffix("/prefix")
     if host == "dsh":
         monkeypatch.setattr("powercontext.cli.dsh.which", lambda _name: None)
     path = client_config_file()

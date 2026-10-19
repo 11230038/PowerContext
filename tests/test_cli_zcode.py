@@ -74,7 +74,8 @@ def _checkout(root: Path) -> Path:
     return plugin
 
 
-def test_zcode_install_preserves_other_config_and_is_repeatable(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("endpoint", ["https://memory.example.test", "https://memory.example.test/mcp/"])
+def test_zcode_install_preserves_other_config_and_is_repeatable(tmp_path: Path, monkeypatch, endpoint: str) -> None:
     home = tmp_path / "home"
     monkeypatch.setattr(zcode, "zcode_config_file", lambda: home / ".zcode" / "cli" / "config.json")
     monkeypatch.setattr(zcode, "zcode_executable", lambda: "zcode")
@@ -90,7 +91,7 @@ def test_zcode_install_preserves_other_config_and_is_repeatable(tmp_path: Path, 
             "zcode",
             source=str(str(checkout)),
             ref="unused",
-            server_url="https://memory.example.test",
+            server_url=endpoint,
             capture_prompts=False,
         )
         config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -118,6 +119,39 @@ def test_zcode_install_rejects_unowned_plugin_without_changing_config(tmp_path: 
         install_plugin("zcode", source=str(str(checkout)), ref="unused")
     assert (plugin / "other.txt").read_text(encoding="utf-8") == "keep"
     assert not zcode.zcode_config_file().exists()
+
+
+@pytest.mark.parametrize("installed", [False, True])
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://memory.example.test/prefix",
+        "https://memory.example.test/prefix/mcp",
+    ],
+)
+def test_zcode_setup_rejects_invalid_origin_without_changing_installation(
+    tmp_path: Path, monkeypatch, installed: bool, endpoint: str
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(zcode, "zcode_config_file", lambda: home / ".zcode/cli/config.json")
+    monkeypatch.setattr(zcode, "zcode_executable", lambda: "zcode")
+    monkeypatch.setenv("POWERCONTEXT_CLIENT_CONFIG_FILE", str(home / "clients.json"))
+    checkout = tmp_path / "checkout"
+    plugin = _checkout(checkout)
+    if installed:
+        install_plugin("zcode", source=str(checkout), server_url="https://memory.example.test")
+    before = {path: path.read_bytes() for path in home.rglob("*") if path.is_file()}
+    (plugin / "updated.txt").write_text("new package", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        create_cli([setup_app]),
+        ["setup", "zcode", "--source", str(checkout), "--server-url", endpoint, "--json"],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "origin" in json.loads(result.output)["hosts"]["zcode"]["error"]
+    assert {path: path.read_bytes() for path in home.rglob("*") if path.is_file()} == before
 
 
 def test_zcode_upgrade_rejects_missing_packaged_reference_and_preserves_installation(

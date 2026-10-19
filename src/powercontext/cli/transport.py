@@ -128,6 +128,10 @@ def prepare_setup_transport(
         from powercontext.cli.kimi_code import _endpoint
 
         endpoint = _endpoint(endpoint)
+    if host == "zcode":
+        from powercontext.cli.zcode import _endpoint
+
+        endpoint = _endpoint(endpoint)
     if host == "dsh":
         from powercontext.cli.dsh_transport import validate_dsh_setup_transport
 
