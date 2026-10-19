@@ -76,7 +76,7 @@ flowchart TD
     A["选择已有 Scope"] --> P["校验 scope.read + scope.contribute；创建固定 scope_id 的 ImportSession"]
     P --> B{"输入方式"}
     B -->|粘贴文本| C["校验与规范化"]
-    B -->|上传文件| D["Family prepare 操作：耐久暂存与隔离解析"]
+    B -->|上传文件| D["文件操作创建：耐久暂存与隔离解析"]
     D --> E["预览正文、分段、OCR 与遗漏"]
     E -->|无可用正文| X["失败；不保存资料"]
     E -->|完整确认或显式接受 partial| F["确认冻结 bundle_digest"]
@@ -128,7 +128,7 @@ Dashboard 保持既有 Tabler、Jinja2、HTMX、中英文及明暗主题。写�
 
 ## 1. 架构
 
-入口、解析和保存之间的责任边界见“用户流程”图。文件通过 ImportedContent Family 的 prepare 操作产生冻结的 ImportedContentBundle，执行过程由内部操作账本和隔离 worker 承担；用户确认或 worker 按显式策略接受后，ContentImportApplication 才执行单文档原子提交。制品处理仍沿用已有配置与进度机制。
+入口、解析和保存之间的责任边界见“用户流程”图。文件通过 ImportedContent Family 的文件操作创建接口产生冻结的 ImportedContentBundle，执行过程由内部操作账本和隔离 worker 承担；用户确认或 worker 按显式策略接受后，ContentImportApplication 才执行单文档原子提交。制品处理仍沿用已有配置与进度机制。
 
 文件获取、解析、文本保存与制品生成是四个边界。Core 不导入任意用户指定 parser，不运行 Office 宏，不执行代码。正式部署提供独立 parser worker；轻量文本路径不要求文档解析依赖。
 
@@ -311,15 +311,15 @@ B 级表示目标交付范围而非无条件可用承诺。未达到必需语义
 | --- | --- |
 | `GET /v1/server-info` | 保留部署身份和协议兼容信息；在 OpenAPI 的 `x-powercontext-feature-contracts` 中拟新增 `content.import: {major: 1, minor: 0}`，表示导入协议版本，不表示当前启用 |
 | `GET /v1/capabilities` | 拟新增可选 `content_import` 对象，包含 `enabled`、`readiness`（ready/degraded/unavailable）及 `capabilities_endpoint`；缺失时客户端不得假定支持导入。这是当前 Runtime 的汇总，不替代逐格式健康状态或 Scope 授权 |
-| `GET /v1/import-capabilities?scope_id=...` | 返回指定已有 Scope 下、当前调用方可用的实际格式、profile、限额及权限；页面据此展示并决定是否允许开始 |
+| `GET /v1/scopes/{scope_id}/import-capabilities` | 返回指定已有 Scope 下、当前调用方可用的实际格式、profile、限额及权限；页面据此展示并决定是否允许开始 |
 
 `content.import` 和 `content_import` 均为拟新增契约，须同步更新 OpenAPI、生成代码、Server 组装和客户端兼容测试。现有两个全局入口继续要求 `server.observe`；仅具有 Scope 权限的普通导入者可以直接查询 Scope 级导入能力，不将全局观测权限新增为导入前提。Scope 级响应也包含导入协议版本与是否启用，客户端不必靠试写探测支持情况。
 
-启用由导入服务配置控制，Dashboard 入口开关只控制页面写入口，不能代替 API 服务能力。`readiness=ready` 表示所有已启用且声明可用的 profile 均通过健康检查；部分失效为 degraded，仍可使用健康 profile；禁用或无可用 profile 为 unavailable。未实现的 planned profile 不拉低已启用能力的健康状态。关闭新增导入或解析器不可用，不影响已发布 ImportedContent 和精确 Source 的读取。能力查询是当前快照，prepare、retry 和 confirm 仍须重新检查相关权限、运行状态和冻结结果有效性；confirm 不因某个无关解析器离线而重新解析或丢弃已有冻结正文。
+启用由导入服务配置控制，Dashboard 入口开关只控制页面写入口，不能代替 API 服务能力。`readiness=ready` 表示所有已启用且声明可用的 profile 均通过健康检查；部分失效为 degraded，仍可使用健康 profile；禁用或无可用 profile 为 unavailable。未实现的 planned profile 不拉低已启用能力的健康状态。关闭新增导入或解析器不可用，不影响已发布 ImportedContent 和精确 Source 的读取。能力查询是当前快照，创建 operation、retry 和 commit 仍须重新检查相关权限、运行状态和冻结结果有效性；commit 不因某个无关解析器离线而重新解析或丢弃已有冻结正文。
 
 ### 格式识别与 profile 能力
 
-新增 `GET /v1/import-capabilities`；必须携带指向已有 Scope 的 `scope_id` 并要求 `scope.read`；缺失或格式非法返回 422。响应展示是否具备 scope.contribute；开始导入仍须同时具备这两个权限。返回固定的 source_kind=content 以及每种格式的扩展名、规范 MIME、能力级别、状态（available/unavailable/planned）、parser profile、可提取内容、OCR/转换依赖及实际限额。状态来自服务注册和启动自检；不能在 API 上挂载解析器就宣称其 backend 健康。
+新增 `GET /v1/scopes/{scope_id}/import-capabilities`；必须携带指向已有 Scope 的 `scope_id` 并要求 `scope.read`；路径格式非法返回 400，不存在或不可见按 404/403 处理。响应展示是否具备 scope.contribute；开始导入仍须同时具备这两个权限。返回固定的 source_kind=content 以及每种格式的扩展名、规范 MIME、能力级别、状态（available/unavailable/planned）、parser profile、可提取内容、OCR/转换依赖及实际限额。状态来自服务注册和启动自检；不能在 API 上挂载解析器就宣称其 backend 健康。
 
 识别顺序结合文件 magic、容器内部结构、声明 MIME 与扩展名。扩展名匹配不区分大小写，但来源路径身份保持原有大小写。扩展名仅是提示；伪装为 `.txt` 的 PDF 进入 PDF 识别或返回类型不一致，不直接解码。DOCX/XLSX/PPTX/EPUB 是专用文档容器，先按专用格式识别，不能当普通 ZIP 拆成一堆内部 XML。
 
@@ -348,7 +348,7 @@ flowchart TD
 | 对象 | 职责与持久化 |
 | --- | --- |
 | ImportSession | 创建者 Principal、固定且非空的已有 scope_id、期限；承载同一目标下的导入恢复、隔离及并发控制，不授予额外 Scope 权限 |
-| 内部操作记录 / item_id | prepare 返回 operation_id；记录临时输入、发现清单、租约、配额、解析与确认状态；item_id 仅在 operation 内稳定，不是资料永久身份，也不是 Artifact |
+| 内部操作记录 / item_id | 创建文件操作返回 operation_id；记录临时输入、发现清单、租约、配额、解析与确认状态；item_id 仅在 operation 内稳定，不是资料永久身份，也不是 Artifact |
 | ImportedContentBundle | 解析后冻结的正文、语义 manifest、coverage 与 digest；确认针对它，不重新计算预览内容 |
 | ImportedContent Artifact | 稳定身份 `(scope_id, family=importedcontent, artifact_id)`；首次手动导入或稳定来源首次出现时分配 |
 | ImportedContent Revision | 精确快照 `(scope_id, family, artifact_id, revision)`；含结构化元信息和有序 Source 映射 |
@@ -367,7 +367,7 @@ flowchart TD
 | `origin` | 具体出处的 namespace、key 和可选 display_name，不作为授权依据 |
 | `parser` | 实际解析器、配置、版本、OCR 和转换链 |
 
-ImportedContent Revision、冻结 bundle 和读取响应必须包含 `source_kind: "content"`。texts 与 prepare 请求可省略该字段，由服务端补齐；显式提供时只能为 content，其他值返回 422。先补齐固定值再计算请求指纹、冻结摘要和缓存键，因此省略与显式 content 在其他字段相同时语义一致。OpenAPI 使用单值约束，Python 模型使用 Literal["content"]；默认值不意味着允许调用方选择其他 Source 类型。
+ImportedContent Revision、冻结 bundle 和读取响应必须包含 `source_kind: "content"`。texts 与文件上传 metadata 可省略该字段，由服务端补齐；显式提供时只能为 content，其他值返回 422。先补齐固定值再计算请求指纹、冻结摘要和缓存键，因此省略与显式 content 在其他字段相同时语义一致。OpenAPI 使用单值约束，Python 模型使用 Literal["content"]；默认值不意味着允许调用方选择其他 Source 类型。
 
 此字段不重命名或替代已有 `SourceRef.source_type`。保存时校验所有 parts/lineage.sources 的 `source_type` 均为 content，且与 ImportedContent 的 source_kind 一致；不能把其他 Source 类型或系统保留角色混入正文。标准列表不新增 source_kind 筛选或索引，因为该 Family 的取值恒定；出处仍可按 namespace 筛选。
 
@@ -385,7 +385,7 @@ ImportedContent Revision、冻结 bundle 和读取响应必须包含 `source_kin
 | `source_kind`、`origin` | source_kind 固定为 content；origin 包含必填 namespace、key 和可选 display_name（1–256 个 Unicode 字符，无控制字符）；仅作出处，不证明授权 |
 | `input_media_type`、`input_bytes`、`input_digest` | 原始输入类型、长度和 SHA-256；粘贴输入为接收的 UTF-8 字节 |
 | `text_media_type`、`text_bytes`、`text_digest` | text/plain 或 text/markdown、完整提取文本长度及摘要 |
-| `parser` | selected_profile/profile digest、router_version、实际后端及版本、路由原因、转换链、输出 schema、规范化和分段版本、编码、OCR 模型/语言与实际执行信息；这些语义信息纳入冻结摘要 |
+| `parser` | profile_id/profile_digest、router_version、实际后端及版本、路由原因、转换链、输出 schema、规范化和分段版本、编码、OCR 模型/语言与实际执行信息；这些语义信息纳入冻结摘要 |
 | `bundle_digest`、`snapshot_digest` | 冻结解析结果及其接受语义的摘要，不参与逻辑文档身份，不包含运行或保存后分配的 ID |
 | `content_manifest` | 有序 ordinal、字节数、分段摘要、全文字符区间和定位，不含 SourceRef、journal position 或临时 blob ID |
 | `parts` | ordinal 对应的 SourceRef 与 journal position，和 manifest 一一对应；SourceRef 顺序必须与 lineage.sources 完全一致 |
@@ -422,7 +422,7 @@ Family 注册覆盖类型、序列化、读取、授权与允许的操作，复�
 | 能力 | 本期行为 |
 | --- | --- |
 | list/get、精确 Revision、历史、版本比较 | 支持；统一以所在 Scope 的 `scope.read` 授权 |
-| texts/prepare/confirm 专用写入 | 支持；要求 `scope.read` + `scope.contribute`，并执行会话创建者隔离和事务内校验 |
+| texts/operations/commit 专用写入 | 支持；要求 `scope.read` + `scope.contribute`，并执行会话创建者隔离和事务内校验 |
 | 通用 Artifact POST/PUT 创建或替换 | 不支持；不能绕过确认提交 parts、lineage 或成功状态 |
 | generic restore/rollback、merge/undo_merge | 不支持；不注册相应适配器、不加入允许列表，HTTP 与 Runtime 均拒绝，页面不展示动作 |
 | 模型生成、Dream/Candidate 发布 | 不支持；不注册 ImportedContent 生成或候选处理器 |
@@ -501,7 +501,7 @@ ImportSession 从创建起即固定已有 scope_id。会话与内部操作记录
 | 预算 | 每 Principal、每 Scope、整个部署的默认上限 |
 | --- | --- |
 | 暂存实际字节（原文件、展开文件、输出缓存合计） | 1 GiB、5 GiB、20 GiB |
-| 活跃任务槽（按下表的实际工作状态计量，不只看 aggregate_status） | 20、100、500 |
+| 活跃任务槽（按下表的实际工作状态计量，不只看公开 status） | 20、100、500 |
 | 同时运行的普通解析数 | 2、4、8 |
 | 同时运行的 OCR 数 | 1、2、4；同时占用普通解析并发槽 |
 | 每 UTC 自然日实际尝试的 OCR 页数 | 1,000、5,000、20,000 |
@@ -514,8 +514,8 @@ ImportSession 从创建起即固定已有 scope_id。会话与内部操作记录
 | --- | --- |
 | uploading、queued、running；含等待解析资源的队列 | 占用 |
 | idle 且成员发现完成等待选择，或有选中未提交的 ready/needs_review 文档 | 占用 |
-| partially_committed 且仍有排队、解析、待选择或待确认工作 | 占用 |
-| failed；或 partially_committed 仅剩失败文档且没有已安排的自动重试 | 不占用，显式 retry 时重新准入 |
+| 部分已提交且仍有排队、解析、待选择或待确认工作 | 占用 |
+| failed；包括部分已提交但仅剩失败文档且没有已安排的自动重试 | 不占用，显式 retry 时重新准入 |
 | completed、cancelled、expired | 不占用 |
 
 自动重试已被安排的任务保持 queued 并持续占槽；自动重试耗尽进入 failed 后释放任务槽。释放任务槽不释放仍存在的暂存字节，也不清除可重试资格。任何操作将不占槽任务转回排队或待处理状态，必须在同一事务内重新申请 Principal、Scope 和部署三个层级的任务槽；多个文档一起 retry 仍只申请一个槽。已有槽的任务不得重复计费。配额不足返回 429/503 和 Retry-After，任务、文档、generation 与重试次数保持不变，不入队、不形成成功接收回执；同一请求可在退避后使用原幂等键再次准入。已经成功接收的同键重放仅返回回执，不重复申请槽。
@@ -526,7 +526,7 @@ Principal/Scope 配额不足返回 429，部署容量或依赖不足返回 503�
 
 ## 6. 内部执行、私有预览与耐久暂存
 
-复杂文件由 ImportedContent Family 的 prepare 操作接受，返回可恢复的 operation_id；执行状态保存在第 3 节的内部操作账本，由独立解析 worker 处理。ImportedContent Revision 仅管理已接受快照。本文下称“任务”均指该操作的内部执行工作，不引入 FileImportJob 领域实体或另一类 Artifact。
+复杂文件由 ImportedContent Family 的文件操作创建接口接受，返回可恢复的 operation_id；执行状态保存在第 3 节的内部操作账本，由独立解析 worker 处理。ImportedContent Revision 仅管理已接受快照。本文下称“任务”均指该操作的内部执行工作，不引入 FileImportJob 领域实体或另一类 Artifact。
 
 可以复用经过验证的数据库事务、租约、fencing、背压与 worker 基础组件；不把现有 Artifact Processing Supervisor 的生成任务直接改作导入任务。现有生成调度不自然具备上传暂存、私有预览与人工确认语义；如抽取公共执行基础设施，必须保留本文状态、权限和恢复约束。解析成功只冻结 bundle，不直接触发 Source/Artifact 写入。
 
@@ -535,8 +535,8 @@ Principal/Scope 配额不足返回 429，部署容量或依赖不足返回 503�
 | 层级 | 字段与取值 |
 | --- | --- |
 | 任务执行 | execution_state：uploading / queued / running / idle / failed / cancelled / expired；idle 表示当前无待执行解析 |
-| 任务阶段 | phase：upload / discovery / selection / parsing / confirmation / done；discovery_state：not_required / pending / running / complete / failed |
-| 文档选择 | selected：是否纳入本次导入；容器发现完成后通过 selection API 冻结选择 |
+| 内部任务阶段 | internal_phase：upload / discovery / selection / parsing / confirmation / done；discovery_state：not_required / pending / running / complete / failed |
+| 文档选择 | selected：是否纳入本次导入；容器发现完成后通过 select API 冻结选择 |
 | 文档解析 | parse_state：pending / parsing / ready / needs_review / failed；ready 和 needs_review 都对应不可变 bundle |
 | 文档保存 | commit_state：uncommitted / committed；提交事务进行中不公开半提交状态 |
 
@@ -565,9 +565,9 @@ flowchart LR
     B -->|确认 digest 并接受 partial| C
 ```
 
-任务另外返回派生 aggregate_status 与各类计数，按以下优先级计算：cancelled/expired；正在接收输入为 uploading；存在待执行或运行工作时为 queued/parsing；无活动工作且有已提交文档但未全部完成时为 partially_committed；选中非空且全数 committed 为 completed；存在未提交 ready/needs_review 或待选择成员为 awaiting_confirmation；任务级失败或仅剩不可解析成员为 failed。未选成员计入 excluded，不要求其提交。取消/过期仍返回已提交计数与 ImportedContent Revision 引用，不能隐藏部分成功。
+以上为内部耐久状态，不直接作为 HTTP 字段。公开 ImportOperation.status 由服务端派生，优先级为：已完成或已取消的终态保持；到期的未完成工作为 expired；存在执行工作为 running，否则存在已排队工作为 queued；完整发现后未选择为 awaiting_selection；选中非空且全部 committed 为 completed；存在未提交 ready/needs_review 为 awaiting_commit；任务级失败或仅剩失败成员为 failed。自动重试已安排的失败仍属于 queued。部分已提交只通过 progress 计数表达，不引入覆盖工作状态的 partially_committed。公开 phase 为 discovery/parsing/commit/done：发现及等待选择映射 discovery，正文处理映射 parsing，等待提交映射 commit，全部成功映射 done；失败/取消/过期保留最后阶段。内部 discovery_state=complete 映射公开 discovery.status=completed，parse_state/commit_state 分别映射 parse_status/commit_status。202 之前的 uploading 不公开为可恢复已接受操作。未选成员计入 excluded_items，取消/过期仍返回已提交计数与回执。
 
-普通单文档输入自动固定 selected=true。归档、邮箱或带附件文件先有界发现完整成员清单，返回稳定 item_id、container_chain、类型及默认选择建议；附件默认不选，普通归档成员默认选。发现后暂停，调用方通过 selection API 一次冻结明确的成员 ID 集合，再开始正文解析。超限或无法完成发现不能冒充完整清单；返回 discovery 错误。容器结构节点不可选择，未选附件记 excluded。选择不再改变；改变成员集合或解析选项须创建新尝试。临时 item_id 由本 operation 的持久成员映射产生，自动重试不重新分配。discovery_state=complete 与完整成员清单在同一事务中发布，只有此时才允许 selection。发现期间的中间清单不允许选择，不据其推进 checkpoint。临时故障令 discovery_state=failed 并返回阶段错误和 discovery_retryable；自动重试耗尽仍可通过显式 discovery retry 恢复。若完整清单尚未发布，重试可从原始暂存重新发现并复用内部成员身份；已发布清单不可重新发现、改写或重新分配 ID。损坏、加密、超限等永久错误标记不可重试。
+普通单文档输入自动固定 selected=true。归档、邮箱或带附件文件先有界发现完整成员清单，返回稳定 item_id、container_chain、类型及默认选择建议；附件默认不选，普通归档成员默认选。发现后暂停，调用方通过 select API 一次冻结明确的成员 ID 集合，再开始正文解析。超限或无法完成发现不能冒充完整清单；返回 discovery 错误。容器结构节点不可选择，未选附件记 excluded。选择不再改变；改变成员集合或解析选项须创建新尝试。临时 item_id 由本 operation 的持久成员映射产生，自动重试不重新分配。discovery_state=complete 与完整成员清单在同一事务中发布，只有此时才允许 selection。发现期间的中间清单不允许选择，不据其推进 checkpoint。临时故障令 discovery_state=failed 并返回阶段错误和 discovery_retryable；自动重试耗尽仍可通过显式 discovery retry 恢复。若完整清单尚未发布，重试可从原始暂存重新发现并复用内部成员身份；已发布清单不可重新发现、改写或重新分配 ID。损坏、加密、超限等永久错误标记不可重试。
 
 原始字节耐久写入受控 staging store 并校验摘要后才返回 202 和排队任务。上传中断不留下可执行的半文件，上传占位及孤立 blob 由 GC 对账回收。单机可用受控状态目录，多副本使用共享耐久存储，不能依赖 API 进程的 /tmp。任务保存固定 profile、输入摘要、租约 owner/generation、attempt、deadline、选择版本及冻结 manifest。领取、结果发布、重试、取消和过期均以事务校验状态及 generation；过期 worker 不得覆盖新结果。
 
@@ -581,9 +581,9 @@ flowchart LR
 
 ### 会话与 Scope
 
-ImportSession 创建必须提供已有 scope_id；服务端校验 Scope 存在且调用方具备 scope.read + scope.contribute 后，保存创建者和不可变 scope_id。该字段非空，不接受延迟解析的目标或创建参数。创建会话本身不创建 Scope、Artifact 或 Source，也不授予新权限。
+ImportSession 创建必须在路径提供已有 scope_id，body 只能为 {}；服务端校验 Scope 存在且调用方具备 scope.read + scope.contribute 后，保存创建者和不可变 scope_id。该字段非空，不接受延迟解析的目标或创建参数。创建会话本身不创建 Scope、Artifact 或 Source，也不授予新权限。
 
-会话、operation、item、暂存配额及最终 Artifact/Source 始终归属同一 Scope。子操作通过 session_id 获取固定目标，不允许请求正文覆盖 scope_id；其他 Scope 的 artifact_id、SourceRef 或来源绑定不能作为当前目标。切换目标需重新创建会话并重新提供输入；已有操作不转移。
+会话、operation、item、暂存配额及最终 Artifact/Source 始终归属同一 Scope。子操作同时校验路径 scope_id 与 session_id 的固定目标一致，不允许请求正文覆盖 scope_id；其他 Scope 的 artifact_id、SourceRef 或来源绑定不能作为当前目标。切换目标需重新创建会话并重新提供输入；已有操作不转移。
 
 创建会话、提交文本、接收上传、选择成员、重试与确认均重新校验该 Scope 的当前权限；操作查询/预览要求会话创建者及当前 Scope 访问权限，管理代操作须显式授权并审计。确认事务还须验证 Scope 仍存在且可写、会话/操作未过期或取消，以及目标 Head/治理状态；撤权或目标失效后不保存资料，不自动补建 Scope 或选择其他目标。取消与清理按第 6、10 节执行。
 
@@ -617,7 +617,7 @@ bundle_digest = SHA-256(RFC 8785 canonical JSON)，输入为带 schema_version �
 
 耐久输入映射以明确逻辑文档目标、输入摘要、受控来源/title、profile 和完整选项为键；容器包含稳定成员映射与选择。它索引已冻结解析结果及精确历史 ArtifactRef，而不是授予覆盖 Head 的权限。缓存命中可以省略 OCR，但必须按本次目标与预期 Head 决定 reused 或创建新 Revision；不能直接把历史版本当当前版本。手动新建仍创建新文档，跨 Scope 不暴露命中。
 
-缓存 coverage=complete 可以复用解析结果，但交互文件仍需本次确认；明确配置 accept-complete 的 worker 才可自动确认。缓存 coverage=partial 时，本次 item 必须为 needs_review/uncommitted，展示 candidate_ref、coverage 与遗漏，不计入 completed；本次显式 accept_partial=true 后才可保存。不能继承其他 Principal 或上次尝试的部分提取接受决定。同一次已成功提交的同键重放保留原决定。
+缓存 coverage=complete 可以复用解析结果，但交互文件仍需本次确认；明确配置 accept-complete 的 worker 才可自动确认。缓存 coverage=partial 时，本次 item 必须为 needs_review/uncommitted，展示 reusable_artifact、coverage 与遗漏，不计入 completed；本次显式 accept_partial=true 后才可保存。不能继承其他 Principal 或上次尝试的部分提取接受决定。同一次已成功提交的同键重放保留原决定。
 
 reparse=true 必须重新提供原文件并记录实际执行；运行诊断属于临时任务历史，Revision 保存影响内容的 provenance。解析缓存可以指向历史版本，但缓存指针不改变 Head；最近完整解析结果可更新缓存索引，旧版本继续精确读取。
 
@@ -639,73 +639,402 @@ Source metadata 中的目标 Revision 在事务内确定，但不进入摘要；
 
 ## 8. HTTP、客户端与页面契约
 
-持久资料复用标准 Artifact API，family 固定为 `importedcontent`。以下四个读取操作扩展现有 Family 注册与 schema，不新建独立资料查询资源：
+### 8.1 规范、身份与接口清单
 
-| 现有 operationId | 方法与路径 | ImportedContent 行为 |
+遵循 [RFC 1437](1437_source_artifact_rest_api.md) 的 Scope 资源身份、命名、错误结构、分页与标准 Artifact 读取契约。集合使用小写复数名词，静态多单词路径使用 kebab-case，JSON/query 与 operationId 使用 snake_case，URI 不带末尾斜线。`select`、`commit`、`retry`、`cancel` 是显式 POST 领域动作，不提供任意 PATCH/PUT 状态修改。所有下级路径校验 Scope、session、operation、item 的真实所属关系，不能仅凭最后一个 ID 查询。路径确定的身份不得在 body 重复传入。
+
+本节描述待实施的公开契约；实现时以 `openapi/powercontext.yaml` 为唯一契约源，生成 Python/JavaScript 客户端并执行 contract-test。不得手工修改生成代码。Family 固定为 `importedcontent`，会话只接受已有 Scope，不创建 Scope。接口层级不引入独立 FileImportJob 或 ImportedContent 主表。
+
+以下缩写只用于阅读，实际 HTTP 路径须完整展开，不能发送字面量 P/S/O/I：
+
+```text
+P = /v1/scopes/{scope_id}
+S = P/import-sessions/{session_id}
+O = S/operations/{operation_id}
+I = O/items/{item_id}
+```
+
+| operationId | 方法与路径 | 成功状态与含义 |
 | --- | --- | --- |
-| `list_artifacts` | `GET /v1/scopes/{scope_id}/artifacts/importedcontent` | 当前可见 Head 的资料列表；支持 namespace 精确过滤 |
-| `get_artifact` | `GET /v1/scopes/{scope_id}/artifacts/importedcontent/{artifact_id}` | 当前已接受快照及有序 parts |
-| `list_artifact_revisions` | `GET /v1/scopes/{scope_id}/artifacts/importedcontent/{artifact_id}/revisions` | 已接受版本历史 |
-| `get_artifact_revision` | `GET /v1/scopes/{scope_id}/artifacts/importedcontent/{artifact_id}/revisions/{revision}` | 精确不可变快照，回执 Location 指向这里 |
+| `get_import_capabilities` | `GET P/import-capabilities` | 200；当前调用者可见的格式、profile、权限与实际限额 |
+| `create_import_session` | `POST P/import-sessions` | 201；创建固定 Scope、固定创建者的会话 |
+| `list_import_sessions` | `GET P/import-sessions` | 200；当前 Scope 内创建者自己的恢复列表 |
+| `get_import_session` | `GET S` | 200；会话及期限，不返回原文 |
+| `import_content_text` | `POST S/texts` | 201 新建资料；200 更新或复用；请求本身即确认 |
+| `create_import_operation` | `POST S/operations` | 202；单文件耐久接收并排队，尚未发布 Artifact |
+| `list_import_operations` | `GET S/operations` | 200；操作恢复列表，不是资料列表 |
+| `get_import_operation` | `GET O` | 200；状态、阶段、计数、期限及动作 |
+| `list_import_items` | `GET O/items` | 200；成员清单，单文档也有一个 item |
+| `get_import_item` | `GET I` | 200；冻结目标、提取结果、覆盖与问题 |
+| `get_import_part` | `GET I/parts/{ordinal}` | 200；有界正文预览，已提交时读取 Source |
+| `select_import_items` | `POST O/select` | 202；原子冻结容器成员选择并排队 |
+| `commit_import_item` | `POST I/commit` | 201 新建资料；200 更新或复用；单文档原子提交 |
+| `retry_import_operation` | `POST O/retry` | 202；重新准入后重试发现或指定失败文档 |
+| `cancel_import_operation` | `POST O/cancel` | 200；取消未提交部分或返回已完成结果 |
 
-导入是 Family 专用写入行为。会话创建前必须选择已有 Scope，准备和确认通过 session_id 使用该固定目标；会话路由用于恢复同一批次操作，不另外创建可长期管理的 file-import 业务资源。下表操作均为本 RFC 拟新增契约，不把 operation 恢复查询声称为仓库已有接口。
+正式资料复用以下既有接口及 operationId；不另外建立“导入资料详情”资源。仅扩展 Family 注册、schema 和读取投影：
 
-| operationId | 方法与路径 | 含义 |
+| operationId | 方法与路径 | 行为 |
 | --- | --- | --- |
-| `get_import_capabilities` | `GET /v1/import-capabilities?scope_id=...` | scope_id 必填且须已存在；返回固定 Source 类型 content、格式、权限与限额 |
-| `create_import_session` | `POST /v1/import-sessions` | 必填已有 scope_id；校验贡献权限并固定目标及创建者 |
-| `list_import_sessions` | `GET /v1/import-sessions` | 当前创建者可恢复的会话，分页 |
-| `get_import_session` | `GET /v1/import-sessions/{session_id}` | 固定 scope_id、期限与回执摘要 |
-| `import_content_text` | `POST /v1/import-sessions/{session_id}/importedcontent/texts` | source_kind=content；同步校验并确认保存有界正文，201/200 |
-| `prepare_imported_content` | `POST /v1/import-sessions/{session_id}/importedcontent/prepare` | source_kind=content；metadata + 单文件，耐久接收后 202，返回 operation_id |
-| `list_import_operations` | `GET /v1/import-sessions/{session_id}/operations` | 创建者的操作恢复列表，非资料列表 |
-| `get_import_operation` | `GET /v1/import-sessions/{session_id}/operations/{operation_id}` | 执行状态、错误、期限、计数与可执行动作 |
-| `list_import_operation_items` | `GET /v1/import-sessions/{session_id}/operations/{operation_id}/items` | 有界成员清单；单文件也有一个 item |
-| `get_import_operation_item` | `GET /v1/import-sessions/{session_id}/operations/{operation_id}/items/{item_id}` | manifest、coverage、warnings、omissions 及冻结目标 |
-| `get_import_operation_part` | `GET /v1/import-sessions/{session_id}/operations/{operation_id}/items/{item_id}/parts/{ordinal}` | 创建者的有界分段预览；已提交时从 Source 读取 |
-| `confirm_imported_content` | `POST /v1/import-sessions/{session_id}/importedcontent/confirm` | operation_id + item_id + bundle_digest + accept_partial，原子确认，201/200 |
-| `select_imported_content` | `POST /v1/import-sessions/{session_id}/importedcontent/selection` | operation_id + 成员集合及各自目标；冻结选择后 202 |
-| `retry_import_operation` | `POST /v1/import-sessions/{session_id}/operations/{operation_id}/retry` | 调用所属 Family 的受控重试动作，重新准入后 202 |
-| `cancel_import_operation` | `POST /v1/import-sessions/{session_id}/operations/{operation_id}/cancel` | 封闭未提交写入，返回原子取消/已完成结果，200 |
+| `list_artifacts` | `GET P/artifacts/importedcontent` | 当前可见 Head；新增 namespace 精确过滤，不是正文搜索 |
+| `get_artifact` | `GET P/artifacts/importedcontent/{artifact_id}` | 标准 ArtifactRevision、正文 parts 与 Head ETag；保留 If-None-Match/304 |
+| `list_artifact_revisions` | `GET P/artifacts/importedcontent/{artifact_id}/revisions` | 已接受的历史版本 |
+| `get_artifact_revision` | `GET P/artifacts/importedcontent/{artifact_id}/revisions/{revision}` | 精确不可变版本；按既有契约不使用 ETag |
 
-prepare 的 202 响应包含 `{operation_id, session_id, family: "importedcontent", expires_at, status_url}`，Location 指向操作状态 URL，不指向尚不存在的 Artifact。texts 的请求本身即确认；它与 confirm 返回相同的已保存回执，不要求额外创建解析操作。操作及成员不能通过通用 PUT/PATCH 改写状态；确认/选择处理器须校验 operation 与 session、创建者、Family 匹配，跨会话或不可见句柄按现有 404/403 策略处理。通用 Artifact POST/PUT 对 importedcontent 的直接写入按本提案的 Family 能力校验返回 422，不能退回通用命令 Source 路径。
+通用 Artifact POST/PUT 不允许直接写入 importedcontent，返回 422 的不支持错误；不能绕过专用写服务校验 parts、lineage 和接受语义。其他 Family 的通用 Replace 仍使用 If-Match，缺失返回 428、不匹配返回 412。本 Family 导入 commit 是领域命令，使用冻结的 expected_head_revision，冲突返回 409；不把 Artifact ETag 当成 operation/item 的 HTTP 校验值。
 
-创建会话请求为 `{"scope_id":"已有 Scope 的 ID"}`，scope_id 必填、非空且遵循现有 Scope ID 约束。缺失、空值、未知字段或任何创建 Scope 参数返回 422；目标不存在、不可见或无贡献权限时按现有 404/403 可见性规则拒绝，不建立会话或接收文件。成功响应包含 session_id、固定非空 scope_id 与 expires_at。所有写操作携带 Idempotency-Key；不提供修改会话目标的接口。
+### 8.2 公共字段、headers 与请求校验
 
-文档目标为 `{"mode":"create"}` 或 `{"mode":"update","artifact_id":"...","expected_head_revision":2}`。手动默认 create，不从 origin 猜测身份；update 必须属于会话固定 Scope 的 importedcontent Family；其他 Scope 的目标按现有可见性规则拒绝。来源采集使用第三种互斥目标 `{"mode":"source","source_authority_id":"...","source_key":"..."}`，仅允许已注册并获准写入该 authority 的 Connector Principal 使用；接收时解析绑定，冻结 artifact_id 和预期 Head/不存在断言。响应返回已解析目标，不能由任意客户端通过 origin 冒充 authority。容器对每个成员独立指定目标，禁止把多个成员更新到同一 artifact_id。
+| 项目 | 格式与约束 |
+| --- | --- |
+| `scope_id` | 沿用现有 Scope ID：1–256 字符且含非空白字符；作为单个 URL segment 编码 |
+| `session_id`、`operation_id`、`item_id` | 服务端生成的不透明字符串，1–128 个可见 ASCII 字符；客户端不得解析前缀或假定 UUID |
+| `artifact_id` | 沿用 Artifact ID 约束：1–128 个可见 ASCII 字符；必须属于路径 Scope 与 importedcontent Family |
+| `revision` / `expected_head_revision` | 整数，最小 1 |
+| `ordinal` | 整数，从 0 开始；第 n 段的 ordinal=n-1 |
+| 时间 | RFC 3339 UTC，例如 `2026-10-19T08:00:00Z` |
+| 摘要 | `^sha256:[0-9a-f]{64}$`；input、bundle、snapshot、text 摘要含义独立 |
+| 大小 / 时长 | 字节整数使用 `_bytes`；秒整数使用 `_seconds` |
+| 缺失与 null | 请求默认值只在字段省略时应用；未声明可空的字段拒绝 null。响应未知统计值为 null，0 表示确认没有 |
+| `source_kind` | 请求可省略，先补为 `content` 再计算指纹；显式值只能为 content，保存及读取必须包含 |
 
-直接粘贴请求保持简单：
+启用认证时携带 `Authorization: Bearer <token>`。全部导入写请求必须有 `Idempotency-Key`（1–128 字符，ASCII 字母、数字及 `-_.`）；缺失或非法 header 返回 400。所有成功/失败响应返回 `X-PowerContext-Request-ID`。JSON 使用 UTF-8；不使用额外 code/message/data 成功信封。未知 body 字段返回 422，未知 query、非法路径/header/cursor 返回 400；重复 multipart part 或额外 part 返回 422。服务端拒绝非空白正文中的 NUL、非法 Unicode 和除 TAB/CR/LF 外的 C0 控制字符。
+
+创建会话的 Location 指向 S；创建操作的 Location 指向 O；文本/commit 成功的 Location 指向精确 Artifact Revision。导入回执不是通用 Head 表示，不伪造其 ETag。返回 429/503 时包含秒数形式的 Retry-After。上传和动作的 202 返回接收时的 ImportOperation 快照，重放不替换成最新状态，调用者通过 GET O 查询变化。
+
+### 8.3 当前部署能力与会话
+
+`GET P/import-capabilities` 要求 scope.read，不要求 server.observe。Scope 不存在或不可见时沿用 404/403 策略。响应字段如下：
+
+| 字段 | 类型与含义 |
+| --- | --- |
+| `scope_id`、`family`、`source_kind` | 路径 Scope、importedcontent、content |
+| `contract_version` | `{major:1,minor:0}`；与 content.import feature contract 一致，不表示当前可用 |
+| `enabled`、`can_import` | boolean；部署是否启用、当前调用者是否具备所需写权限；不是后续授权凭证 |
+| `readiness` | ready / degraded / unavailable；含义见第 2 节 |
+| `limits` | 实际限额，包含 max_text_bytes、max_json_bytes、max_file_bytes、max_metadata_bytes、max_document_text_bytes、max_parts_per_document、max_part_bytes、max_selected_items、session_ttl_seconds、operation_ttl_seconds；还包含第 5 节按格式及累计配额的限制 |
+| `formats[]` | format_id、extensions、media_types、level(A/B/C)、status(available/unavailable/planned)、default_profile_id（可空）、profile_ids、extraction_scope、limits、reason（可空） |
+| `profiles[]` | profile_id、profile_digest、status、defaults、options_schema、extraction_scope、dependencies；options_schema 为有界的 JSON Schema 2020-12 子集，additionalProperties=false，不接受执行代码或任意 parser 类名 |
+| `quotas` | 当前调用者允许查看的配额上限和剩余量；不泄漏其他 Principal 的使用情况 |
+
+extensions 含点，例如 `.pdf`；media_types 使用规范 MIME；reason 为 `{code,message}`。profile 摘要覆盖固定配置和依赖版本，不是发布时钟。能力响应是当前快照，每个写动作仍重新校验。初始 limits 来自第 5 节，例如 max_file_bytes=52428800、max_text_bytes=262144、max_document_text_bytes=8388608、max_parts_per_document=128、max_part_bytes=262144、max_metadata_bytes=65536；客户端不得硬编码为部署实际值。
+
+创建会话调用示例：
+
+```http
+POST /v1/scopes/project-docs/import-sessions
+Content-Type: application/json
+Idempotency-Key: session-notes-001
+
+{}
+```
+
+请求体只能为空对象，不再接收 scope_id 或任何创建 Scope 参数。校验 scope.read + scope.contribute 后返回 201：
+
+```json
+{
+  "scope_id": "project-docs",
+  "session_id": "is_001",
+  "created_at": "2026-10-19T08:00:00Z",
+  "expires_at": "2026-10-20T08:00:00Z",
+  "idempotency_expires_at": "2026-11-19T08:00:00Z"
+}
+```
+
+`GET S` 返回相同 ImportSession 字段；时间为服务端计算结果。会话创建重放映射保留到会话期限后至少 30 天，包括从未上传文件的会话；所有子操作期限不晚于会话期限。列表仅列举路径 Scope 内当前创建者可见的会话，不提供本期跨 Scope 会话发现入口。
+
+### 8.4 共用目标与来源
+
+`artifact_target` 是带 mode 的互斥对象，默认 `{"mode":"create"}`，不从文件名或 origin 推断更新：
+
+| mode | 字段 | 规则 |
+| --- | --- | --- |
+| create | 只有 mode | 本次明确新建意图；身份由服务端生成 |
+| update | artifact_id、expected_head_revision，均必填 | 接收时冻结；提交时校验同 Scope/Family 与 Head，冲突不自动改目标 |
+| source | source_authority_id、source_key，均必填 | 仅获准 Connector Principal；接收时解析已有绑定/不存在断言，冻结目标 |
+
+source_authority_id 为 1–128 个可见 ASCII 字符；source_key 为 1–1024 个 Unicode 字符，非空、无首尾空白或控制字符，并符合已注册 authority 的规范化规则。响应的 `resolved_target` 为只读 `{mode,artifact_id,expected_head_revision}`；mode 为 create/update，create 的 expected_head_revision 为 null。容器未选择成员的目标为 null。客户端不能提交 resolved_target、sources、artifacts、parts 或任意可写 lineage。
+
+`origin` 为必填对象：namespace（1–128 字符）、key（1–1024 字符）必填，display_name（1–256 字符）可选；均无控制字符，namespace/key 无首尾空白。文件 key 为相对 POSIX 路径，禁止绝对路径、反斜线、空片段、`.`、`..`。origin 仅作出处，不授予来源绑定权限，也不触发远程获取。容器成员的 origin 和 container_chain 由服务端按第 3 节稳定成员规则生成并回显，成员序号不能伪装成跨版本稳定身份。
+
+### 8.5 粘贴文本直接保存
+
+```http
+POST /v1/scopes/project-docs/import-sessions/is_001/texts
+Content-Type: application/json
+Idempotency-Key: text-notes-001
+```
 
 ```json
 {
   "title": "接口约定",
   "artifact_target": {"mode": "create"},
   "source_kind": "content",
+  "origin": {"namespace": "project-notes", "key": "api-conventions"},
   "media_type": "text/markdown",
-  "origin": {"namespace": "project-notes", "key": "note-001"},
   "text": "# 接口约定\n\n分页使用不透明游标。\n"
 }
 ```
 
-上传 metadata 包含 artifact_target、title、origin、parser_profile，以及可省略且固定为 content 的 source_kind、可选 encoding、as_text、reparse、ocr_mode、language、include_notes、include_comments、include_hidden 与 archive_depth。as_text=false、reparse=false、ocr_mode=off、include_notes=true、include_comments=false、include_hidden=true、archive_depth=1 为默认值；language 不指定时使用 profile 公布的固定语言集，encoding 不指定时按识别规则决定或返回 encoding_required。parser_profile 不指定时先冻结部署的 router/profile 注册表版本，再按识别出的格式选择并冻结对应默认 profile；PDF 的实际后端随后按该 profile 的固定规则解析。归档/邮箱同时冻结子文档路由注册表，成员发现与选择后按实际格式使用同一版规则，不能在中途采用更新的默认值。跨键重试客户端应传已解析的 profile digest。include_notes 仅对支持备注的格式生效，其他格式默认值忽略，不适用的显式非默认值返回 422。archive_depth 取 1 或 2。所有默认值均在能力接口公布。
+| 字段 | 必填 / 默认 | 含义 |
+| --- | --- | --- |
+| title | 必填 | 去首尾空白后 1–256 个 Unicode 字符 |
+| artifact_target | 默认 create | 第 8.4 节目标 |
+| source_kind | 默认 content | 固定 Source 类型 |
+| origin | 必填 | 受控出处 |
+| media_type | 默认 text/plain | 只接受 text/plain、text/markdown，描述保存的正文表示 |
+| text | 必填 | 非空白字符串；UTF-8 字节数不超过 max_text_bytes，整个 JSON 不超过 max_json_bytes |
 
-as_text=true 只允许通过严格文本校验的输入，不能绕过二进制识别与资源限制；ocr_mode 取 off/auto/force，auto 仅处理需要 OCR 的页面，force 在预览中标明。reparse=true 通过新上传与新 Idempotency-Key 发起新尝试，客户端需重新提供原始文件；服务端不假定旧暂存尚在，也不改变旧冻结结果。附件由下面的成员选择操作决定。
+该请求本身即确认，不创建必需的异步解析操作；成功返回第 8.10 节 ImportCommitReceipt。粘贴 HTML/代码按所选正文表示保存原文，不执行或隐式提取；需要格式解析时使用文件入口。此接口不接受 parser、URL 或服务器文件路径。
 
-selection 请求 `{operation_id, expected_selection_version: 0, items: [{item_id, artifact_target}, ...]}`，仅在成员发现完成、选择未冻结且任务有效时接受；ID 必须来自同 operation 完整清单且可选、去重、非空、最多 1,000 个。服务端校验各成员目标、禁止同一次选择中重复指向同一 Artifact，原子冻结为版本 1 并排队；再次改变选择返回 409，未知/其他任务 ID 返回 422 且不透露外部内容。单文档无需该操作。retry 请求为必填 stage 的互斥结构：`{stage: "discovery"}` 或 `{stage: "documents", item_ids: [...]}`。discovery 分支禁止携带 item_ids，仅允许 discovery_state=failed、discovery_retryable=true、完整清单尚未发布且原始暂存仍有效的容器任务；接受后转为 discovery_state=pending、phase=discovery、execution_state=queued。documents 分支要求清单已完成或无需发现，item_ids 非空、去重、最多 1,000 个，只允许已选、失败且 retryable 的文档；接受后将指定文档改为 pending 并排队。非法结构返回 422，阶段或状态不匹配整请求返回 409，均不修改冻结结果。两个分支共用配额重新准入规则，只有原子获得所需任务槽且写入队列与幂等回执后才返回 202。cancel 请求空对象；第一次原子取消，重复取消返回相同回执；已 completed 返回原完成状态，已 expired 返回 tombstone，不删除 ImportedContent Revision。
+### 8.6 文件上传与解析参数
 
-上述三个写操作均要求创建者身份，以及会话固定 Scope 的 scope.read + scope.contribute，并携带 Idempotency-Key；重放保持原接收回执，可用 GET 查询后续状态。管理员代操作遵守第 10 节；selection/retry 对 cancelled 返回 409、expired 返回 410。操作响应返回 operation_id、session_id、family，并独立返回 phase、discovery_state、discovery_retryable、阶段错误、execution_state、aggregate_status、task_slot_held、selection_version、counts、expires_at、idempotency_expires_at 和 blocked_reason；文档响应返回 selected、parse_state、commit_state、retryable、coverage、warnings、omissions、bundle_digest，以及可选 candidate_ref 和 artifact_ref（均为含 scope_id 的精确 ArtifactRef）；artifact_ref 仅用于本次已成功确认的回执，candidate_ref 不表示本次已保存。客户端不推断混合 status。
+`POST S/operations` 使用 multipart/form-data，恰好一个 `file` part（原始字节）和一个 `metadata` part（application/json，最多 64 KiB）；不接受额外文件、URL 或服务器路径。客户端 filename 与声明 Content-Type 只作为检测线索，服务端按字节、MIME 与容器结构识别真实格式。
 
-每个上传只接收一个 file 和一个 metadata 对象；metadata 上限 64 KiB，未知字段拒绝， multipart 额外字段及文件拒绝，不能绕过单文件上限。任务查询与文档 manifest 不回传原始 blob 地址。
+```json
+{
+  "title": "产品使用手册",
+  "artifact_target": {"mode": "create"},
+  "source_kind": "content",
+  "origin": {"namespace": "product-docs", "key": "manual.pdf"},
+  "parser": {
+    "profile_id": "pdf-standard-v1",
+    "options": {"ocr_mode": "auto"}
+  },
+  "reparse": false
+}
+```
 
-确认请求为 `{operation_id, item_id, bundle_digest, accept_partial}`；目标文档及 expected_head_revision 已在 item 上冻结，响应同时回显。请求携带 Idempotency-Key。当前 bundle 已变化返回 409，未提交文档过期返回 410，取消或未解析完成返回 409。已提交文档在任务映射保留期内重放提交返回耐久回执，即使任务随后到期；此后通过通用 Artifact 精确版本读取接口读取。ready 只允许 accept_partial=false；needs_review 必须为 true，否则返回 409。成功返回 `{outcome: created|reused, scope_id, artifact_ref, snapshot_digest, parts}`；created 包括首版及后续新 Revision，artifact_ref 携带 family=importedcontent、artifact_id、revision，Location 指向现有通用 Artifact 精确版本资源。新的导入响应统一使用 `parts[]`，粘贴正文为一段；不改变既有 Source API 的 response。
+| metadata 字段 | 必填 / 默认 | 含义 |
+| --- | --- | --- |
+| title | 可省略 | 单文档标题，显式值遵守文本 title 约束；省略时使用规范化文件名，空名使用固定值 `Untitled material`，不随界面语言变化。容器只用作展示名，成员标题来自清单 |
+| artifact_target | 单文档默认 create | 容器只接受省略或 create，update/source 由 select 为各成员单独指定；禁止套用一个目标到多个成员 |
+| source_kind / origin | 默认 content / 必填 | 与文本接口相同 |
+| parser | 可省略 | ParserSelection，字段见下表 |
+| reparse | 默认 false | 本次新上传绕过解析结果缓存和跨键任务合并；不修改旧操作，不假设旧暂存仍存在 |
 
-任务/成员/资料列表默认 limit 50、范围 1–100，SQL keyset 分页并冻结首请求高水位；cursor 绑定操作、调用方、稳定 session_id（会话路由）或 scope_id（资料路由）、过滤、limit、高水位及 TTL，每页重新鉴权。任务状态可随时间变化，列表不是状态快照。ImportedContent 资料列表复用 Artifact 列表并扩展 namespace 精确筛选投影，不伪装成原文全文搜索。
+| parser 字段 | 类型与默认 | 语义 |
+| --- | --- | --- |
+| profile_id | string，可省略 | 能力接口中可用 profile；省略时冻结 router 注册表并按格式选择默认 profile |
+| profile_digest | SHA-256，可省略 | 提供时必须同时提供 profile_id，要求精确配置；不匹配返回 409 profile_conflict，不静默换版本 |
+| options | object，默认空对象 | 仅传显式覆盖项；不接受 profile 未声明的选项 |
+| options.encoding | string，可省略 | 能力接口公布的编码名称；省略时 BOM/严格 UTF-8 或返回 encoding_required |
+| options.as_text | boolean，false | 仅严格文本验证后启用，不能绕过二进制与资源限制 |
+| options.ocr_mode | off / auto / force，off | OCR 禁用、按需、强制；实际执行另外记录 |
+| options.languages | string[]，可省略 | 非空、去重，元素为 profile 公布的语言标识；省略使用固定语言集，不猜测或在线下载语言模型 |
+| options.include_notes | boolean，true | 纳入支持格式的备注 |
+| options.include_comments | boolean，false | 纳入支持格式的批注 |
+| options.include_hidden | boolean，true | 纳入支持格式的隐藏内容 |
+| options.archive_depth | integer，1 | 仅允许 1 或 2 |
 
-Python client 暴露对应操作；CLI 提供 text、files、resume、cancel 和 dry-run；新导入必须用 --scope 指定已有目标，缺失时在上传前报错；--session 可恢复此前已选择目标的同一批次，并显示会话固定的 Scope。若同时提供 --scope，必须与会话一致，否则在提交前拒绝；用 --artifact-id 与 --expected-head-revision 明确更新现有文档，并暴露 --as-text、--reparse 与成员选择参数。容器先列出成员并提交明确选择；无人值守必须配置成员选择规则。dry-run 只验证本地可确认事项；离线未运行解析器时必须将文件标为“需服务端解析”，不能宣称可完整导入。CLI 默认在当前部署解析后交互确认；显式 `--accept-complete` 可自动保存 ready 文档，partial 必须额外显式授权，命中已有 partial 快照同样适用，禁止默认悄悄接受。页面和 CLI 根据 phase/discovery_state 提供“重试成员发现”或“重试失败文档”，不要求用户为尚未发现的成员填写 item_ids；收到配额拒绝后按 Retry-After 退避，不将未接收请求显示为已排队。
+客户端不适用的显式选项返回 422；profile 默认项只对适用格式生效。响应回显补齐默认值后的有效配置。容器冻结子文档 router/profile 注册表；请求覆盖项只作用于其适用成员，明确不适用任何已发现成员的覆盖项作为发现阶段参数错误报告，不能忽略。跨键要求固定 profile 时应同时传 profile_id/profile_digest。模型、转换和实际后端信息在 item 的 parser 结果中返回，客户端不能任意指定导入类名。
 
-上传任务的重新打开与预览为读操作；重新登录不自动提交。确认按钮携带 frozen digest 和原 key，结果不明时通过任务与回执核实或同键重试。上传进度、解析进度和 Source 保存进度分开表示；解析器不报告页进度时只显示处理中。
+以下命令读取本地文件并上传到已选择 Scope 的会话；认证部署需另加 Authorization header。`metadata.json` 内容使用上例：
 
-版本冲突不自动改变冻结目标。调用方读取当前 Head 后，以新的 expected_head_revision、原文件和新幂等键创建新的文件导入尝试；可命中已有解析缓存，但旧 item/回执不可改写。页面展示当前版本差异后再确认。通用 Artifact 写接口不得绕过导入服务任意改写 ImportedContent 的 provenance、parts 或 lineage。
+```bash
+curl --request POST \
+  'http://127.0.0.1:8000/v1/scopes/project-docs/import-sessions/is_001/operations' \
+  --header 'Idempotency-Key: upload-manual-001' \
+  --form 'file=@manual.pdf;type=application/pdf' \
+  --form 'metadata=@metadata.json;type=application/json'
+```
+
+只有原始字节耐久保存、摘要校验、配额及队列/回执落库后返回 202 和 ImportOperation。上传中断不接受半文件；公开状态不包含 uploading，客户端自行展示上传进度。
+
+单文档 202 响应示例（Location 为 `/v1/scopes/project-docs/import-sessions/is_001/operations/io_001`）：
+
+```json
+{
+  "scope_id": "project-docs",
+  "session_id": "is_001",
+  "operation_id": "io_001",
+  "family": "importedcontent",
+  "status": "queued",
+  "phase": "parsing",
+  "discovery": {"status": "not_required", "retryable": false, "error": null},
+  "selection_version": 1,
+  "progress": {"discovered_items": 1, "selected_items": 1, "parsed_items": 0, "failed_items": 0, "committed_items": 0, "excluded_items": 0},
+  "available_actions": ["cancel"],
+  "created_at": "2026-10-19T08:05:00Z",
+  "expires_at": "2026-10-20T08:00:00Z",
+  "idempotency_expires_at": "2026-11-19T08:00:00Z",
+  "blocked_reason": null,
+  "retry_after_seconds": null,
+  "error": null
+}
+```
+
+### 8.7 操作查询、成员与预览
+
+ImportOperation（POST 接收快照、GET 及列表项使用同一字段定义）：
+
+| 字段 | 类型与含义 |
+| --- | --- |
+| scope_id、session_id、operation_id、family | 路径身份与固定 importedcontent |
+| status | queued / running / awaiting_selection / awaiting_commit / completed / failed / cancelled / expired；由服务端按第 6 节派生 |
+| phase | discovery / parsing / commit / done；失败保留失败阶段，成功为 done |
+| discovery | `{status,retryable,error}`；status 为 not_required/pending/running/completed/failed；error 可空，结构为 ErrorDetail |
+| selection_version | 非负整数；容器未冻结为 0，选择后为 1；单文档自动固定为 1 |
+| progress | discovered_items（发现未完成为 null）、selected_items（未选择为 null）、parsed_items、failed_items、committed_items、excluded_items；后四项为非负整数，parsed_items 指已冻结结果，包含已提交项，不得把各计数相加当总数 |
+| available_actions | 当前允许尝试的 select/retry/cancel 数组；仅提示，执行时重新校验 |
+| created_at、expires_at、idempotency_expires_at | RFC 3339 UTC；期限不因重试延长 |
+| blocked_reason、retry_after_seconds | 可空的 `{code,message}` 与非负整数；说明已接受任务的排队阻塞 |
+| error | 可空 ErrorDetail；任务级错误，不把单个成员失败伪装成 HTTP 查询失败 |
+
+内部 execution_state、task_slot_held、租约和 fencing generation 不直接成为公开状态。部分已提交通过 progress 表达；仍有活动工作时 status 为 queued/running，有待确认结果时为 awaiting_commit，仅剩失败成员时为 failed。取消或过期仍返回已提交数量，成员详情保留提交回执；整个操作不是跨文档事务。
+
+ImportItem（GET I；GET O/items 的列表项包含同样的有界元数据，不含正文或完整 content_manifest）：
+
+| 字段 | 类型与含义 |
+| --- | --- |
+| scope_id、session_id、operation_id、item_id | 完整父子身份 |
+| title、origin、container_chain、input_media_type | 识别后的标题、出处、成员链与 MIME；尚未识别的 MIME 为 null |
+| selectable、selection_suggested、selected | boolean；结构节点不可选，建议不等于已经选择 |
+| artifact_target、resolved_target | 选定意图与解析后的冻结目标；选择前可空 |
+| parse_status | pending / parsing / ready / needs_review / failed |
+| commit_status | uncommitted / committed |
+| retryable | boolean；仅表示当前解析错误是否可重试 |
+| parser | 可空；profile_id、profile_digest、router_version、options 及实际 backends/conversion 信息；已冻结时完整回显 |
+| statistics | page_count、sheet_count、slide_count、table_count、part_count、text_bytes；非负整数或 null，未知/不适用不能当 0 |
+| ocr | requested_mode、used（boolean/null）、processed_page_count（integer/null）、engine（string/null）、languages；未执行完的统计不冒充最终值 |
+| coverage | complete / partial / unknown；尚无结果为 null |
+| warnings、omissions | `{code,message,locator}` 数组；locator 可空。结构化问题参与语义摘要，展示消息不参与；禁止无界诊断堆积，无法有界表达时失败而非隐藏遗漏 |
+| input_digest、bundle_digest | SHA-256 或 null；未完成阶段不伪造摘要 |
+| reusable_artifact | 可空的标准 `{family,artifact_id,revision}`，Scope 来自顶层；候选缓存命中，不表示本次已保存，也不是 Candidate |
+| receipt | 可空 ImportCommitReceipt；只在本次成功确认后存在 |
+| available_actions、error | commit 动作提示数组、可空 ErrorDetail |
+
+`GET I/parts/{ordinal}` 按稳定 ordinal 逐段读，不返回所有正文。响应含 scope_id、session_id、operation_id、item_id、ordinal、text、media_type、text_bytes、text_digest、bundle_digest、locators。段最大 256 KiB，返回完整段，不静默截断；单文档最多 128 段。超限处理遵循第 4、5 节。ordinal 不存在返回 404，尚未解析完成返回 409；未提交预览过期为 410、取消为 409；已提交内容在操作映射保留期间从 Source 读取，此后使用标准 Artifact/Source 接口。
+
+定位使用 kind 判别对象，例如 `{kind:"pdf",page_number:3}`、`{kind:"spreadsheet",sheet_name:"预算",cell_range:"A1:D20"}`、`{kind:"slide",slide_number:5}`、`{kind:"text",line_start:10,line_end:25}`。页、幻灯片和行从 1 开始，行范围含两端；全文字符区间使用 Unicode code point 的 `[start,end)`。若有 PDF bbox，必须同时提供 page_width/page_height、unit=pt、origin=top_left，bbox=[left,top,right,bottom]，不能混用像素与点。无法可靠定位时明确说明，不猜坐标。
+
+### 8.8 容器选择、重试与取消
+
+`POST O/select` 请求：
+
+```json
+{
+  "expected_selection_version": 0,
+  "items": [
+    {"item_id": "ii_001", "artifact_target": {"mode": "create"}},
+    {"item_id": "ii_002", "artifact_target": {"mode": "update", "artifact_id": "ic_002", "expected_head_revision": 3}}
+  ]
+}
+```
+
+expected_selection_version 必填且只能为 0；items 必填、非空、去重、最多 1,000 项，每项 item_id 必填，artifact_target 默认 create。仅完整清单已发布且尚未冻结时接受，原子校验全部目标、禁止多个成员更新同一 Artifact，再冻结 selection_version=1 并排队。未知/其他操作成员返回 422 且不泄漏信息，已冻结后的不同选择返回 409。同键重放返回原始接收快照；单文档不需要也不允许重新 select。
+
+`POST O/retry` 使用以下两种互斥 JSON：
+
+```json
+{"stage": "discovery"}
+```
+
+```json
+{"stage": "documents", "item_ids": ["ii_002", "ii_003"]}
+```
+
+stage 必填。discovery 禁止 item_ids，仅允许发现失败且 retryable、完整清单未发布、原始暂存有效的操作。documents 的 item_ids 必填、非空、唯一、最多 1,000 项，必须全部是本操作已选、失败、可重试且尚未冻结的文档；一个不满足即整请求拒绝，不部分重试。不能重试 ready/needs_review/committed，不改变输入/profile/目标或期限。手动重试不重置每阶段最多三次的自动重试计数。只有重新准入配额、队列和幂等回执原子写入后返回 202；429/503 表示本次未接收，可用原 key 退避重试。已接收的后台资源等待通过 GET O 的 blocked_reason 表达。
+
+`POST O/cancel` 请求只能为 `{}`，原子封闭未提交写入并返回 200 ImportOperation。重复取消不重复执行，已完成返回 completed，已过期返回 expired tombstone，已发布 Artifact 不删除。select/retry 对 cancelled 返回 409，对 expired 返回 410。所有动作重新检查创建者、当前 Scope 权限和父子归属；管理员代操作遵循第 10 节。
+
+### 8.9 确认保存与并发
+
+`POST I/commit` 不再在 body 重复 operation_id/item_id。示例摘要仅演示格式，实际必须使用预览返回的值：
+
+```json
+{
+  "bundle_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "accept_partial": false
+}
+```
+
+bundle_digest 必填；accept_partial 为 boolean，默认 false。ready 只接受 false；needs_review 必须显式 true，否则 409 partial_extraction。目标、标题、origin、parser 和预期 Head 已冻结，commit 不接受修改。摘要不符为 409 bundle_conflict，目标 Head 不符为 409 revision_conflict；内容碰巧相同也不能跳过版本检查。已取消/未解析完成为 409，未提交结果已过期为 410。
+
+一个提交事务内写全部 Source、journal positions、dirty/pending、Revision/Head CAS/lineage、来源绑定、配额和耐久回执；事务后通知失败仍能恢复。已提交 item 在映射保留期内以相同接受参数再次提交返回原回执，即使 Head 已推进或操作后来到期；不同接受参数返回冲突。每次重放重新授权。
+
+发生版本冲突时读取当前 Head、展示差异，以新 expected_head_revision、原文件和新 key 创建操作；可以复用匹配的解析缓存，但不能修改旧冻结结果或覆盖当前版本。该冲突协议仅适用于导入动作，不改变通用 Artifact PUT 的 428/412 和 GET 的 ETag 规则。
+
+### 8.10 统一提交回执与标准引用
+
+文本保存和文件 commit 返回 ImportCommitReceipt；身份平铺，lineage 复用标准 SourceTypeReference/ArtifactReference，不新增 Source/Artifact union 或可写引用：
+
+```json
+{
+  "scope_id": "project-docs",
+  "family": "importedcontent",
+  "artifact_id": "ic_001",
+  "revision": 1,
+  "outcome": "created",
+  "source_kind": "content",
+  "accepted_partial": false,
+  "snapshot_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "sources": [{"source_type": "content", "source_id": "cs_001"}],
+  "artifacts": [],
+  "parts": [{"ordinal": 0, "source_type": "content", "source_id": "cs_001", "journal_position": 42}]
+}
+```
+
+| 字段 | 类型与含义 |
+| --- | --- |
+| scope_id、family、artifact_id、revision | 与标准 Artifact 身份相同；revision 是本次实际接受的精确版本 |
+| outcome | created：首次创建 Artifact，HTTP 201；updated：已有 Artifact 新 Revision，HTTP 200；reused：复用当前精确版本，HTTP 200 |
+| source_kind、accepted_partial | 固定 content、此次接受语义；相同成功请求重放保持原值 |
+| snapshot_digest | 冻结 bundle 与接受语义的摘要；不是 HTTP ETag，也不是标准 Artifact content_digest |
+| sources | 标准 `{source_type,source_id}` 有序直接 lineage；全部为 content |
+| artifacts | 标准 `{family,artifact_id,revision}` 直接 Artifact lineage；没有则 []；Scope 来自顶层 |
+| parts | `{ordinal,source_type,source_id,journal_position}` 有序数组，正文在 Source；与 sources 顺序及 manifest 一一对应；粘贴为一段 |
+
+示例 digest 只表示语法，不能用于提交真实文件。回执不返回全文；精确内容由 Location 指向标准 Revision 再读取 Source。已有 Source 接口仍使用 source_type，不改成 source_kind 或 name；标准 ArtifactRevision 外形与 content_digest 计算规则不变。
+
+### 8.11 分页、错误、幂等与恢复
+
+新增列表 query 使用 limit（默认 50，1–100）与 cursor（不透明字符串）；会话列表已由路径限定 Scope，操作列表可按 status 过滤，成员列表可按 selected/parse_status/commit_status 过滤。响应为 `{items:[],next_cursor:null}`，末页 next_cursor=null，不返回虚假 total。cursor 绑定调用者、完整父路径、过滤、limit、高水位及 TTL；每页重新授权。高水位限制新增记录，不冻结可变状态，因此过滤结果不承诺状态快照。非法/不匹配 cursor 为 400，过期为 410。标准 Artifact 列表沿用现有结构，仅为 importedcontent 增加 namespace 精确过滤。
+
+错误使用现有 envelope：
+
+```json
+{
+  "error": {
+    "code": "revision_conflict",
+    "message": "资料版本已变化，请查看当前版本后重新发起导入。",
+    "details": {"artifact_id": "ic_001", "expected_head_revision": 2, "actual_head_revision": 3}
+  }
+}
+```
+
+| HTTP 状态 | 场景 |
+| --- | --- |
+| 400 | Path/query/header 格式错误、缺失 Idempotency-Key、非法/不匹配 cursor |
+| 401 / 403 / 404 | 认证、权限、可见性或不存在；遵循现有策略，不能泄漏跨 Scope 资源 |
+| 409 | 状态、版本、冻结摘要、选择、来源绑定、profile 或幂等冲突 |
+| 410 | 会话/操作的未提交工作过期，或 cursor 过期 |
+| 413 | 接收阶段可确定的请求/文件大小超限 |
+| 415 | 接收阶段已识别的不支持格式 |
+| 422 | JSON 结构、未知 body 字段、非法参数组合或 Family 能力不支持 |
+| 429 | 准入配额或并发限制，携带 Retry-After |
+| 503 | 准入时所需解析能力暂不可用，携带 Retry-After |
+
+202 之后发生的格式、提取、超限或解析错误写入 operation/item.error；成功查询仍为 200，不伪装成 HTTP 500。ErrorDetail 复用 `{code,message,details}`，details 无内容时为 null，不包含凭据或私有 blob 地址。412/428 保留给既有条件请求，本期导入 commit 不借用它们。
+
+导入的 Idempotency-Key 是此领域新增的耐久协议，不声称既有 Source/Artifact Create 已幂等。第 7 节定义键空间；补齐默认值后规范化请求，文件按实际字节摘要及 metadata 比较，不按 multipart boundary 比较。同 key 同请求返回原状态码和接收/提交回执，不同请求返回 409。相同 raw 请求重放沿用首次冻结默认值，不受部署 profile 更新影响。未接收的 429/503 不写成功回执；已提交重放即使 Head 改变也返回原版本，不产生新 Revision。期限、tombstone 与 GC 见第 6、7 节。
+
+### 8.12 客户端、页面与调用顺序
+
+Python client 公开与表格一致的 operationId，并将 scope_id 显式传递到所有路由。CLI 提供 text、files、resume、cancel、dry-run；新导入必须先提供已有 --scope。恢复 --session 时从调用方保存的会话回执读取 Scope 或显式提供 --scope，二者存在时必须相同；没有本地目标信息必须要求 --scope，不增加绕过 Scope 的服务器查询。页面当前 Scope 内恢复会话，切换 Scope 不迁移旧任务。
+
+CLI 的 --artifact-id 与 --expected-head-revision 明确更新，解析参数映射到 parser.options；容器先展示完整清单再 select，无人值守必须显式配置选择规则。--accept-complete 仅自动提交 ready，partial 还需单独明确授权，包括缓存命中的 partial。dry-run 只验证本地事实，未运行解析器不能宣称文件可完整导入。收到 429/503 按 Retry-After 退避，不显示为已接收。
+
+页面提交按钮发送冻结 bundle_digest 与原 Idempotency-Key；刷新/重新登录只恢复查询，不自动确认。结果不明时读取状态/receipt 或同键重放。上传进度由客户端计量；解析器未报告页进度时显示处理中；保存不公开半提交状态。
+
+| 场景 | 调用顺序 |
+| --- | --- |
+| 粘贴 Markdown | GET P/import-capabilities → POST P/import-sessions `{}` → POST S/texts → 标准 Revision/Source 阅读 |
+| 扫描 PDF | 创建会话 → POST S/operations（parser.options.ocr_mode=auto）→ GET O/I/parts → POST I/commit → 精确 Revision |
+| ZIP/邮箱 | 上传 → GET O 等完整发现 → GET O/items → POST O/select → 逐文档预览与 commit；各文档独立事务 |
+| 更新已有资料 | artifact_target 指定 artifact_id/expected_head_revision → 解析预览 → commit → updated 200；旧 Head 在成功前始终可读 |
+| HTML 文件 | 同文件流程，服务端识别 text/html；origin 中的网页说明不触发抓取 |
+| 未来网页 Connector | 经独立验收的授权适配器提交冻结快照；本期没有 URL 导入接口 |
 
 ### 已发布正文、历史与比较
 
@@ -716,14 +1045,6 @@ Python client 暴露对应操作；CLI 提供 text、files、resume、cancel 和
 本期不提供 ImportedContent 正文搜索，既有 `/v1/scopes/{scope_id}/artifacts/{family}/search` 对此 Family 返回统一的不支持结果；列表的 namespace 精确过滤仅查询元数据。后续若增加关键词或语义检索，应在现有 ArtifactSearchService 注册符合契约的 `ArtifactSearcher`，补齐 Scope 权限、版本选择和索引更新规则，不另建重叠搜索 API，也不因导入成功就承诺向量索引已就绪。
 
 若使用既有稳定 Artifact handle，只能绑定某个精确不可变 Revision；它不代表随 Head 更新的外部文档身份，不替代第 3 节的稳定来源绑定。
-
-### 使用举例
-
-1. 粘贴一段 Markdown：先选择已有 Scope，以 {"scope_id":"项目 Scope ID"} 创建会话后调用 importedcontent/texts，source_kind=content。成功返回精确 artifact_ref；页面通过标准 Artifact get 与 Source parts 阅读，操作失败不留下半份制品。
-2. 上传 PDF：调用 importedcontent/prepare，source_kind=content；返回 operation_id 后查询解析状态及分页预览。确认时提交 operation_id、item_id、bundle_digest 和 accept_partial；成功后读取 family=importedcontent 的 Revision。PDF 页数和 OCR 只属于提取元数据，不产生新 Family。
-3. 更新已有资料：prepare/texts 中 artifact_target 显式填写 artifact_id 与 expected_head_revision。解析期间仍可读取原 Head；确认成功才产生新 Revision。失败或取消不创建失败版本，也不改治理状态。
-4. 上传 HTML：source_kind=content，input_media_type=text/html。即使 origin 中附有来源网页说明，也不会触发网络读取；来源说明不改变 content Source 类型。
-5. 将来接入网页：经独立 Connector 验收后，由获准适配器提供冻结页面快照，归一后的文本仍使用 source_kind=content，复用同一 ImportedContent 提交服务与 Artifact 阅读契约。本期未提供链接采集接口，页面不展示可用的链接导入入口；仅填写 source_kind=content 不会启用网络抓取。
 
 ## 9. OpenDAL 持续采集
 
@@ -759,7 +1080,7 @@ OCR 默认采用本地引擎和已安装语言包。云 OCR 或视觉模型需�
 
 ## 11. 错误与可观测性
 
-保留既有 error envelope，并区分 unsupported_format、parser_unavailable、capability_insufficient、encoding_required、invalid_encoding、encrypted_document、damaged_document、ocr_required、no_extractable_text、parse_timeout、input_limit_exceeded、output_limit_exceeded、archive_limit_exceeded、partial_extraction、idempotency_conflict、revision_conflict、source_binding_conflict、session_expired、bundle_conflict、selection_conflict、operation_cancelled、operation_expired 与 quota_exceeded。
+保留既有 error envelope，并区分 unsupported_format、parser_unavailable、capability_insufficient、encoding_required、invalid_encoding、encrypted_document、damaged_document、ocr_required、no_extractable_text、parse_timeout、input_limit_exceeded、output_limit_exceeded、archive_limit_exceeded、partial_extraction、profile_conflict、idempotency_conflict、revision_conflict、source_binding_conflict、session_expired、bundle_conflict、selection_conflict、operation_cancelled、operation_expired 与 quota_exceeded。
 
 HTTP 401/403/404 沿用可见性策略；非法字段 422、单请求硬上限 413、不支持媒体类型 415、幂等/状态冲突及已取消操作 409、过期的未提交内容操作 410、限流 429、依赖不可用 503。202 后发生的解析失败记录在 operation 中，通过 200 状态查询返回 failed 与错误明细，不能伪造先前上传请求的 HTTP 错误。网络超时始终可能意味着结果未知，同键核实。
 
@@ -771,7 +1092,7 @@ HTTP 401/403/404 沿用可见性策略；非法字段 422、单请求硬上限 4
 
 ### 实施边界
 
-交付采用第 1 节固定的解析族与分支，不再将“确定每种格式使用何种解析器”留给运行环境选择。交付按职责推进，但 A、B 格式范围都是正式目标：先实现文本保存与统一 manifest，再实现 Family prepare/confirm、内部耐久操作账本和标准解析包，再完成 OCR/长尾适配及 OpenDAL。不能仅完成 A 就宣称整个多格式 RFC 已实现。
+交付采用第 1 节固定的解析族与分支，不再将“确定每种格式使用何种解析器”留给运行环境选择。交付按职责推进，但 A、B 格式范围都是正式目标：先实现文本保存与统一 manifest，再实现 Family 文件操作创建/commit、内部耐久操作账本和标准解析包，再完成 OCR/长尾适配及 OpenDAL。不能仅完成 A 就宣称整个多格式 RFC 已实现。
 
 注册 importedcontent Family、补充操作账本及查询索引，不改变既有 Source/Artifact 引用。历史 Source 不自动包装为 ImportedContent Revision。更新 family allowlist、精确读取、历史、lineage 及 Dashboard 阅读器；不得把 ImportedContent 自动纳入模型生成或 Candidate 流程。旧 OpenDAL binding 不原地换新模式；显式重新导入可生成新的 content Source，不能声称保留旧类型身份。Core Python 支持范围保持不变，较重解析依赖由独立 worker runtime 承担。
 
@@ -793,6 +1114,8 @@ HTTP 401/403/404 沿用可见性策略；非法字段 422、单请求硬上限 4
 迁移交付必须包含三种后端的空库、已有数据升级、重复执行和中断恢复验收；检查既有 Source/Artifact 与精确引用不变。迁移脚本、manifest、索引及初始化路径必须随功能一同落地，禁止仅在开发 SQLite 自动建表后宣称支持生产后端。
 
 ### 契约与验收
+
+HTTP 验收须覆盖 Scope 路径与父子归属、body 重复身份拒绝、标准 source_type 引用和平铺 Artifact 回执、created=201/updated或reused=200、400/409/410/422 分工、幂等 202 原回执重放、GET 200 的异步失败、parse_status/commit_status 映射，以及通用 Artifact 的 ETag/304/412/428 行为未被导入命令改变。中英文操作清单、参数默认值、请求示例与 OpenAPI 必须一致；长图只作单独说明材料，不嵌入 RFC。
 
 实现以 `openapi/powercontext.yaml` 为契约源，执行 `make api-generate`、`make contract-test`，不手改生成代码；运行 `make check`、相关 Source/Server/Access/Dashboard/Connector 测试及 `make docs-test`。影响 Python 支持范围时运行 `tox`，跨组件验收放入 `tests/e2e/`。本 RFC 被接受不表示验收已通过。
 
@@ -851,7 +1174,7 @@ HTTP 401/403/404 沿用可见性策略；非法字段 422、单请求硬上限 4
 | OpenDAL 命中已保存 partial 或恢复 partial 回执 | complete-only 拒绝自动完成，checkpoint 不推进，不因存在 ImportedContent Revision 绕过覆盖检查 |
 | 相同输入以新键上传，旧任务 expired/cancelled/failed/completed | 不合并到旧任务；新 operation 独立创建，持久记录按 coverage 规则复用；同旧键重放仍返回旧结果 |
 | 成员发现阶段临时失败且自动重试耗尽 | 无 item_ids 也可 stage=discovery 重试；完整清单原子发布，已冻结清单及成员 ID 不变 |
-| 已释放任务槽的 failed 或 partially_committed 重试 | 配额满时 429/503，状态和计数不变；额度恢复后同键准入只占一槽，不重复入队 |
+| 已释放任务槽的 failed（可含部分已提交）重试 | 配额满时 429/503，状态和计数不变；额度恢复后同键准入只占一槽，不重复入队 |
 | partial 候选等待确认、容器仅剩失败成员、单文档失败 | 待确认持续占槽；无活动工作的失败可释放任务槽；其他成员的活动槽与暂存计量不受错误释放 |
 | 写入中任一分段/记录/pending 故障 | 整份文档回滚，恢复后不重复 Source |
 | 容器部分成员失败、用户确认 partial | 逐文档结果真实，遗漏长期保留，不冒充完整导入 |
@@ -882,7 +1205,7 @@ HTTP 401/403/404 沿用可见性策略；非法字段 422、单请求硬上限 4
 
 **隔离文件解析，复用 ContentSource。** 解析依赖和文件处理风险不进入 Core 请求进程；归一后的文本继续使用已有 Source、Scope、lineage 和 Artifact 处理，无需按每个后缀新增 Source family。
 
-**文件异步解析、单份资料同步提交。** OCR 与大文件无法保证在普通 HTTP 超时内完成；Family prepare 返回操作句柄，内部耐久执行记录承担恢复责任。冻结结果后单文档事务可以可靠确认，避免边解析边公开部分 Source。
+**文件异步解析、单份资料同步提交。** OCR 与大文件无法保证在普通 HTTP 超时内完成；创建文件操作返回操作句柄，内部耐久执行记录承担恢复责任。冻结结果后单文档事务可以可靠确认，避免边解析边公开部分 Source。
 
 **分段保存而非截断或强迫用户手工拆文件。** 自然边界和定位保留可用性，精确拼接和全量摘要保护完整性。原子保存保证一份文档不出现仅前几页已消费的半提交状态，但不强制所有 Artifact 在同一轮消费整份文档。
 

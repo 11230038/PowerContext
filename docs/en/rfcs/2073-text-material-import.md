@@ -114,7 +114,7 @@ flowchart TD
     A["Select an existing Scope"] --> P["Check scope.read + scope.contribute; create ImportSession with fixed scope_id"]
     P --> B{"Input"}
     B -->|Paste text| C["Validate and normalize"]
-    B -->|Upload file| D["Family prepare: durable staging and isolated parsing"]
+    B -->|Upload file| D["File-operation creation: durable staging and isolated parsing"]
     D --> E["Preview body, parts, OCR, and omissions"]
     E -->|No usable body| X["Fail; publish nothing"]
     E -->|Confirm complete or explicitly accept partial| F["Confirm frozen bundle_digest"]
@@ -192,7 +192,7 @@ operations resume after browser closure; incomplete uploads require reselecting 
 
 ## 1. Architecture
 
-The user-flow diagram separates input, parsing, and persistence. ImportedContent prepare creates a frozen
+The user-flow diagram separates input, parsing, and persistence. ImportedContent file-operation creation produces a frozen
 ImportedContentBundle through an internal ledger and isolated workers. Only user confirmation or a worker's explicit
 acceptance policy invokes ContentImportApplication's per-document atomic commit. Existing Artifact processing retains
 its configuration and progress semantics.
@@ -445,7 +445,7 @@ parser health.
 | --- | --- |
 | `GET /v1/server-info` | Deployment identity and compatibility. Add `content.import: {major: 1, minor: 0}` to OpenAPI `x-powercontext-feature-contracts`; protocol support is not enablement |
 | `GET /v1/capabilities` | Add optional `content_import` with `enabled`, `readiness` (ready/degraded/unavailable), and `capabilities_endpoint`. Absence cannot imply support. Runtime summary does not replace format health or Scope authorization |
-| `GET /v1/import-capabilities?scope_id=...` | Actual formats, profiles, limits, and caller permissions for an existing Scope; drives UI availability |
+| `GET /v1/scopes/{scope_id}/import-capabilities` | Actual formats, profiles, limits, and caller permissions for an existing Scope; drives UI availability |
 
 `content.import` and `content_import` are new contracts requiring OpenAPI, generated code, Server assembly, and client
 compatibility tests. The existing global endpoints retain `server.observe`. Ordinary callers with only Scope permissions
@@ -456,12 +456,12 @@ Import-service configuration owns API enablement; the Dashboard switch controls 
 means all enabled, declared-available profiles passed health checks; partial failure is degraded while healthy profiles
 remain usable; disabled/no usable profiles is unavailable. Planned profiles do not degrade enabled capabilities.
 Disabling imports or losing parser availability does not block published Artifact/Source reads. Discovery is a current
-snapshot: prepare, retry, and confirm recheck applicable permission, runtime state, and frozen-result validity. An
+snapshot: operation creation, retry, and commit recheck applicable permission, runtime state, and frozen-result validity. An
 unrelated parser outage cannot cause confirmation to reparse or discard frozen text.
 
 ### Format and profile identification
 
-The new `GET /v1/import-capabilities` endpoint requires an existing `scope_id` and `scope.read`; missing/malformed IDs return 422.
+The new `GET /v1/scopes/{scope_id}/import-capabilities` endpoint requires an existing `scope_id` and `scope.read`; malformed path IDs return 400; absent/invisible Scopes follow 404/403 policy.
 It reports `scope.contribute`, but starting import requires both permissions. Return fixed `source_kind=content`,
 extensions, canonical MIME, capability level, available/unavailable/planned status, parser profiles, extraction scope,
 OCR/conversion dependencies, and actual limits. Registration plus startup self-checks establish status; an API-mounted
@@ -508,7 +508,7 @@ flowchart TD
 | Object | Responsibility and persistence |
 | --- | --- |
 | ImportSession | Creator Principal, immutable nonempty existing scope_id, expiry; recovery/isolation/concurrency for that destination; no new authorization |
-| Internal operation / item_id | prepare returns operation_id; staging, discovery, leases, quotas, parsing, confirmation. item_id is stable only within its operation, not permanent identity or an Artifact |
+| Internal operation / item_id | file-operation creation returns operation_id; staging, discovery, leases, quotas, parsing, confirmation. item_id is stable only within its operation, not permanent identity or an Artifact |
 | ImportedContentBundle | Frozen body, semantic manifest, coverage, digest; confirmation uses it without recalculating preview |
 | ImportedContent Artifact | Stable `(scope_id, family=importedcontent, artifact_id)`, allocated for manual creation or a first stable source |
 | ImportedContent Revision | Exact `(scope_id, family, artifact_id, revision)` with structured metadata and ordered Source mapping |
@@ -528,7 +528,7 @@ says its body uses ContentSource, not whether it was pasted, uploaded, or acquir
 | `origin` | namespace, key, optional display_name; provenance, not authorization |
 | `parser` | Actual parser, configuration, version, OCR, conversion chain |
 
-Revisions, frozen bundles, and read responses require `source_kind: "content"`. texts/prepare may omit it; the Server
+Revisions, frozen bundles, and read responses require `source_kind: "content"`. texts requests and upload metadata may omit it; the Server
 supplies it before fingerprints, frozen digests, and cache keys. Explicit other values return 422. Thus omitted/explicit
 content are semantically identical given equal other fields. OpenAPI uses a single-value constraint and Python
 `Literal["content"]`, not caller-selectable types.
@@ -619,7 +619,7 @@ family schemas, Server capabilities, and Dashboard mappings:
 | Capability | This release |
 | --- | --- |
 | list/get, exact Revision, history, comparison | Supported under Scope `scope.read` |
-| texts/prepare/confirm | Supported with scope.read + scope.contribute, creator isolation, transactional validation |
+| texts/operations/commit | Supported with scope.read + scope.contribute, creator isolation, transactional validation |
 | Generic Artifact POST/PUT | Unsupported; cannot bypass confirmation with forged parts/lineage/success |
 | Generic restore/rollback, merge/undo_merge | Unsupported; no adapter/allowlist entry; HTTP and Runtime reject, UI hides actions |
 | Model generation, Dream/Candidate publication | Unsupported; no ImportedContent generation/candidate processor |
@@ -760,8 +760,8 @@ state:
 | --- | --- |
 | uploading/queued/running, including resource waits | Held |
 | idle after discovery awaiting selection, or selected uncommitted ready/needs_review documents | Held |
-| partially_committed with queued/parsing/selection/confirmation work | Held |
-| failed, or partially_committed with only failures and no scheduled automatic retry | Released; explicit retry needs readmission |
+| Partial commits with queued/parsing/selection/confirmation work | Held |
+| failed, including partial commits with only failures and no scheduled automatic retry | Released; explicit retry needs readmission |
 | completed/cancelled/expired | Released |
 
 Scheduled automatic retries remain queued and hold a slot; exhausted retries enter failed and release it. Slot release
@@ -784,7 +784,7 @@ instead of hot-loop reuploads.
 
 ## 6. Internal execution, private previews, and durable staging
 
-Family prepare accepts complex files and returns recoverable operation_id, backed by Section 3's ledger and isolated
+Family operation creation accepts complex files and returns recoverable operation_id, backed by Section 3's ledger and isolated
 workers. Revisions represent accepted snapshots only. “Task” below means internal operation execution, not FileImportJob
 or another Artifact type.
 
@@ -797,8 +797,8 @@ Store execution, parse, and commit states separately. ready is not publication o
 | Level | Field/values |
 | --- | --- |
 | Task execution | execution_state: uploading / queued / running / idle / failed / cancelled / expired; idle means no current parse work |
-| Phase | phase: upload / discovery / selection / parsing / confirmation / done; discovery_state: not_required / pending / running / complete / failed |
-| Selection | selected; container membership frozen through selection API after discovery |
+| Internal phase | internal_phase: upload / discovery / selection / parsing / confirmation / done; discovery_state: not_required / pending / running / complete / failed |
+| Selection | selected; container membership frozen through select API after discovery |
 | Document parsing | parse_state: pending / parsing / ready / needs_review / failed; ready/needs_review refer to immutable bundles |
 | Document persistence | commit_state: uncommitted / committed; no exposed half-commit state |
 
@@ -827,16 +827,11 @@ flowchart LR
     B -->|Confirm digest and accept partial| C
 ```
 
-Derive aggregate_status and counts in priority order: cancelled/expired; uploading while receiving; queued/parsing with
-pending/running work; partially_committed when some documents committed, not all complete, and no active work; completed
-when nonempty selection is all committed; awaiting_confirmation for uncommitted ready/needs_review or unselected
-discovered members; failed for task-level failure or only unparseable members. Unselected members count as excluded, not
-required commits. Cancellation/expiry still return committed counts and exact Revisions, preserving partial success
-visibility.
+These are internal durable states, not HTTP fields. Derive public ImportOperation.status in priority order: preserve completed/cancelled terminal results; expire unfinished work; running work yields running, otherwise queued work yields queued; complete discovery without selection yields awaiting_selection; nonempty all-committed selection yields completed; uncommitted ready/needs_review yields awaiting_commit; task-level failure or only remaining failed members yields failed. Scheduled automatic retries remain queued. Partial success uses progress counts, not a separate partially_committed status. Public phase is discovery/parsing/commit/done: discovery and selection waits map to discovery, body extraction to parsing, confirmation waits to commit, and all-success to done; failure/cancellation/expiry retain their last phase. Internal discovery_state=complete maps to discovery.status=completed; parse_state/commit_state map to parse_status/commit_status. Pre-202 uploading is not a publicly recoverable accepted operation. Unselected members count as excluded_items; cancellation/expiry retain committed counts and receipts.
 
 Single-document input automatically fixes selected=true. Archives/mailboxes/attachments require bounded complete
 discovery, stable item_ids, container_chain, types, and default suggestions. Attachments default unselected; ordinary
-archive members default selected. Pause after discovery; selection API freezes one explicit set before body parsing.
+archive members default selected. Pause after discovery; select API freezes one explicit set before body parsing.
 Overflow/incomplete discovery is a discovery error, not a complete list. Structural container nodes are not selectable;
 omitted attachments are excluded. Changed selection/options require a new attempt. Persistent item mapping preserves IDs
 through automatic retries. Publish complete manifest and discovery_state=complete atomically; intermediate lists cannot
@@ -876,11 +871,11 @@ promise.
 
 ### Sessions and Scope
 
-Require an existing scope_id and current scope.read + scope.contribute at session creation. Persist creator and
+Require an existing scope_id in the path, an empty object body, and current scope.read + scope.contribute at session creation. Persist creator and
 immutable nonempty target; no deferred resolution or Scope-creation parameters. Creating a session creates no
 Scope/Artifact/Source or permission grant.
 
-Session, operation, item, quota, and eventual Artifact/Sources share that Scope. Child routes derive it from session_id;
+Session, operation, item, quota, and eventual Artifact/Sources share that Scope. Child routes validate that path scope_id matches the session destination;
 bodies cannot override scope_id. Cross-Scope artifact_id, SourceRef, or bindings cannot target the session. Changing
 Scope requires a new session and inputs; existing operations stay put.
 
@@ -946,7 +941,7 @@ Revision. A historical version is not current automatically; manual create remai
 hidden.
 
 Complete cache output still needs this interactive attempt's confirmation; only explicitly configured accept-complete
-workers auto-confirm. Partial cache yields needs_review/uncommitted with candidate_ref, coverage, omissions and no
+workers auto-confirm. Partial cache yields needs_review/uncommitted with reusable_artifact, coverage, omissions and no
 completed count. Require this attempt's explicit accept_partial=true, never inherit another Principal's or earlier
 attempt's decision. Same successful commit-key replay preserves its original decision.
 
@@ -981,143 +976,402 @@ one generation.
 
 ## 8. HTTP, client, and page contracts
 
-Published materials reuse standard Artifact APIs with family=importedcontent. Extend registration/schemas for these
-existing operations instead of a separate material resource:
+### 8.1 Conventions, identities, and operations
 
-| Existing operationId | Method/path | Behavior |
+Follow [RFC 1437](1437_source_artifact_rest_api.md) for Scope resource identity, naming, errors, pagination, and standard Artifact reads. Collections use lowercase plural nouns, static multiword segments use kebab-case, JSON/query/operationId use snake_case, and URIs have no trailing slash. `select`, `commit`, `retry`, and `cancel` are explicit POST domain actions, not arbitrary state PATCH/PUT. Validate the entire Scope/session/operation/item ownership chain; never look up only the last ID. Do not accept path identities again in request bodies.
+
+These are proposed contracts to implement in `openapi/powercontext.yaml`, the single HTTP contract source. Generate Python/JavaScript clients and run contract-test; do not hand-edit generated code. Family is fixed to `importedcontent`; sessions require an existing Scope and cannot create one. API resources do not introduce a separate FileImportJob or ImportedContent master table.
+
+The following abbreviations are documentation-only; clients send expanded paths, not literal P/S/O/I:
+
+```text
+P = /v1/scopes/{scope_id}
+S = P/import-sessions/{session_id}
+O = S/operations/{operation_id}
+I = O/items/{item_id}
+```
+
+| operationId | Method and path | Success and meaning |
 | --- | --- | --- |
-| `list_artifacts` | `GET /v1/scopes/{scope_id}/artifacts/importedcontent` | Visible current Heads; exact namespace filter |
-| `get_artifact` | `GET /v1/scopes/{scope_id}/artifacts/importedcontent/{artifact_id}` | Current accepted snapshot and ordered parts |
-| `list_artifact_revisions` | `GET /v1/scopes/{scope_id}/artifacts/importedcontent/{artifact_id}/revisions` | Accepted history |
-| `get_artifact_revision` | `GET /v1/scopes/{scope_id}/artifacts/importedcontent/{artifact_id}/revisions/{revision}` | Exact immutable snapshot; receipt Location points here |
+| `get_import_capabilities` | `GET P/import-capabilities` | 200; caller-visible formats, profiles, permissions, effective limits |
+| `create_import_session` | `POST P/import-sessions` | 201; fixed Scope and creator |
+| `list_import_sessions` | `GET P/import-sessions` | 200; creator's recovery list within this Scope |
+| `get_import_session` | `GET S` | 200; session/deadlines, no bodies |
+| `import_content_text` | `POST S/texts` | 201 for new Artifact; 200 for update/reuse; request itself confirms |
+| `create_import_operation` | `POST S/operations` | 202; one file durably accepted/queued, no published Artifact |
+| `list_import_operations` | `GET S/operations` | 200; recovery operations, not a material catalog |
+| `get_import_operation` | `GET O` | 200; status, phase, counts, deadlines, actions |
+| `list_import_items` | `GET O/items` | 200; members; single documents also have one item |
+| `get_import_item` | `GET I` | 200; frozen target, extraction, coverage, diagnostics |
+| `get_import_part` | `GET I/parts/{ordinal}` | 200; bounded preview, reading Source after commit |
+| `select_import_items` | `POST O/select` | 202; atomically freeze container selection and enqueue |
+| `commit_import_item` | `POST I/commit` | 201 for new Artifact; 200 for update/reuse; atomic per document |
+| `retry_import_operation` | `POST O/retry` | 202; retry discovery or specified failed documents after readmission |
+| `cancel_import_operation` | `POST O/cancel` | 200; cancel uncommitted work or return completed result |
 
-Imports are Family-specific writes. Select an existing Scope before creating a session; prepare/confirm derive its fixed
-target from session_id. Session routes recover a batch, not a new permanent file-import business resource. All
-operations below are proposed, not existing recovery APIs:
+Published materials reuse existing operations, extending Family registration, schemas, and read projections rather than creating a second detail resource:
 
-| operationId | Method/path | Meaning |
+| operationId | Method and path | Behavior |
 | --- | --- | --- |
-| `get_import_capabilities` | `GET /v1/import-capabilities?scope_id=...` | Required existing Scope; content Source type, formats, permissions, limits |
-| `create_import_session` | `POST /v1/import-sessions` | Existing scope_id required; validate contribution and fix destination/creator |
-| `list_import_sessions` | `GET /v1/import-sessions` | Creator's recoverable sessions, paginated |
-| `get_import_session` | `GET /v1/import-sessions/{session_id}` | Fixed scope_id, expiry, receipt summaries |
-| `import_content_text` | `POST /v1/import-sessions/{session_id}/importedcontent/texts` | content; synchronously validate/confirm bounded body, 201/200 |
-| `prepare_imported_content` | `POST /v1/import-sessions/{session_id}/importedcontent/prepare` | content; metadata + one file; 202 and operation_id after durable acceptance |
-| `list_import_operations` | `GET /v1/import-sessions/{session_id}/operations` | Creator's recovery list, not material catalog |
-| `get_import_operation` | `GET /v1/import-sessions/{session_id}/operations/{operation_id}` | Execution/errors/deadlines/counts/available actions |
-| `list_import_operation_items` | `GET /v1/import-sessions/{session_id}/operations/{operation_id}/items` | Bounded manifest; single files also have one item |
-| `get_import_operation_item` | `GET /v1/import-sessions/{session_id}/operations/{operation_id}/items/{item_id}` | Manifest, coverage, warnings, omissions, frozen target |
-| `get_import_operation_part` | `GET /v1/import-sessions/{session_id}/operations/{operation_id}/items/{item_id}/parts/{ordinal}` | Creator's bounded preview; committed body from Source |
-| `confirm_imported_content` | `POST /v1/import-sessions/{session_id}/importedcontent/confirm` | operation_id + item_id + bundle_digest + accept_partial; atomic save, 201/200 |
-| `select_imported_content` | `POST /v1/import-sessions/{session_id}/importedcontent/selection` | operation_id, members and individual targets; 202 after frozen selection |
-| `retry_import_operation` | `POST /v1/import-sessions/{session_id}/operations/{operation_id}/retry` | Controlled Family retry; 202 after readmission |
-| `cancel_import_operation` | `POST /v1/import-sessions/{session_id}/operations/{operation_id}/cancel` | Fence uncommitted writes; atomic cancellation/completed result, 200 |
+| `list_artifacts` | `GET P/artifacts/importedcontent` | Visible Heads; exact namespace filter, not body search |
+| `get_artifact` | `GET P/artifacts/importedcontent/{artifact_id}` | Standard ArtifactRevision, parts, Head ETag; retain If-None-Match/304 |
+| `list_artifact_revisions` | `GET P/artifacts/importedcontent/{artifact_id}/revisions` | Accepted revision history |
+| `get_artifact_revision` | `GET P/artifacts/importedcontent/{artifact_id}/revisions/{revision}` | Exact immutable revision; no ETag per existing contract |
 
-prepare's 202 returns `{operation_id, session_id, family: "importedcontent", expires_at, status_url}`. Location points
-to status, not a nonexistent Artifact. texts is itself confirmation and returns the same saved receipt as confirm
-without a separate parsing operation. Operations/items have no generic PUT/PATCH state mutation. Confirm/selection
-verify operation, session, creator, and Family; cross-session/invisible handles follow existing 404/403 policy. Generic
-Artifact POST/PUT for importedcontent returns 422 from Family capability validation, without falling back to command
-Sources.
+Generic Artifact POST/PUT reject direct importedcontent writes with 422 unsupported: they cannot bypass parts/lineage/acceptance validation. Other Families retain generic Replace If-Match behavior: 428 if missing, 412 if mismatched. Import commit is a domain command using frozen expected_head_revision and 409 for conflicts; do not treat an Artifact ETag as an operation/item HTTP validator.
 
-Session creation accepts `{"scope_id":"existing Scope ID"}`. Require nonempty valid ID; missing, empty, unknown fields,
-or Scope-creation parameters return 422. Missing/invisible/unauthorized targets follow existing 404/403 visibility
-policy without accepting files or creating sessions. Return session_id, fixed nonempty scope_id, expires_at. Every write
-requires Idempotency-Key; no target-mutation API.
+### 8.2 Common fields, headers, and validation
 
-Targets are `{"mode":"create"}` or `{"mode":"update","artifact_id":"...","expected_head_revision":2}`. Manual defaults
-to create, never infers identity from origin. Updates must target this Scope and Family; cross-Scope targets follow
-visibility rules. Authorized registered Connector Principals may instead use the mutually exclusive
-`{"mode":"source","source_authority_id":"...","source_key":"..."}`. Resolve bindings and freeze target/expected Head or
-absence at acceptance; return the resolved target. origin cannot impersonate authority. Each container member has its
-own target; multiple members cannot update the same artifact_id.
+| Item | Format and constraints |
+| --- | --- |
+| scope_id | Existing Scope contract: 1–256 characters including a non-whitespace character; encode as one URL segment |
+| session_id, operation_id, item_id | Server-generated opaque strings, 1–128 visible ASCII characters; no prefix parsing or UUID assumption |
+| artifact_id | Existing 1–128 visible ASCII characters; must belong to the path Scope and importedcontent Family |
+| revision / expected_head_revision | Integer, minimum 1 |
+| ordinal | Zero-based integer; the nth part has ordinal n-1 |
+| Times | RFC 3339 UTC, e.g. `2026-10-19T08:00:00Z` |
+| Digests | `^sha256:[0-9a-f]{64}$`; input, bundle, snapshot, and text digests have separate meanings |
+| Sizes / durations | Integer bytes use `_bytes`; integer seconds use `_seconds` |
+| Missing / null | Defaults apply only to omitted request fields; reject null unless explicitly nullable. Unknown response counts are null; zero means verified absence |
+| source_kind | Optional request field defaulted to content before fingerprinting; only content accepted; always persisted/returned |
 
-A paste request stays simple:
+When authentication is enabled, send `Authorization: Bearer <token>`. Every import write requires Idempotency-Key (1–128 ASCII letters/digits or `-_.`); missing/malformed headers return 400. All success/error responses include X-PowerContext-Request-ID. JSON is UTF-8, with no extra code/message/data success envelope. Unknown body fields return 422; unknown queries and invalid path/header/cursor values return 400. Duplicate/extra multipart parts return 422. Reject NUL, invalid Unicode, and C0 controls other than TAB/CR/LF in nonblank text.
+
+Location targets S for session creation, O for operation creation, and the exact Artifact Revision for text/commit success. Import receipts are not generic Head representations and do not fabricate their ETag. Admission 429/503 includes Retry-After in seconds. Upload/action 202 returns an acceptance-time ImportOperation snapshot; replay preserves it rather than substituting current state, which is available through GET O.
+
+### 8.3 Deployment capabilities and sessions
+
+`GET P/import-capabilities` requires scope.read, not server.observe; invisible/missing Scopes follow existing 403/404 policy.
+
+| Response field | Type and meaning |
+| --- | --- |
+| scope_id, family, source_kind | Path Scope, importedcontent, content |
+| contract_version | `{major:1,minor:0}`, matching the content.import feature contract, not runtime availability |
+| enabled, can_import | Booleans for deployment enablement and current caller write permissions, not future authorization grants |
+| readiness | ready / degraded / unavailable, as defined in Section 2 |
+| limits | Effective max_text_bytes, max_json_bytes, max_file_bytes, max_metadata_bytes, max_document_text_bytes, max_parts_per_document, max_part_bytes, max_selected_items, session_ttl_seconds, operation_ttl_seconds; also Section 5's format-specific and aggregate limits |
+| formats[] | format_id, extensions, media_types, level(A/B/C), status(available/unavailable/planned), nullable default_profile_id, profile_ids, extraction_scope, limits, nullable reason |
+| profiles[] | profile_id, profile_digest, status, defaults, options_schema, extraction_scope, dependencies; options_schema is a bounded JSON Schema 2020-12 subset with additionalProperties=false, never executable code or arbitrary parser classes |
+| quotas | Caller-visible quota limits/remaining amounts, without other Principals' usage |
+
+Extensions include the dot, e.g. `.pdf`; media_types are canonical MIME values; reason is `{code,message}`. Profile digests cover pinned configuration/dependencies, not a release clock. This is a current snapshot; every write rechecks eligibility. Initial limits follow Section 5, e.g. max_file_bytes=52428800, max_text_bytes=262144, max_document_text_bytes=8388608, max_parts_per_document=128, max_part_bytes=262144, max_metadata_bytes=65536; clients must not hard-code these as deployed values.
+
+Create a session:
+
+```http
+POST /v1/scopes/project-docs/import-sessions
+Content-Type: application/json
+Idempotency-Key: session-notes-001
+
+{}
+```
+
+Only the empty object is accepted; no body scope_id or Scope-creation parameters. After scope.read + scope.contribute checks, return 201:
+
+```json
+{
+  "scope_id": "project-docs",
+  "session_id": "is_001",
+  "created_at": "2026-10-19T08:00:00Z",
+  "expires_at": "2026-10-20T08:00:00Z",
+  "idempotency_expires_at": "2026-11-19T08:00:00Z"
+}
+```
+
+GET S returns the same ImportSession fields with server-calculated times. Keep session-creation replay mappings for at least 30 days after session expiry, including sessions that never upload. Child deadlines never exceed session expiry. List only creator-visible sessions within the path Scope; cross-Scope session discovery is out of scope.
+
+### 8.4 Shared target and origin
+
+artifact_target is a mode-discriminated union, defaulting to `{"mode":"create"}`. Never infer updates from filenames/origin:
+
+| mode | Fields | Rules |
+| --- | --- | --- |
+| create | mode only | Explicit creation intent; server allocates identity |
+| update | Required artifact_id and expected_head_revision | Freeze at acceptance; validate Scope/Family/Head at commit, never silently retarget |
+| source | Required source_authority_id and source_key | Authorized Connector Principal only; resolve binding/absence assertion and freeze target at acceptance |
+
+source_authority_id is 1–128 visible ASCII characters. source_key is 1–1024 Unicode characters, nonempty, without outer whitespace/controls, following its registered authority's normalization. Read-only resolved_target is `{mode,artifact_id,expected_head_revision}`; mode is create/update, create has null expected_head_revision. Unselected container members have null targets. Clients cannot submit resolved_target, sources, artifacts, parts, or writable lineage.
+
+origin is required: namespace (1–128 characters), key (1–1024), optional display_name (1–256); no controls, and no outer whitespace in namespace/key. File keys are relative POSIX paths, rejecting absolute paths, backslashes, empty components, `.` and `..`. Origin is provenance, not binding authorization or a fetch instruction. Derive/return container-member origins and container_chain using Section 3's stable-member rules; ordinals cannot masquerade as stable cross-version identity.
+
+### 8.5 Direct text import
+
+```http
+POST /v1/scopes/project-docs/import-sessions/is_001/texts
+Content-Type: application/json
+Idempotency-Key: text-notes-001
+```
 
 ```json
 {
   "title": "API conventions",
   "artifact_target": {"mode": "create"},
   "source_kind": "content",
+  "origin": {"namespace": "project-notes", "key": "api-conventions"},
   "media_type": "text/markdown",
-  "origin": {"namespace": "project-notes", "key": "note-001"},
   "text": "# API conventions\n\nPagination uses opaque cursors.\n"
 }
 ```
 
-Upload metadata contains artifact_target, title, origin, parser_profile, optional fixed-content source_kind, and
-optional encoding, as_text, reparse, ocr_mode, language, include_notes, include_comments, include_hidden, archive_depth.
-Defaults: as_text=false, reparse=false, ocr_mode=off, include_notes=true, include_comments=false, include_hidden=true,
-archive_depth=1. Omitted language uses the profile's fixed language set; omitted encoding follows identification or
-returns encoding_required. Without parser_profile, freeze the deployment router/profile registry version, identify
-format, and freeze its default profile; PDF chooses its backend under that profile. Containers also freeze child routing
-registry so discovered/selected children cannot adopt changed defaults mid-operation. Across-key retries should send the
-resolved profile digest. include_notes applies only where supported; irrelevant defaults are ignored, explicitly
-inapplicable nondefaults return 422. archive_depth is 1 or 2. Publish all defaults through capabilities.
+| Field | Required / default | Meaning |
+| --- | --- | --- |
+| title | Required | 1–256 Unicode characters after trimming |
+| artifact_target | create | Section 8.4 target |
+| source_kind | content | Fixed Source type |
+| origin | Required | Controlled provenance |
+| media_type | text/plain | Only text/plain or text/markdown; saved body representation |
+| text | Required | Nonblank string; UTF-8 bytes ≤ max_text_bytes, total JSON ≤ max_json_bytes |
 
-as_text=true still requires strict text validation, binary identification, and resource limits. ocr_mode is
-off/auto/force; auto handles required regions only, force is disclosed in preview. reparse=true needs new upload and
-Idempotency-Key with original bytes; do not assume old staging exists or alter old bundles. Selection controls
-attachments.
+The request confirms immediately, without a mandatory asynchronous parsing operation; return Section 8.10's ImportCommitReceipt. Pasted HTML/code is stored as source text in the chosen representation, never executed or implicitly extracted. Use file parsing for semantic extraction. No parser, URL, or server-path input is accepted here.
 
-selection accepts `{operation_id, expected_selection_version: 0, items: [{item_id, artifact_target}, ...]}` only after
-complete discovery, before selection freezes, and while valid. IDs must be selectable, unique, nonempty, from the same
-complete manifest, at most 1,000. Validate targets/no duplicate Artifact updates, atomically freeze version 1, and
-enqueue. Changed selection returns 409; unknown/foreign IDs return 422 without disclosure. Single documents need no
-selection call.
+### 8.6 File uploads and parser parameters
 
-retry requires one of `{stage: "discovery"}` or `{stage: "documents", item_ids: [...]}`. Discovery forbids item_ids and
-requires discovery_state=failed, discovery_retryable=true, unpublished manifest, valid staged container. Acceptance sets
-discovery_state=pending, phase=discovery, execution_state=queued. Document retry requires complete/not-required
-discovery and 1–1,000 unique selected failed retryable item IDs; set these pending and enqueue. Invalid structures
-return 422; phase/state mismatches return 409 for the entire request; neither alters frozen output. Both branches return
-202 only after atomic task-slot admission, enqueue, and idempotent receipt.
+POST S/operations accepts multipart/form-data with exactly one file part (raw bytes) and one metadata part (application/json, at most 64 KiB). Reject extra files, URLs, and server paths. Filename/client Content-Type are hints; identify actual type from bytes, MIME, and container structure.
 
-cancel accepts an empty object. First cancellation is atomic; repeats return the same receipt. Completed returns its
-completion result; expired returns tombstone. No published Revision is deleted. Selection/retry/cancel require creator,
-fixed-Scope scope.read + scope.contribute, and Idempotency-Key, with Section 10 administrative exceptions. Replays
-retain acceptance receipts; GET shows later progress. Selection/retry on cancelled return 409, expired 410.
+```json
+{
+  "title": "Product manual",
+  "artifact_target": {"mode": "create"},
+  "source_kind": "content",
+  "origin": {"namespace": "product-docs", "key": "manual.pdf"},
+  "parser": {
+    "profile_id": "pdf-standard-v1",
+    "options": {"ocr_mode": "auto"}
+  },
+  "reparse": false
+}
+```
 
-Operation responses independently expose operation_id, session_id, family, phase, discovery_state, discovery_retryable,
-phase errors, execution_state, aggregate_status, task_slot_held, selection_version, counts, expires_at,
-idempotency_expires_at, blocked_reason. Item responses include selected, parse_state, commit_state, retryable, coverage,
-warnings, omissions, bundle_digest, optional candidate_ref and artifact_ref (exact, Scope-bearing ArtifactRefs).
-artifact_ref means this attempt committed; candidate_ref does not. Clients must not infer a combined status.
+| metadata field | Required / default | Meaning |
+| --- | --- | --- |
+| title | Optional | Document title follows text-title constraints; omitted uses normalized filename, with the fixed locale-independent value `Untitled material` as empty-name fallback. Container title is display-only; members use manifest titles |
+| artifact_target | Single-document default create | Containers accept only omission/create; select assigns update/source per member, never one shared update target |
+| source_kind / origin | content / required | Same as text import |
+| parser | Optional | ParserSelection below |
+| reparse | false | New upload bypasses parsing-result cache and cross-key operation merging; never mutates old work or assumes old staging exists |
 
-Each upload accepts exactly one file and one metadata object. metadata ≤64 KiB; reject unknown fields and extra
-multipart fields/files. Queries/manifests do not return raw blob addresses.
+| parser field | Type/default | Semantics |
+| --- | --- | --- |
+| profile_id | Optional string | Available profile; omission pins router registry and chooses format default |
+| profile_digest | Optional SHA-256 | Requires profile_id; pins exact configuration; mismatch is 409 profile_conflict, not silent replacement |
+| options | Object, empty by default | Explicit overrides only; reject undeclared profile options |
+| options.encoding | Optional string | Capability-listed encoding; omission uses BOM/strict UTF-8 or encoding_required |
+| options.as_text | boolean, false | Requires strict text validation, never bypasses binary/resource limits |
+| options.ocr_mode | off/auto/force, off | Disabled, selective, forced; actual execution recorded separately |
+| options.languages | Optional string[] | Nonempty, unique capability-listed language IDs; omission uses fixed profile set, never guesses/downloads models |
+| options.include_notes | boolean, true | Include supported notes |
+| options.include_comments | boolean, false | Include supported comments |
+| options.include_hidden | boolean, true | Include supported hidden content |
+| options.archive_depth | integer, 1 | Only 1 or 2 |
 
-confirm accepts `{operation_id, item_id, bundle_digest, accept_partial}` with Idempotency-Key; target and expected Head
-are already frozen and echoed in the response. Changed bundle returns 409; expired uncommitted item 410;
-cancelled/unparsed item 409. Committed items replay durable receipts throughout mapping retention even if the operation
-later expires; thereafter use standard exact Revision reads. ready requires accept_partial=false; needs_review requires
-true, otherwise 409. Return `{outcome: created|reused, scope_id, artifact_ref, snapshot_digest, parts}`. created
-includes first and subsequent new Revisions. artifact_ref contains family, artifact_id, revision, with Location at the
-standard exact Revision resource. New import responses uniformly use parts[]; pasted text has one part. Existing Source
-responses are unchanged.
+Explicit inapplicable options return 422; profile defaults apply only to appropriate formats. Return effective options after defaulting. Containers pin their child router/profile registry and apply overrides only to applicable members; an override applicable to no discovered member is a discovery-stage parameter error, not silently ignored. For pinned cross-key requests, send both profile_id/profile_digest. Return actual backend/model/conversion information on items; clients cannot specify arbitrary import classes.
 
-Task/item/material lists default to limit 50, range 1–100, SQL keyset pagination with a first-request high-water mark.
-Bind cursor to operation, caller, stable session_id or scope_id, filters, limit, high-water mark, and TTL; reauthorize
-each page. Mutable task states mean lists are not state snapshots. Namespace filtering extends the Artifact-list
-projection, not full-text search.
+The following command reads and uploads a local file to a previously selected Scope/session. Add Authorization when enabled; metadata.json contains the preceding example:
 
-Python client exposes these operations. CLI provides text, files, resume, cancel, dry-run. New imports require --scope
-before uploading; --session resumes its fixed destination and displays it. If both are supplied they must match.
---artifact-id and --expected-head-revision explicitly update; expose --as-text, --reparse, member selection. Containers
-list members before selection; unattended use needs explicit rules. dry-run validates only locally knowable facts:
-without running a parser offline, report server parsing required rather than full importability. Default CLI behavior
-confirms interactively after deployment parsing. Explicit --accept-complete can auto-save ready; partial needs
-additional explicit permission, including cached partial snapshots. UI/CLI offer discovery retry or failed-document
-retry based on phase/discovery_state, without requiring undiscovered item IDs. Quota rejection backs off per Retry-After
-and cannot appear queued.
+```bash
+curl --request POST \
+  'http://127.0.0.1:8000/v1/scopes/project-docs/import-sessions/is_001/operations' \
+  --header 'Idempotency-Key: upload-manual-001' \
+  --form 'file=@manual.pdf;type=application/pdf' \
+  --form 'metadata=@metadata.json;type=application/json'
+```
 
-Reopening/previewing is read-only; logging in again does not submit. Confirm carries frozen digest/original key. Verify
-uncertain outcomes through status/receipts or same-key retry. Separate upload, parsing, and Source persistence progress;
-show indeterminate processing if the parser cannot report pages.
+Return 202/ImportOperation only after durable bytes, digest verification, quota, queue, and receipt persistence. Interrupted upload never accepts a partial file. Public status has no uploading value; clients display upload progress themselves.
 
-Conflicts do not mutate frozen targets. Read current Head, then create a new file attempt with new expected Head,
-original bytes, and new key; parsing cache may help, but old items/receipts stay immutable. Show current-version
-differences before confirmation. Generic writes cannot rewrite provenance/parts/lineage.
+Example single-document 202 response, with Location `/v1/scopes/project-docs/import-sessions/is_001/operations/io_001`:
+
+```json
+{
+  "scope_id": "project-docs",
+  "session_id": "is_001",
+  "operation_id": "io_001",
+  "family": "importedcontent",
+  "status": "queued",
+  "phase": "parsing",
+  "discovery": {"status": "not_required", "retryable": false, "error": null},
+  "selection_version": 1,
+  "progress": {"discovered_items": 1, "selected_items": 1, "parsed_items": 0, "failed_items": 0, "committed_items": 0, "excluded_items": 0},
+  "available_actions": ["cancel"],
+  "created_at": "2026-10-19T08:05:00Z",
+  "expires_at": "2026-10-20T08:00:00Z",
+  "idempotency_expires_at": "2026-11-19T08:00:00Z",
+  "blocked_reason": null,
+  "retry_after_seconds": null,
+  "error": null
+}
+```
+
+### 8.7 Operation queries, items, and previews
+
+ImportOperation uses the same fields for POST acceptance snapshots, GET, and list items:
+
+| Field | Type and meaning |
+| --- | --- |
+| scope_id, session_id, operation_id, family | Path identity and importedcontent |
+| status | queued/running/awaiting_selection/awaiting_commit/completed/failed/cancelled/expired; server-derived by Section 6 |
+| phase | discovery/parsing/commit/done; errors retain failed phase, success uses done |
+| discovery | `{status,retryable,error}`; status not_required/pending/running/completed/failed; nullable ErrorDetail |
+| selection_version | Nonnegative integer; container 0 before freezing, 1 after; single document automatically 1 |
+| progress | discovered_items (null before complete discovery), selected_items (null before selection), parsed_items, failed_items, committed_items, excluded_items; last four nonnegative. parsed_items counts frozen results including committed items, so counts are not additive categories |
+| available_actions | select/retry/cancel hints, revalidated at execution |
+| created_at, expires_at, idempotency_expires_at | RFC 3339 UTC; retries do not extend deadlines |
+| blocked_reason, retry_after_seconds | Nullable `{code,message}` and nonnegative integer for accepted queue waits |
+| error | Nullable ErrorDetail for operation-level errors; item failure is not HTTP query failure |
+
+Internal execution_state, task_slot_held, leases, and fencing generations are not public status fields. Partial success is represented by progress: active work yields queued/running, ready uncommitted results yield awaiting_commit, and only remaining failures yield failed. Cancellation/expiry preserve committed counts and per-item receipts; an operation is not a cross-document transaction.
+
+ImportItem (GET I and bounded GET O/items entries, excluding body text/full content_manifest):
+
+| Field | Type and meaning |
+| --- | --- |
+| scope_id, session_id, operation_id, item_id | Complete parent/child identity |
+| title, origin, container_chain, input_media_type | Identified title, provenance, member chain, MIME; unidentified MIME is null |
+| selectable, selection_suggested, selected | Booleans; structural nodes are not selectable, suggestions do not mean acceptance |
+| artifact_target, resolved_target | Intent and frozen resolved target; nullable before selection |
+| parse_status | pending/parsing/ready/needs_review/failed |
+| commit_status | uncommitted/committed |
+| retryable | Whether the current parse error can be retried |
+| parser | Nullable; profile_id/profile_digest/router_version/options plus actual backends/conversions; fully returned after freezing |
+| statistics | page_count, sheet_count, slide_count, table_count, part_count, text_bytes; nonnegative integers or null, never zero for unknown/inapplicable |
+| ocr | requested_mode, nullable boolean used, nullable integer processed_page_count, nullable string engine, languages; incomplete counts are not final totals |
+| coverage | complete/partial/unknown; null before a result exists |
+| warnings, omissions | Arrays of `{code,message,locator}` with nullable locator; structured issues affect semantic digests, display messages do not. Bound diagnostics; fail if they cannot be represented within budget rather than hiding omissions |
+| input_digest, bundle_digest | SHA-256 or null; no invented digests before stage completion |
+| reusable_artifact | Nullable standard `{family,artifact_id,revision}` within top-level Scope; possible cached result, neither a successful commit nor a Candidate |
+| receipt | Nullable ImportCommitReceipt, present only after this attempt commits |
+| available_actions, error | commit hints; nullable ErrorDetail |
+
+GET I/parts/{ordinal} reads one stable part, not the full body. Return scope_id/session_id/operation_id/item_id/ordinal/text/media_type/text_bytes/text_digest/bundle_digest/locators. Maximum 256 KiB per part, 128 parts per document; return the complete part without truncation. Sections 4–5 define splitting/overflow. Unknown ordinal is 404, unfinished parsing is 409, uncommitted expired previews are 410 and cancelled previews 409. Committed previews read Sources while mappings remain, then standard Artifact/Source APIs provide permanent access.
+
+Locations use a kind discriminator, e.g. `{kind:"pdf",page_number:3}`, `{kind:"spreadsheet",sheet_name:"Budget",cell_range:"A1:D20"}`, `{kind:"slide",slide_number:5}`, `{kind:"text",line_start:10,line_end:25}`. Pages/slides/lines are one-based; line ranges are inclusive. Full-text character ranges count Unicode code points as `[start,end)`. PDF bbox requires page_width/page_height, unit=pt, origin=top_left, and bbox=[left,top,right,bottom]; never mix pixels and points. Report unavailable locations rather than guessing.
+
+### 8.8 Selection, retry, and cancellation
+
+POST O/select:
+
+```json
+{
+  "expected_selection_version": 0,
+  "items": [
+    {"item_id": "ii_001", "artifact_target": {"mode": "create"}},
+    {"item_id": "ii_002", "artifact_target": {"mode": "update", "artifact_id": "ic_002", "expected_head_revision": 3}}
+  ]
+}
+```
+
+expected_selection_version is required and must be 0. items is required/nonempty/unique, at most 1,000; each item_id is required and artifact_target defaults to create. Accept only a complete, not-yet-frozen manifest. Atomically validate every target, reject multiple members updating one Artifact, freeze version 1, and enqueue. Unknown/foreign members are 422 without disclosure; changed frozen selection is 409. Same-key replay returns its original snapshot. Single documents neither need nor permit select again.
+
+POST O/retry accepts one of two mutually exclusive bodies:
+
+```json
+{"stage": "discovery"}
+```
+
+```json
+{"stage": "documents", "item_ids": ["ii_002", "ii_003"]}
+```
+
+stage is required. discovery forbids item_ids and requires failed/retryable discovery, unpublished complete manifest, and valid staging. documents requires a nonempty unique item_ids array of at most 1,000 selected, failed, retryable, unfrozen members of this operation. Reject the whole request if any member is ineligible. Never retry ready/needs_review/committed, change inputs/profiles/targets, or extend deadlines. Manual retries do not reset the per-phase maximum of three automatic retries. Return 202 only after atomic quota readmission, queue, and receipt persistence. 429/503 means not accepted; back off and reuse the key. Accepted background resource waits appear through GET O blocked_reason.
+
+POST O/cancel accepts only `{}`; atomically fence uncommitted writes and return 200 ImportOperation. Repeated cancellation does not repeat effects, completed remains completed, expired returns a tombstone, and published Artifacts survive. select/retry return 409 for cancelled and 410 for expired operations. Every action rechecks creator, current Scope permissions, and ancestry; administrative exceptions follow Section 10.
+
+### 8.9 Commit and concurrency
+
+POST I/commit does not repeat operation_id/item_id in its body. The example digest illustrates syntax only; use the actual preview digest:
+
+```json
+{
+  "bundle_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "accept_partial": false
+}
+```
+
+bundle_digest is required; accept_partial is boolean, default false. ready accepts only false; needs_review requires explicit true or returns 409 partial_extraction. Target/title/origin/parser/expected Head are frozen and cannot be edited here. Digest mismatch is 409 bundle_conflict; Head mismatch is 409 revision_conflict even when text happens to match. Cancelled/unparsed is 409; expired uncommitted work is 410.
+
+One transaction writes all Sources, journal positions, dirty/pending state, Revision/Head CAS/lineage, bindings, quota, and durable receipt; post-commit notification failure remains recoverable. Within mapping retention, recommitting an already committed item with identical acceptance parameters returns its original receipt even after Head advances or operation expiry; changed acceptance parameters conflict. Reauthorize all replay.
+
+For version conflicts, read current Head, show differences, then create a new attempt with new expected Head, original bytes, and new key. Matching parsing cache may help, but never mutate old frozen results or overwrite concurrent content. This domain conflict protocol does not change generic PUT's 428/412 or GET ETag behavior.
+
+### 8.10 Shared commit receipt and standard references
+
+Text and file commits return ImportCommitReceipt with flat identity and standard SourceTypeReference/ArtifactReference lineage, not a Source/Artifact union or writable references:
+
+```json
+{
+  "scope_id": "project-docs",
+  "family": "importedcontent",
+  "artifact_id": "ic_001",
+  "revision": 1,
+  "outcome": "created",
+  "source_kind": "content",
+  "accepted_partial": false,
+  "snapshot_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "sources": [{"source_type": "content", "source_id": "cs_001"}],
+  "artifacts": [],
+  "parts": [{"ordinal": 0, "source_type": "content", "source_id": "cs_001", "journal_position": 42}]
+}
+```
+
+| Field | Type and meaning |
+| --- | --- |
+| scope_id, family, artifact_id, revision | Standard Artifact identity; exact accepted revision |
+| outcome | created: new Artifact, HTTP 201; updated: new revision of existing Artifact, HTTP 200; reused: exact current revision, HTTP 200 |
+| source_kind, accepted_partial | content and this acceptance decision, preserved on successful replay |
+| snapshot_digest | Frozen bundle plus acceptance semantics; neither HTTP ETag nor standard content_digest |
+| sources | Ordered standard `{source_type,source_id}` direct lineage, all content |
+| artifacts | Standard `{family,artifact_id,revision}` direct Artifact lineage, [] if none; Scope from top level |
+| parts | Ordered `{ordinal,source_type,source_id,journal_position}` mapping to Source bodies, matching sources/manifest one-to-one; pasted text has one part |
+
+Example digests show syntax only and cannot submit real files. No body text is returned; Location identifies the standard exact Revision followed by Source reads. Source HTTP identity remains source_type, not source_kind/name. Standard ArtifactRevision shape and content_digest calculation are unchanged.
+
+### 8.11 Pagination, errors, idempotency, and recovery
+
+New lists use limit (default 50, range 1–100) and opaque cursor. Session lists are Scope-bound by path; operations optionally filter status; items optionally filter selected/parse_status/commit_status. Responses use `{items:[],next_cursor:null}`, null at the end, without fabricated total. Bind cursors to caller, complete ancestry, filters, limit, high-water mark, and TTL; reauthorize every page. High water limits new records, not changing status, so filtered lists are not status snapshots. Invalid/mismatched cursors return 400; expired cursors return 410. Standard Artifact lists retain their shape, adding only importedcontent namespace filtering.
+
+Use the existing error envelope:
+
+```json
+{
+  "error": {
+    "code": "revision_conflict",
+    "message": "The document changed. Read its current revision before starting a new import.",
+    "details": {"artifact_id": "ic_001", "expected_head_revision": 2, "actual_head_revision": 3}
+  }
+}
+```
+
+| HTTP status | Conditions |
+| --- | --- |
+| 400 | Invalid path/query/header, missing Idempotency-Key, invalid/mismatched cursor |
+| 401 / 403 / 404 | Authentication, permission, visibility, or absence under existing non-disclosure policy |
+| 409 | State, revision, bundle, selection, source-binding, profile, or idempotency conflict |
+| 410 | Expired uncommitted session/operation work or cursor |
+| 413 | Request/file size overflow known at admission |
+| 415 | Unsupported format identified at admission |
+| 422 | JSON shape, unknown body fields, invalid parameter combinations, unsupported Family capability |
+| 429 | Admission quota/concurrency limit, with Retry-After |
+| 503 | Required parser temporarily unavailable at admission, with Retry-After |
+
+Format/extraction/overflow/parser failures after 202 are operation/item errors; successful queries remain 200, not 500. ErrorDetail is `{code,message,details}` with null details when absent, never credentials/private blob addresses. Keep 412/428 for existing conditional requests; import commit does not borrow them.
+
+Import Idempotency-Key is a new durable domain protocol, not a claim that existing Source/Artifact Create is idempotent. Section 7 defines namespaces. Normalize after defaulting; file requests compare actual byte digest and metadata, not multipart boundaries. Same key/request replays original status and receipt; changed request returns 409. Identical raw replay retains originally frozen defaults despite deployment profile changes. Unaccepted 429/503 writes no success receipt; committed replay returns its original revision without a new write even after Head advances. Retention/tombstones/GC follow Sections 6–7.
+
+### 8.12 Clients, UI, and call sequences
+
+Python clients expose the listed operationIds and pass scope_id to every route. CLI provides text/files/resume/cancel/dry-run; new imports require an existing --scope. Resume --session obtains Scope from a caller-held session receipt or explicit --scope; both must agree if present. With neither stored destination nor explicit Scope, require --scope; do not add an unscoped server lookup. UI recovery stays within the current Scope; switching Scope does not migrate work.
+
+--artifact-id/--expected-head-revision explicitly update, and parser flags map to parser.options. Containers display the complete manifest before select; unattended use requires explicit selection rules. --accept-complete auto-commits only ready; partial needs separate explicit authorization including cached partial results. dry-run verifies local facts only, never claims complete importability without parsing. Back off on 429/503 using Retry-After rather than presenting unaccepted work as queued.
+
+The UI sends frozen bundle_digest and the original Idempotency-Key. Refresh/login only resumes reads, never confirms automatically. Resolve uncertain results via status/receipt or same-key replay. Clients measure upload progress; show indeterminate parsing unless the parser reports progress; never expose a half-commit state.
+
+| Scenario | Calls |
+| --- | --- |
+| Paste Markdown | GET P/import-capabilities → POST P/import-sessions `{}` → POST S/texts → standard Revision/Source reads |
+| Scanned PDF | Create session → POST S/operations with parser.options.ocr_mode=auto → GET O/I/parts → POST I/commit → exact Revision |
+| ZIP/mailbox | Upload → GET O until complete discovery → GET O/items → POST O/select → preview/commit per document, separate transactions |
+| Update | Explicit artifact_id/expected_head_revision target → preview → commit → updated 200; old Head remains readable until success |
+| HTML file | Same file flow, detected text/html; webpage provenance does not fetch a URL |
+| Future webpage Connector | Separately validated authorized adapter submits a frozen snapshot; no URL import endpoint in this release |
 
 ### Published bodies, history, and comparison
 
@@ -1139,14 +1393,6 @@ updates, rather than a duplicate search endpoint or implicit vector-ready promis
 
 Existing stable Artifact handles, if used, bind one exact immutable Revision. They are not live external-document
 identity or a replacement for source bindings.
-
-### Examples
-
-1. Paste Markdown: select an existing Scope, create a session with its scope_id, then call importedcontent/texts with source_kind=content. Receive exact artifact_ref; read via standard Artifact get and Source parts. Failure leaves no partial Artifact.
-2. Upload PDF: importedcontent/prepare returns operation_id for status/paged preview. Confirm operation_id, item_id, bundle_digest, accept_partial; read the resulting importedcontent Revision. PDF counts/OCR are extraction metadata, not another Family.
-3. Update: explicitly supply artifact_id/expected_head_revision in prepare/texts artifact_target. Old Head stays readable during parsing; only confirmation creates a Revision. Failure/cancellation creates no failed version or governance change.
-4. Upload HTML: source_kind=content, input_media_type=text/html. A webpage description in origin triggers no network access and changes no Source type.
-5. Future webpage Connector: after separate validation, an authorized adapter supplies a frozen page snapshot and reuses content evidence, commit service, and Artifact reads. No link-import endpoint/UI is available now; source_kind=content never enables fetching.
 
 ## 9. Continuous collection with OpenDAL
 
@@ -1251,7 +1497,7 @@ success.
 ### Implementation boundaries
 
 Implement Section 1's fixed parser families/routes, not ad hoc runtime library selection. Stage work by responsibility:
-text persistence/unified manifest, Family prepare/confirm plus durable ledger/standard parsing package, then
+text persistence/unified manifest, Family operation creation/commit plus durable ledger/standard parsing package, then
 OCR/long-tail/OpenDAL. Both A and B remain formal targets; A alone does not complete this RFC.
 
 Register importedcontent, operation storage, indexes without changing existing Source/Artifact references. Historical
@@ -1284,6 +1530,8 @@ backends; existing Sources/Artifacts/exact refs must remain intact. Ship scripts
 the feature; SQLite development auto-creation alone is not production support.
 
 ### Contract and acceptance
+
+HTTP acceptance covers Scope paths and ancestry, repeated body identity rejection, standard source_type references and flat Artifact receipts, created=201/updated or reused=200, distinct 400/409/410/422 behavior, original 202 replay, asynchronous failures returned by successful GET 200, parse_status/commit_status mapping, and unchanged generic Artifact ETag/304/412/428 behavior. Both locale operation tables, defaults, examples, and OpenAPI must agree. The long infographic remains a separate explanatory artifact, not an RFC embed.
 
 Use openapi/powercontext.yaml as source of truth, run make api-generate and make contract-test, never hand-edit
 generated code. Implementation validation includes make check, relevant Source/Server/Access/Dashboard/Connector tests,
@@ -1345,7 +1593,7 @@ does not mean these feature tests have passed.
 | OpenDAL cached/recovered partial | complete-only rejects; no checkpoint advance merely because Revision exists |
 | New key with old expired/cancelled/failed/completed task | New operation, coverage-aware persistent reuse; old key retains old result |
 | Transient discovery failure/retries exhausted | stage=discovery works without item_ids; publish complete manifest atomically, retain frozen IDs |
-| Retry slotless failed/partially_committed | 429/503 leaves state/counters unchanged; later same-key admission holds one slot and enqueues once |
+| Retry slotless failed work, including partial commits | 429/503 leaves state/counters unchanged; later same-key admission holds one slot and enqueues once |
 | Awaiting partial confirmation/only failed members/one failure | Waiting confirmation holds slot; inactive failure may release; do not release other active resources or extant bytes |
 | Any part/record/pending write failure | Whole document rollback; recovery does not duplicate Sources |
 | Failed container members/explicit partial | Accurate per-document outcomes and durable omissions, no false completeness |
@@ -1391,7 +1639,7 @@ guarantee all semantics. Validated adapters are more diagnosable than implicit f
 **Isolated parsing, reused ContentSource.** Keep dependencies and file risk outside Core requests; normalized evidence
 reuses Source/Scope/lineage/processing without a Source family per suffix.
 
-**Asynchronous parsing, synchronous per-document commit.** OCR/large inputs exceed normal HTTP timeouts. prepare returns
+**Asynchronous parsing, synchronous per-document commit.** OCR/large inputs exceed normal HTTP timeouts. Operation creation returns
 durable recovery handles; confirmation atomically commits frozen output instead of exposing partially parsed Sources.
 
 **Segmentation instead of truncation/manual splitting.** Natural boundaries/locations remain usable, exact
