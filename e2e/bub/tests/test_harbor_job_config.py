@@ -845,6 +845,9 @@ def _kimi_installation(home: Path) -> dict[str, object]:
     for path in sorted((home / "plugins").rglob("*")):
         if path.is_file():
             text = path.read_text(encoding="utf-8")
+            if path.name == "SKILL.md":
+                scope_script = home / "plugins/managed/powercontext/scripts/scope.mjs"
+                assert json.dumps(str(scope_script), ensure_ascii=False) in text
             if path.suffix == ".json":
                 files[path.relative_to(home).as_posix()] = json.loads(text)
             else:

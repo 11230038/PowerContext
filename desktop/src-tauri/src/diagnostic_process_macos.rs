@@ -214,26 +214,35 @@ mod tests {
             "perl -e 'use POSIX; POSIX::setsid(); open(my $fh, q(>), $ARGV[0]) or die; print $fh $$; close($fh); sleep 300' '{}'",
             pid_file.display()
         );
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = cancelled.clone();
+        let invocation = std::thread::spawn(move || shell(&script, Duration::from_secs(15), flag));
+        // Startup on a busy runner is not part of the shutdown budget. Wait for
+        // the escaped writer to own the pipes before triggering cancellation.
+        let ready_deadline = Instant::now() + Duration::from_secs(10);
+        let pid = loop {
+            if let Ok(text) = std::fs::read_to_string(&pid_file)
+                && let Ok(pid) = text.trim().parse::<i32>()
+            {
+                break pid;
+            }
+            assert!(
+                Instant::now() < ready_deadline,
+                "escaped writer did not become ready"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        // Always terminate the escaped process group, including when an assertion fails.
+        let _escaped = Group(pid);
         let started = Instant::now();
-        let result = shell(
-            &script,
-            Duration::from_millis(200),
-            Arc::new(AtomicBool::new(false)),
-        );
+        cancelled.store(true, Ordering::Relaxed);
+        let result = invocation.join().unwrap();
         let elapsed = started.elapsed();
-        assert_eq!(result.err(), Some(SafeError::Timeout));
+        assert_eq!(result.err(), Some(SafeError::StaleContext));
         assert!(
-            elapsed < Duration::from_secs(30),
+            elapsed < Duration::from_secs(2),
             "bounded shutdown blocked {elapsed:?} behind a writer that escaped the killed group"
         );
-        let pid: i32 = std::fs::read_to_string(&pid_file)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        unsafe {
-            libc::kill(-pid, libc::SIGKILL);
-        }
     }
     #[test]
     fn timeout_and_live_cancellation_terminate_spawned_descendants() {
