@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+from urllib.parse import quote, unquote
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 from pydantic.alias_generators import to_camel
 from sqlalchemy import insert
 
@@ -317,6 +318,37 @@ def test_excluded_native_identity_is_rejected_before_capture() -> None:
         source = ExcludedVersionSource(
             name="excluded", materialization=SourceMaterialization.CAPTURED, body="Retained."
         )
+        async with repository_profile() as (profile, _repositories), profile.database.transaction() as connection:
+            with pytest.raises(InvalidStoredPayloadError):
+                await repository.add(connection, "scope-a", source)
+            ref = SourceRef(source_type="serialization-alias", source_id=source.name)
+            with pytest.raises(RepositoryNotFoundError):
+                await repository.get(connection, "scope-a", ref)
+            assert await repository.journal_position(connection, "scope-a") == 0
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("identity_field", ["name", "definition_version", "materialization"])
+def test_encoded_native_identity_is_rejected_before_capture(identity_field) -> None:
+    class EncodedSource(NativeCamelCaseSource):
+        @field_serializer("name", "definition_version", "materialization")
+        def encode_identity(self, value, info):
+            if info.field_name == identity_field:
+                return quote(f"wire:{value}", safe="")
+            return value
+
+        @field_validator("name", "definition_version", "materialization", mode="before")
+        @classmethod
+        def decode_identity(cls, value, info):
+            if info.field_name == identity_field:
+                return unquote(value).removeprefix("wire:")
+            return value
+
+    async def scenario() -> None:
+        repository = SourceRepository((SerializationAliasAdapter(EncodedSource),))
+        source = EncodedSource(name="note/42", materialization=SourceMaterialization.CAPTURED, body="Retained.")
+        assert EncodedSource.model_validate_json(source.model_dump_json(by_alias=True)) == source
         async with repository_profile() as (profile, _repositories), profile.database.transaction() as connection:
             with pytest.raises(InvalidStoredPayloadError):
                 await repository.add(connection, "scope-a", source)
