@@ -30,6 +30,29 @@ Selecting a compatibility profile does not attest the remote binary identity. Ex
 
 ### Current Server protocol qualification
 
+#### Server 683e2db0 protocol qualification
+
+The bundled current contract is qualified by `sqlite-atomic-683e2db0-v1`. It identifies Server sources
+at `683e2db081fc58a69f6527c1916ae77cdeeeb371` and normalized OpenAPI digest
+`dae5feab227a6c16a8199455a27c82b444c9c17b43bec7de0fca4790c7bed14f`. The qualification wheel is
+`powercontext-1.3.1.dev105+g7f8d5dfdf-py3-none-any.whl`, SHA-256
+`dd81cfadb5ce6999873eab25ff5318a6a794987597d83daeb4f0eb90618e95c1`. It was built at Desktop commit
+`7f8d5dfdf74f39d7c51af908e2c1ebe3e73205b9`. All 517 packaged runtime files match the recorded Server
+commit byte for byte; the OpenAPI contract, project configuration and lock also match.
+The sorted runtime source-manifest digest is
+`0d750d72f9933631d16833dd7f69be3dd6cffcf083035d5457b8f2b313b1e5e9` (one `wheel/path sha256` entry per line, with a final newline).
+
+The native `ConnectionManager` exercised the isolated wheel and SQLite in anonymous loopback,
+static Bearer, HTTPS with explicit CA/base path, and injected-provider/enforced-access modes.
+All four passed on macOS 26.5.2 ARM64, Python 3.12.13 and Rust 1.95.0. The ten recorded operations
+cover Atomic Memory save/search/exact revision reads, Scope pagination, identity changes,
+revocation, committed writes with lost responses without replay, and independent Server survival
+after client exit. This establishes protocol compatibility for these sources and this wheel.
+Windows installer acceptance, Intel execution, signing and accessibility require their own checks.
+Historical records retain their original source, contract and wheel identities.
+
+#### Server caf2a35a protocol qualification
+
 `sqlite-atomic-caf2a35a-v1` records Server commit `caf2a35aa5c626e013584a2c3a37dcd94e0d49bf`,
 normalized OpenAPI contract digest `e43c7034b6930688c350c68af5e7bd6083b123783b92d0a50eebbebd45aa7da7`,
 and wheel digest `4ac43be2f914f8075f97b896b9e2773fcfeff0b5fe354241c6d02d44dbb4a955`.
