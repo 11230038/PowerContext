@@ -14,4 +14,5 @@
 
 [tools]
 node = "24.14.1"
-pnpm = "11.13.1"
+# The npm package also supports Intel macOS; the standalone release does not.
+"npm:pnpm" = "11.13.1"
