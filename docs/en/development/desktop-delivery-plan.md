@@ -154,7 +154,7 @@ claims of implemented functionality or a reason to withhold this design from rev
 ## macOS internal preview
 
 The native shell supports Keychain, macOS local navigation, bounded diagnostic process groups and
-app/DMG packaging. See the [macOS build instructions](../../../desktop/README.md#build-on-macos).
+app/DMG packaging. See the [macOS build instructions](https://github.com/oceanbase/powercontext/blob/master/desktop/README.md#build-on-macos).
 CI includes native Apple Silicon and Intel jobs. Signing, notarization, clean-machine installation,
 IME, accessibility and installed-app credential prompts remain qualification requirements.
 No LaunchAgent installation or independent Server management is added.

@@ -151,9 +151,9 @@ Desktop 支持 macOS 原生 Keychain、WKWebView 本地页面和 `.app` / `.dmg`
 安装包位于 `desktop/src-tauri/target/release/bundle/dmg/`，打开后将应用拖入 Applications。
 
 持久凭据使用 Keychain。用户仍可明确选择仅本次会话保存。诊断进程使用独立进程组，保留输出上限、超时与取消清理。
-诊断注册文件和 launcher 要求见 [Desktop README](../../../desktop/README.md#build-on-macos)。
+诊断注册文件和 launcher 要求见 [Desktop README](https://github.com/oceanbase/powercontext/blob/master/desktop/README.md#build-on-macos)。
 应用不会安装或管理 LaunchAgent，也不会修改独立 Server 数据。
 CI 配置覆盖 Apple Silicon 和 Intel；实际通过情况必须以运行结果为准。
 当前产物用于内部验证。Developer ID 签名、公证、干净机器安装、输入法、辅助功能和应用内 Keychain 提示仍需单独验收。
 
-当前契约的协议验收记录为 `sqlite-atomic-caf2a35a-v1`。部署相应 Server 源码后，在连接页明确选择此配置并重新检查连接，才能选择 Scope。真实 SQLite Server 的四种连接/认证模式已验收；精确源码、wheel 与契约标识见 [验收记录](../../../desktop/VALIDATION.md#current-server-protocol-qualification)。这不表示任意远端 Server 已验证，也不代替平台发布验收。
+当前契约的协议验收记录为 `sqlite-atomic-caf2a35a-v1`。部署相应 Server 源码后，在连接页明确选择此配置并重新检查连接，才能选择 Scope。真实 SQLite Server 的四种连接/认证模式已验收；精确源码、wheel 与契约标识见 [验收记录](https://github.com/oceanbase/powercontext/blob/master/desktop/VALIDATION.md#current-server-protocol-qualification)。这不表示任意远端 Server 已验证，也不代替平台发布验收。
