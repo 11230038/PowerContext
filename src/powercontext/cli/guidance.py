@@ -104,6 +104,7 @@ HOST_GUIDANCE = {
     ),
     "kimi-code": HostGuidance(
         "integrations/kimi-code/plugins/powercontext",
+        script_evidence=("scripts/scope.mjs",),
         source_files=("kimi.plugin.json",),
         package_name="powercontext",
     ),

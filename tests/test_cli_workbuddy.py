@@ -19,7 +19,9 @@ import os
 import shlex
 import subprocess
 import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from typing import Any
 
 import pytest
@@ -89,6 +91,78 @@ def _shell_argument(value: str | Path) -> str:
     if os.name == "nt":
         return subprocess.list2cmdline([text])
     return shlex.quote(text)
+
+
+def test_setup_and_doctor_workbuddy_reach_loopback_server_without_server_dependencies(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("WORKBUDDY_HOME", str(tmp_path / "workbuddy"))
+    monkeypatch.setenv("POWERCONTEXT_HOME", str(tmp_path / "data"))
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            payload = {"status": "ok"} if self.path == "/health/live" else {"status": "ready", "checks": {}}
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - stdlib signature.
+            del format, args
+
+    script = """
+import builtins
+import json
+import sys
+
+real_import = builtins.__import__
+
+def guarded_import(name, *args, **kwargs):
+    if name == "sqlalchemy" or name.startswith("sqlalchemy."):
+        raise ModuleNotFoundError("Server dependency is not installed", name="sqlalchemy")
+    return real_import(name, *args, **kwargs)
+
+builtins.__import__ = guarded_import
+from typer.testing import CliRunner
+from powercontext.cli.app import create_cli
+from powercontext.cli.system import setup_app, doctor_app
+
+cli = create_cli([setup_app, doctor_app])
+for arguments in (
+    ["setup", "workbuddy", "--source", sys.argv[1], "--server-url", sys.argv[2], "--json"],
+    ["doctor", "workbuddy", "--json"],
+):
+    result = CliRunner().invoke(cli, arguments)
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["ok"] is True
+    checks = report["hosts"]["workbuddy"]["checks"]
+    assert checks["server_liveness"]["status"] == "ok"
+    assert checks["server_readiness"]["status"] == "ok"
+"""
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    script,
+                    str(Path(__file__).parents[1]),
+                    f"http://127.0.0.1:{server.server_port}",
+                ],
+                cwd=tmp_path,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
 
 
 @pytest.mark.parametrize("installed", [False, True])

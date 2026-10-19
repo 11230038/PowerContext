@@ -190,6 +190,10 @@ def setup_agents(
     json_output: JsonOption = False,
     capture_prompts: CaptureOption = None,
     scope_id: Annotated[str | None, typer.Option(help="Existing Scope ID for Kimi Code.")] = None,
+    workspace_scope: Annotated[
+        bool,
+        typer.Option("--workspace-scope", help="Kimi Code: resolve workspace bindings, then the Server default Scope."),
+    ] = False,
     boundary_flush: Annotated[
         bool | None, typer.Option("--boundary-flush/--no-boundary-flush", help="ZCode boundary capture preference.")
     ] = None,
@@ -213,7 +217,12 @@ def setup_agents(
     token = setup_environment_file.set(env_file)
     context.call_on_close(lambda: setup_environment_file.reset(token))
     selected = select_hosts(agents, json_output=json_output)
-    options = {"capture_prompts": capture_prompts, "scope_id": scope_id, "boundary_flush": boundary_flush}
+    options = {
+        "capture_prompts": capture_prompts,
+        "scope_id": scope_id,
+        "boundary_flush": boundary_flush,
+        "workspace_scope": workspace_scope or None,
+    }
     validate_native_options(selected, **options, profile=profile, dsh_command=dsh_command)
 
     def complete(host):
@@ -222,7 +231,7 @@ def setup_agents(
             native["dsh_target"] = resolve_dsh_target(profile, dsh_command)
             if native["dsh_target"].profile == DshProfile.DESKTOP:
                 typer.echo("Fully quit DSH Desktop before replacing its plugin.", err=True)
-        if host == "kimi-code" and not scope_id and not json_output and stdin_is_tty():
+        if host == "kimi-code" and not scope_id and not workspace_scope and not json_output and stdin_is_tty():
             from powercontext.cli.kimi_code import kimi_home
 
             if not (kimi_home() / "plugins/managed/powercontext/powercontext.json").is_file():
@@ -253,7 +262,7 @@ def doctor(
     ] = None,
     dsh_command: Annotated[Path | None, typer.Option(help="DSH launcher path.")] = None,
     runtime: Annotated[bool, typer.Option(help="Inspect Kimi Hook history.")] = False,
-    cwd: Annotated[Path | None, typer.Option(help="Kimi workspace for runtime history.")] = None,
+    cwd: Annotated[Path | None, typer.Option(help="Kimi workspace for Scope resolution and runtime history.")] = None,
     session_id: Annotated[str | None, typer.Option(help="Exact Kimi session.")] = None,
     runtime_data_dir: Annotated[Path | None, typer.Option(help="Actual ZCode plugin data directory.")] = None,
     prepare: Annotated[bool, typer.Option(help="Probe ZCode readonly context preparation.")] = False,
@@ -269,8 +278,8 @@ def doctor(
     from powercontext.cli.installation import installers
     from powercontext.cli.transport import client_config_file
 
-    if (cwd is not None or session_id is not None) and not runtime:
-        raise typer.BadParameter("--cwd and --session-id require --runtime")  # noqa: TRY003 - CLI input validation.
+    if session_id is not None and not runtime:
+        raise typer.BadParameter("--session-id requires --runtime")  # noqa: TRY003 - CLI input validation.
     explicit_server = server_url is not None or allow_insecure_http is not None
     if agents is None and not explicit_server:
         path = client_config_file()
@@ -396,7 +405,11 @@ def _local_service_diagnostics(server_url: str) -> dict[str, Diagnostic]:
     if not is_loopback_host(parsed.hostname):
         return {}
 
-    from powercontext.service.controller import ServiceController
+    try:
+        from powercontext.service.controller import ServiceController
+    except ModuleNotFoundError:
+        # Personal service inspection is optional for CLI-only installations.
+        return {}
     from powercontext.service.model import (
         DefinitionState,
         ManagerState,

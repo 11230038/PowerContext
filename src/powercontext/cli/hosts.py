@@ -59,6 +59,7 @@ def validate_native_options(selected: Sequence[str], **options: Any) -> None:
     owners = {
         "capture_prompts": ("claude-code", "kimi-code", "zcode"),
         "scope_id": ("kimi-code",),
+        "workspace_scope": ("kimi-code",),
         "boundary_flush": ("zcode",),
         "profile": ("dsh",),
         "dsh_command": ("dsh",),
@@ -79,7 +80,7 @@ def native_options(host: str, **options: Any) -> dict[str, Any]:
     fields = {
         "claude-code": ("capture_prompts",),
         "dsh": ("dsh_target",),
-        "kimi-code": ("scope_id", "capture_prompts"),
+        "kimi-code": ("scope_id", "capture_prompts", "workspace_scope"),
         "zcode": ("capture_prompts", "boundary_flush"),
     }
     return {key: options[key] for key in fields.get(host, ()) if options.get(key) is not None}

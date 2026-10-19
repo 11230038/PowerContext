@@ -288,6 +288,10 @@ def configure_agents(
         ),
     ] = None,
     scope_id: Annotated[str | None, typer.Option(help="Existing Scope ID for Kimi Code.")] = None,
+    workspace_scope: Annotated[
+        bool,
+        typer.Option("--workspace-scope", help="Kimi Code: resolve workspace bindings, then the Server default Scope."),
+    ] = False,
     boundary_flush: Annotated[bool | None, typer.Option("--boundary-flush/--no-boundary-flush")] = None,
     profile: Annotated[str | None, typer.Option(help="DSH profile; defaults to the saved profile or web.")] = None,
     dsh_command: Annotated[Path | None, typer.Option(help="DSH launcher path.")] = None,
@@ -307,6 +311,7 @@ def configure_agents(
         selected,
         capture_prompts=capture_prompts,
         scope_id=scope_id,
+        workspace_scope=workspace_scope or None,
         boundary_flush=boundary_flush,
         profile=profile,
         dsh_command=dsh_command,
@@ -314,7 +319,11 @@ def configure_agents(
 
     def configure(host):
         options = native_options(
-            host, capture_prompts=capture_prompts, scope_id=scope_id, boundary_flush=boundary_flush
+            host,
+            capture_prompts=capture_prompts,
+            scope_id=scope_id,
+            workspace_scope=workspace_scope or None,
+            boundary_flush=boundary_flush,
         )
         if host == "dsh":
             options["dsh_target"] = resolve_dsh_target(
