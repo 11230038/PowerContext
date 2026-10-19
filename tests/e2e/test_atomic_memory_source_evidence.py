@@ -22,6 +22,7 @@ from dataclasses import replace
 from typing import cast
 
 import pytest
+from pydantic import field_serializer, field_validator
 from sqlalchemy import event, text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -42,10 +43,10 @@ from powercontext.builtin.runtime.atomic_memory_rebuild import rebuild_atomic_me
 from powercontext.builtin.runtime.relational import RelationalContexts
 from powercontext.builtin.scope import ScopeDraft
 from powercontext.builtin.sources import CONTENT_SOURCE_DEFINITION
-from powercontext.sources import AdapterSourceDefinition, SourceDefinitionRegistry, SourceRef
+from powercontext.sources import AdapterSourceDefinition, SourceDefinitionRegistry, SourceMaterialization, SourceRef
 from powercontext.sources.evidence import MemoryEvidenceDeclaration
 from powercontext.sources.observations import manifest_for_definition, project_source_for_transport
-from tests.builtin.persistence.contract import NoteAdapter, NoteInput
+from tests.builtin.persistence.contract import NoteAdapter, NoteInput, NoteSource
 from tests.e2e.atomic_memory_migration_backend import MigrationBackend
 from tests.e2e.dream_support import atomic_memory_pipeline
 
@@ -68,6 +69,70 @@ async def _commit(contexts, scope_id, artifact_id, text_value, *, sources=(), ar
     async with contexts.database.transaction() as connection:
         result = await application.service.commit(connection, prepared, None)
     return result.primary
+
+
+@pytest.mark.parametrize("declared", [False, True])
+def test_unverifiable_native_serializer_keeps_memory_evidence_neutral(migration_backend, declared) -> None:
+    class SerializedNote(NoteSource):
+        count: int = 12
+
+        @field_serializer("count")
+        def serialize_count(self, value):
+            return str(value)
+
+        @field_validator("count", mode="before")
+        @classmethod
+        def parse_count(cls, value):
+            return int(value)
+
+    class SerializedAdapter(NoteAdapter):
+        source_class = SerializedNote
+
+    declaration = MemoryEvidenceDeclaration(authority="repository_attested", verification="verified")
+    registry = SourceDefinitionRegistry((
+        AdapterSourceDefinition(SerializedAdapter(), memory_evidence=declaration if declared else None),
+    ))
+    config = BuiltinConfig(database=migration_backend.config)
+
+    async def scenario():
+        async with open_builtin_contexts(config, source_registry=registry) as contexts:
+            context = await contexts.get("scope")
+            source = SerializedNote(name="serialized", materialization=SourceMaterialization.CAPTURED, body="Retained.")
+            await context.sources.add(source)
+            assert await context.sources.get(source) == source
+            assert await context.sources.add(source) == source
+            ref = SourceRef(source_type="note", source_id=source.name)
+            record = await _commit(contexts, "scope", "serialized", "Retained fact.", sources=(ref,))
+            evidence = await contexts.atomic_memory.for_scope("scope").evidence("serialized", revision=1)
+            assert evidence.artifact_ref == record.ref
+            assert evidence.sources[0].source_ref == ref
+            assert evidence.sources[0].declaration == MemoryEvidenceDeclaration()
+            assert evidence.sources[0].manifest_fingerprint is None
+            if declared:
+                # Retain the binding shape accepted before schema compatibility checks.
+                async with contexts.database.transaction() as connection:
+                    await connection.execute(
+                        text(
+                            "UPDATE pc_source_evidence_bindings SET manifest_fingerprint = "
+                            "(SELECT fingerprint FROM pc_source_definition_manifests WHERE definition_name = 'note'), "
+                            "declaration = :declaration WHERE scope_id = 'scope' AND source_id = 'serialized'"
+                        ),
+                        {"declaration": declaration.model_dump_json().encode()},
+                    )
+                await _commit(contexts, "scope", "legacy", "Previously accepted fact.", sources=(ref,))
+                legacy = await contexts.atomic_memory.for_scope("scope").evidence("legacy", revision=1)
+                assert legacy.sources == evidence.sources
+        async with open_builtin_contexts(config, source_registry=SourceDefinitionRegistry(())) as contexts:
+            report = await rebuild_atomic_memory_projection(
+                contexts.database,
+                contexts.atomic_memory.index,
+                maintenance_confirmed=True,
+                sources=contexts.repositories.sources,
+            )
+            assert report.ready, report.errors
+            assert await contexts.atomic_memory.for_scope("scope").evidence("serialized", revision=1) == evidence
+
+    asyncio.run(scenario())
 
 
 def test_mixed_evidence_survives_failed_revision_restart_and_rebuild(migration_backend: MigrationBackend) -> None:

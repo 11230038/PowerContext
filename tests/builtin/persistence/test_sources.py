@@ -25,6 +25,7 @@ from sqlalchemy import insert
 from powercontext import InvalidSourceDefinitionError
 from powercontext.builtin.persistence import (
     InvalidRepositoryArgumentError,
+    InvalidStoredPayloadError,
     RepositoryNotFoundError,
     StoredPayloadConflictError,
 )
@@ -297,6 +298,8 @@ def test_precanonical_generated_alias_source_rows_remain_readable_and_replayable
                 )
             )
             ref = SourceRef(source_type="serialization-alias", source_id=source.name)
+            with pytest.raises(InvalidStoredPayloadError):
+                await SourceRepository(()).historical_evidence(connection, "scope-a", (ref,))
             loaded = await repository.get(connection, "scope-a", ref)
             assert loaded.value == source
             assert await repository.add(connection, "scope-a", source) == loaded

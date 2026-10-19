@@ -307,7 +307,9 @@ class SourceRepository:
             row = by_ref.get(ref)
             if row is None:
                 raise RepositoryNotFoundError("source", (scope_id, reference))
-            source, material = await self._historical_material(connection, reference, row)
+            source, material, verifiable = await self._historical_material(connection, reference, row)
+            if not verifiable:
+                fingerprints[ref] = ""  # Never authorize a retained declaration for this capture.
             if isinstance(source, SourceObservation):
                 fingerprints[ref] = source.definition_fingerprint
             elif ref[0] == CONTENT_SOURCE_NAME:
@@ -334,33 +336,14 @@ class SourceRepository:
 
     async def _historical_material(
         self, connection: AsyncConnection, reference: SourceRef, row: Mapping[Any, Any]
-    ) -> tuple[Source, dict[str, JsonValue]]:
+    ) -> tuple[Source, dict[str, JsonValue], bool]:
         """Validate the stored representation and its retained schema, not a live model."""
 
         payload = stored_bytes(row["payload"], column="payload")
         try:
             envelope = load_model(_StoredSourcePayload, payload, kind="source-envelope", name=reference.source_type)
         except InvalidStoredPayloadError:
-            # Bare legacy material has no representation discriminator. Use
-            # its registered decoder when available; otherwise retain opaque
-            # canonical fields for neutral maintenance, not a guessed schema.
-            try:
-                self._registry.definition_for_name(reference.source_type)
-            except SourceDefinitionNotFoundError:
-                source = load_model(Source, payload, kind="source", name=reference.source_type)
-                if source.name != reference.source_id:
-                    raise IdentityMismatchError("source", reference.source_id, source.name) from None
-                try:
-                    material = _JSON_OBJECT.validate_json(payload, strict=True)
-                except ValueError as error:
-                    raise InvalidStoredPayloadError("source", reference.source_type, "payload is not JSON") from error
-                return source, material
-            source = self._decode_row(row).value
-            try:
-                material = _JSON_OBJECT.validate_json(payload, strict=True)
-            except ValueError as error:
-                raise InvalidStoredPayloadError("source", reference.source_type, "payload is not JSON") from error
-            return source, material
+            return self._historical_legacy_material(reference, row, payload)
         material = envelope.value
         source = self._historical_source(reference, envelope)
         decoded = SourceRef(
@@ -370,22 +353,30 @@ class SourceRepository:
         if reference != decoded:
             raise IdentityMismatchError("source", reference, decoded)
         table = SOURCE_EVIDENCE_BINDINGS_TABLE
-        fingerprint = await connection.scalar(
-            select(table.c.manifest_fingerprint).where(
-                table.c.scope_id == row["scope_id"],
-                table.c.source_type == reference.source_type,
-                table.c.source_id == reference.source_id,
-                table.c.definition_name == reference.source_type,
-                table.c.definition_version == source.definition_version,
+        binding = (
+            await connection.execute(
+                select(table.c.manifest_fingerprint, table.c.material_digest).where(
+                    table.c.scope_id == row["scope_id"],
+                    table.c.source_type == reference.source_type,
+                    table.c.source_id == reference.source_id,
+                    table.c.definition_name == reference.source_type,
+                    table.c.definition_version == source.definition_version,
+                )
             )
-        )
+        ).one_or_none()
         manifest = await _find_evidence_manifest(connection, reference.source_type, source.definition_version)
-        if manifest is not None and manifest.fingerprint == fingerprint:
+        if manifest is not None and binding is not None and manifest.fingerprint == binding.manifest_fingerprint:
             try:
                 Draft202012Validator.check_schema(manifest.source_schema)
                 value = source.payload if isinstance(source, SourceObservation) else material
                 Draft202012Validator(manifest.source_schema, registry=Registry()).validate(value)
             except JsonSchemaValidationError as error:
+                if envelope.representation == "native" and binding.material_digest == _source_material_digest_material(
+                    material
+                ):
+                    # Older releases bound declarations without checking serialization
+                    # compatibility. Exact accepted bytes remain readable, but neutral.
+                    return source, material, False
                 raise InvalidStoredPayloadError(
                     "source", reference.source_type, "payload does not match the historical schema"
                 ) from error
@@ -393,7 +384,29 @@ class SourceRepository:
                 self._validate_unbound_material(reference, envelope, source)
         else:
             self._validate_unbound_material(reference, envelope, source)
-        return source, material
+        return source, material, True
+
+    def _historical_legacy_material(
+        self, reference: SourceRef, row: Mapping[Any, Any], payload: bytes
+    ) -> tuple[Source, dict[str, JsonValue], bool]:
+        """Read bare legacy material without guessing absent identity fields."""
+        try:
+            material = _JSON_OBJECT.validate_json(payload, strict=True)
+        except ValueError as error:
+            raise InvalidStoredPayloadError("source", reference.source_type, "payload is not JSON") from error
+        try:
+            self._registry.definition_for_name(reference.source_type)
+        except SourceDefinitionNotFoundError:
+            source = load_model(Source, payload, kind="source", name=reference.source_type)
+            if not {"name", "definition_version", "materialization"} <= source.model_fields_set:
+                raise InvalidStoredPayloadError(
+                    "source", reference.source_type, "legacy native identity requires its registered decoder"
+                ) from None
+            if source.name != reference.source_id:
+                raise IdentityMismatchError("source", reference.source_id, source.name) from None
+        else:
+            source = self._decode_row(row).value
+        return source, material, True
 
     def _historical_source(self, reference: SourceRef, envelope: _StoredSourcePayload) -> Source:
         """Decode identity independently of retained material and today's business defaults."""
@@ -423,6 +436,10 @@ class SourceRepository:
         with suppress(SourceDefinitionNotFoundError):
             definition = self._registry.definition_for_name(reference.source_type)
             header = _normalize_native_material(definition.source_class, material)
+        if not {"name", "definition_version", "materialization"} <= header.keys():
+            raise InvalidStoredPayloadError(
+                "source", reference.source_type, "legacy native identity requires its registered decoder"
+            )
         try:
             return load_model(Source, rfc8785.dumps(header), kind="source", name=reference.source_type)
         except InvalidStoredPayloadError:
@@ -526,6 +543,16 @@ class SourceRepository:
         else:
             definition = self._registry.definition_for_source(source)
             manifest = await SourceDefinitionManifestRepository().register_native(connection, definition)
+            if manifest is not None:
+                # A native decoder can accept representations its generated schema
+                # cannot describe. Such captures are valid, but cannot attest evidence.
+                try:
+                    Draft202012Validator.check_schema(manifest.source_schema)
+                    Draft202012Validator(manifest.source_schema, registry=Registry()).validate(
+                        source.model_dump(mode="json", by_alias=True)
+                    )
+                except (JsonSchemaValidationError, SchemaError, Unresolvable):
+                    manifest = None
         declaration = (
             MemoryEvidenceDeclaration() if manifest is None else self._registry.memory_evidence_for_source(source)
         )
