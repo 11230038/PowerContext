@@ -155,23 +155,30 @@ def test_zcode_setup_rejects_invalid_origin_without_changing_installation(
 
 
 @pytest.mark.parametrize("authorization", ["raw-token", "Bearer invalid token"])
-def test_zcode_setup_rejects_invalid_runtime_authorization_before_installation(
-    tmp_path: Path, monkeypatch, authorization: str
+@pytest.mark.parametrize("command", ["setup", "config"])
+def test_zcode_rejects_invalid_runtime_authorization_without_changing_installation(
+    tmp_path: Path, monkeypatch, authorization: str, command: str
 ) -> None:
     home = tmp_path / "home"
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(zcode, "zcode_config_file", lambda: home / ".zcode/cli/config.json")
     monkeypatch.setattr(zcode, "zcode_executable", lambda: "zcode")
-    monkeypatch.setenv("POWERCONTEXT_ZCODE_AUTHORIZATION", authorization)
+    monkeypatch.delenv("POWERCONTEXT_ZCODE_AUTHORIZATION", raising=False)
     monkeypatch.setenv("POWERCONTEXT_CLIENT_CONFIG_FILE", str(home / "clients.json"))
     checkout = tmp_path / "checkout"
     _checkout(checkout)
+    if command == "config":
+        install_plugin("zcode", source=str(checkout), server_url="https://old.example")
+    before = {path: path.read_bytes() for path in home.rglob("*") if path.is_file()}
+    monkeypatch.setenv("POWERCONTEXT_ZCODE_AUTHORIZATION", authorization)
+    arguments = ["setup", "zcode", "--source", str(checkout)] if command == "setup" else ["config", "agent", "zcode"]
 
-    result = CliRunner().invoke(create_cli([setup_app]), ["setup", "zcode", "--source", str(checkout), "--json"])
+    result = CliRunner().invoke(create_cli(), [*arguments, "--server-url", "https://new.example", "--json"])
 
     assert result.exit_code == 1, result.output
     assert "authorization" in json.loads(result.output)["hosts"]["zcode"]["error"].lower()
     assert authorization not in result.output
-    assert not home.exists()
+    assert {path: path.read_bytes() for path in home.rglob("*") if path.is_file()} == before
 
 
 def test_zcode_upgrade_rejects_missing_packaged_reference_and_preserves_installation(
@@ -391,17 +398,44 @@ def test_zcode_upgrade_keeps_saved_capture_and_boundary_options(tmp_path: Path, 
     )
 
 
-def test_configuration_preserves_other_headers_and_drops_old_endpoint_authorization(tmp_path, monkeypatch):
-    from powercontext.cli.transport import SetupTransport
-
+@pytest.mark.parametrize("command", ["setup", "config"])
+@pytest.mark.parametrize(
+    ("header", "authorization"),
+    [
+        ("Authorization", "Bearer previous-server-token"),
+        ("authorization", "Bearer previous-server-token"),
+        ("Authorization", "${POWERCONTEXT_ZCODE_AUTHORIZATION}"),
+    ],
+)
+def test_zcode_rebinding_preserves_other_headers_and_drops_old_authorization(
+    tmp_path, monkeypatch, installed_agent_checks, command, header, authorization
+):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(zcode, "zcode_config_file", lambda: tmp_path / "zcode/config.json")
     monkeypatch.setattr(zcode, "zcode_executable", lambda: "zcode")
-    monkeypatch.setenv("POWERCONTEXT_ZCODE_AUTHORIZATION", "Bearer synthetic-test-token")
-    installed = install_plugin("zcode", source=str(Path(__file__).parents[1]), server_url="https://old.example")
+    monkeypatch.delenv("POWERCONTEXT_ZCODE_AUTHORIZATION", raising=False)
+    source = str(Path(__file__).parents[1])
+    installed = install_plugin("zcode", source=source, server_url="https://old.example")
     mcp_path = Path(installed["plugin_path"]) / ".mcp.json"
     mcp = json.loads(mcp_path.read_text())
-    mcp["mcpServers"]["powercontext"]["headers"]["X-Custom"] = "keep"
+    mcp["mcpServers"]["powercontext"]["headers"] = {header: authorization, "X-Custom": "keep"}
     mcp_path.write_text(json.dumps(mcp))
-    monkeypatch.delenv("POWERCONTEXT_ZCODE_AUTHORIZATION")
-    zcode.ZCodeInstaller().configure(SetupTransport("zcode", "https://new.example", False))
+    arguments = ["setup", "zcode", "--source", source] if command == "setup" else ["config", "agent", "zcode"]
+    cli, runner = create_cli(), CliRunner()
+    result = runner.invoke(cli, [*arguments, "--server-url", "https://old.example", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(mcp_path.read_text())["mcpServers"]["powercontext"]["headers"] == {
+        header: authorization,
+        "X-Custom": "keep",
+    }
+    result = runner.invoke(cli, [*arguments, "--server-url", "https://new.example", "--json"])
+    assert result.exit_code == 0, result.output
     assert json.loads(mcp_path.read_text())["mcpServers"]["powercontext"]["headers"] == {"X-Custom": "keep"}
+    monkeypatch.setenv("POWERCONTEXT_ZCODE_AUTHORIZATION", "Bearer replacement-token")
+    result = runner.invoke(cli, [*arguments, "--server-url", "https://third.example", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(mcp_path.read_text())["mcpServers"]["powercontext"]["headers"] == {
+        "Authorization": "${POWERCONTEXT_ZCODE_AUTHORIZATION}",
+        "X-Custom": "keep",
+    }
+    assert "replacement-token" not in mcp_path.read_text()

@@ -299,6 +299,7 @@ def configure_agents(
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     """Update existing agent connections without installing or activating plugins."""
+    from powercontext.cli.authorization import validate_setup_authorization
     from powercontext.cli.dsh_runtime import DshProfile, resolve_dsh_target
     from powercontext.cli.hosts import native_options, report_agents, select_hosts, validate_native_options
     from powercontext.cli.installation import installers
@@ -318,6 +319,7 @@ def configure_agents(
     )
 
     def configure(host):
+        validate_setup_authorization(host)
         options = native_options(
             host,
             capture_prompts=capture_prompts,

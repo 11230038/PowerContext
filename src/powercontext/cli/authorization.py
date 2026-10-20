@@ -186,7 +186,7 @@ def setup_authorization_value(host: str) -> str | None:
 
 
 def validate_setup_authorization(host: str) -> None:
-    """Reject invalid explicit credentials before installation changes the host."""
+    """Reject invalid explicit credentials before changing host configuration."""
     if host in _AUTHORIZATION_ENVIRONMENTS:
         value = setup_authorization_value(host)
         if value is not None and value.strip():
