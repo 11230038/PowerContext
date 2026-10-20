@@ -422,6 +422,10 @@ class SourceRepository:
                     raise IdentityMismatchError("source-envelope", value, material.get(alias))
             return envelope.source
         # Legacy aliased rows need their registered decoder once; canonical rows do not.
+        if {"name", "definition_version", "materialization"} <= material.keys() and material[
+            "name"
+        ] == reference.source_id:
+            return load_model(Source, rfc8785.dumps(material), kind="source", name=reference.source_type)
         with suppress(SourceDefinitionNotFoundError):
             definition = self._registry.definition_for_name(reference.source_type)
             if any(
@@ -430,8 +434,6 @@ class SourceRepository:
             ):
                 source, _ = self._decode_envelope(reference.source_type, envelope)
                 return source
-        if {"name", "definition_version", "materialization"} <= material.keys():
-            return load_model(Source, rfc8785.dumps(material), kind="source", name=reference.source_type)
         header = material
         with suppress(SourceDefinitionNotFoundError):
             definition = self._registry.definition_for_name(reference.source_type)
@@ -458,6 +460,12 @@ class SourceRepository:
         try:
             definition = self._registry.definition_for_name(reference.source_type)
         except SourceDefinitionNotFoundError:
+            return
+        if envelope.source is None and any(
+            (definition.source_class.model_fields[key].serialization_alias or key) != key
+            for key in ("name", "definition_version", "materialization")
+        ):
+            # Today's identity aliases cannot validate an older unbound representation.
             return
         if definition.version == source.definition_version:
             self._decode_envelope(reference.source_type, envelope)

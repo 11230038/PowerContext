@@ -32,7 +32,8 @@ from powercontext.builtin.persistence.errors import (
     StoredPayloadConflictError,
 )
 from powercontext.builtin.persistence.tables import SOURCE_DEFINITION_MANIFESTS_TABLE
-from powercontext.sources import SourceDefinition, SourceDefinitionManifest, manifest_for_definition
+from powercontext.sources import SourceDefinition, SourceDefinitionManifest
+from powercontext.sources.observations import _manifest_for_definition
 
 
 class SourceDefinitionManifestRepository:
@@ -86,7 +87,7 @@ class SourceDefinitionManifestRepository:
         """
 
         try:
-            manifest = manifest_for_definition(definition)
+            manifest = _manifest_for_definition(definition, transport=False)
         except Exception:  # Native schema providers may not expose a valid manifest.
             return None
         try:

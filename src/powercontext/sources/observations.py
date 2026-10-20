@@ -161,9 +161,26 @@ class SourceObservation(Source):
 
 
 def manifest_for_definition(definition: SourceDefinition[Any, Any, Any], /) -> SourceDefinitionManifest:
-    """Build the immutable declaration transported by a remote worker."""
+    """Build a worker declaration with canonical envelope keys and aliased business fields."""
 
+    return _manifest_for_definition(definition, transport=True)
+
+
+def _manifest_for_definition(
+    definition: SourceDefinition[Any, Any, Any],
+    /,
+    *,
+    transport: bool,
+) -> SourceDefinitionManifest:
+    aliases = _transport_identity_aliases(definition.source_class) if transport else {}
     source_schema = _json_object(definition.source_class.model_json_schema(mode="serialization"))
+    if aliases:
+        properties = source_schema.get("properties")
+        if isinstance(properties, dict):
+            source_schema["properties"] = {aliases.get(key, key): value for key, value in properties.items()}
+        required = source_schema.get("required")
+        if isinstance(required, list):
+            source_schema["required"] = [aliases.get(key, key) if isinstance(key, str) else key for key in required]
     projections = tuple(
         SourceProjectionManifest(
             key=SourceProjectionKey(name=projection.name, version=projection.version),
@@ -200,6 +217,8 @@ def project_source_for_transport(
         )
     manifest = manifest_for_definition(definition)
     payload = _json_object(source.model_dump(mode="json", by_alias=True))
+    aliases = _transport_identity_aliases(type(source))
+    payload = {aliases.get(key, key): value for key, value in payload.items()}
     projections = tuple(
         SourceProjectionValue(key=key, value=registry.project(source, key)) for key in registry.projection_keys(source)
     )
@@ -213,6 +232,33 @@ def project_source_for_transport(
         payload=payload,
         projections=projections,
     )
+
+
+def _transport_identity_aliases(source_class: type[Source], /) -> dict[str, str]:
+    """Reject ambiguous aliases before moving envelope keys in schemas or values."""
+
+    identity = Source.model_fields
+    fields = source_class.model_fields
+    serialized: dict[str, str] = {}
+    projected: set[str] = set()
+    for name, field in fields.items():
+        if field.exclude:
+            continue
+        alias = field.serialization_alias if field.serialization_alias is not None else name
+        if alias in serialized:
+            raise InvalidSourceDefinitionError(
+                source_class,
+                "serialization_alias",
+                f"{alias!r} is shared by {serialized[alias]!r} and {name!r}",
+            )
+        serialized[alias] = name
+        target = name if name in identity else alias
+        if target in projected:
+            raise InvalidSourceDefinitionError(
+                source_class, "serialization_alias", f"{target!r} collides after envelope normalization"
+            )
+        projected.add(target)
+    return {alias: name for alias, name in serialized.items() if name in identity}
 
 
 def _source_definition_fingerprint(
