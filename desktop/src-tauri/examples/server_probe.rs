@@ -409,7 +409,7 @@ async fn verify_scope_pages(
         .unwrap();
     assert!(first.next_cursor.is_some());
     assert_eq!(second.items.len(), 1);
-    assert!(second.next_cursor.is_none());
+    assert!(second.next_cursor.flatten().is_none());
     let found: std::collections::BTreeSet<_> = first
         .items
         .iter()
