@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from hashlib import sha256
@@ -29,6 +30,7 @@ from sqlalchemy import cast as sql_cast
 from sqlalchemy.ext.asyncio import AsyncConnection
 from typing_extensions import override
 
+from powercontext._logging import log_safely
 from powercontext.artifacts import ArtifactRef, ArtifactSearchContractError, ArtifactSearchMatch
 from powercontext.artifacts.search import ArtifactSearchExecutionContext
 from powercontext.builtin.artifacts.atomic_memory.errors import (
@@ -88,6 +90,27 @@ from powercontext.builtin.persistence.tags import tag_predicate
 from powercontext.builtin.records import BaseOperationNotSupportedError, InvalidBaseAccessRequestError
 from powercontext.builtin.runtime.artifact_merge import ArtifactMergeAccess, merge_artifact_tags
 from powercontext.builtin.tags import TagFilter
+
+logger = logging.getLogger(__name__)
+
+
+def _log_embedding_fallback(error: Exception) -> None:
+    """Record that a bounded query embedding gave way to lexical retrieval; the query itself is never logged."""
+
+    log_safely(
+        logger,
+        logging.WARNING,
+        "Memory search fell back to lexical retrieval",
+        extra={
+            "event": "memory.search.embedding_fallback",
+            "outcome": "fallback",
+            "mode": "text",
+            "error_code": "inference_timeout"
+            if isinstance(error, (InferenceTimeoutError, TimeoutError))
+            else "inference_unavailable",
+            "unit": "memory",
+        },
+    )
 
 
 class AtomicMemoryAccess(ArtifactMergeAccess):
@@ -665,6 +688,7 @@ class ScopedAtomicMemory:
                 raise InferenceUnavailableError("embedding", "Atomic query embedding timed out") from exc
             if requested_mode != "auto" or not capabilities.fts:
                 raise
+            _log_embedding_fallback(exc)
             return "text", None, None, 1
         if len(result.vectors) != 1:
             raise AtomicMemoryIndexError("embedding-result", "Expected one query vector")
