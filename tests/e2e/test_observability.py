@@ -252,6 +252,9 @@ class _VectorMemoryIndex:
     async def read_evidence(self, connection, scope_id, artifact_ref, /):
         return await self._evidence.read(connection, scope_id, artifact_ref)
 
+    async def validate_current(self, connection: AsyncConnection, /):
+        pass
+
     async def replace(self, connection: AsyncConnection, scope_id: str, projection: AtomicMemoryProjection, /):
         pass
 
