@@ -361,8 +361,9 @@ class TopicMemoryRepository:
     ) -> tuple[TopicMemoryCurrentItem, ...]:
         """Return an exclusive, bounded current-head page in stable publication order."""
 
-        if not 1 <= limit <= 100:
-            raise InvalidRepositoryArgumentError("limit", "must be between 1 and 100")
+        # Public readers cap pages at 100; one extra row determines whether a cursor is needed.
+        if not 1 <= limit <= 101:
+            raise InvalidRepositoryArgumentError("limit", "must be between 1 and 101")
         await self._check_retrieval_shape(connection)
         statement = (
             select(
@@ -480,22 +481,21 @@ class TopicMemoryRepository:
                 "query",
                 f"must contain at most {MAX_TOPIC_MEMORY_QUERY_LENGTH} characters",
             )
-        analyzed = analyze_text(query)
         used_mode = self._select_mode(mode, query_vector, embedding_profile)
         if artifact_request is not None:
             admission = artifact_request.admission.as_floor()
         fusion = self._search_fusion_parameters(used_mode, artifact_request)
-        query_terms = tuple(sorted(set(analyzed.split())))
-        if used_mode in {"fts", "hybrid"} and len(query_terms) > MAX_TOPIC_MEMORY_QUERY_TERMS:
-            raise InvalidRepositoryArgumentError(
-                "query",
-                f"must contain at most {MAX_TOPIC_MEMORY_QUERY_TERMS} distinct Analyzer terms",
-            )
+        query_terms: tuple[str, ...] = ()
+        if used_mode in {"fts", "hybrid"}:
+            if len(set(analyze_text(query).split())) > MAX_TOPIC_MEMORY_QUERY_TERMS:
+                raise InvalidRepositoryArgumentError(
+                    "query",
+                    f"must contain at most {MAX_TOPIC_MEMORY_QUERY_TERMS} distinct Analyzer terms",
+                )
+            query_terms = tuple(sorted(set(analyze_fts_query(query).split())))
         query_vector = self._canonical_query_vector(used_mode, query_vector)
         await self._check_retrieval_shape(connection)
-        analyzed = analyze_fts_query(query)
-        query_terms = tuple(sorted(set(analyzed.split())))
-        if not analyzed and used_mode == "fts":
+        if not query_terms and used_mode == "fts":
             return TopicMemorySearchResult(
                 mode=used_mode, hits=(), artifacts=() if artifact_request is not None else None
             )
@@ -523,10 +523,12 @@ class TopicMemoryRepository:
         artifacts = None
         if artifact_request is not None:
             try:
-                artifacts = tuple([
-                    cast(TopicMemory, await self.artifacts.get(connection, scope_id, hit.artifact_ref))
-                    for hit in outcome.hits
-                ])
+                artifacts = cast(
+                    tuple[TopicMemory, ...],
+                    await self.artifacts.get_many(
+                        connection, scope_id, tuple(hit.artifact_ref for hit in outcome.hits)
+                    ),
+                )
             except RepositoryNotFoundError as error:
                 raise ArtifactSearchContractError(TopicMemory.family, "selected exact Artifact is missing") from error
         return TopicMemorySearchResult(

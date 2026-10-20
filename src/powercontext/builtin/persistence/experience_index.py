@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, Protocol
 
-from sqlalchemy import select, text, update
+from sqlalchemy import select, text, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.artifacts import ArtifactRef
@@ -36,7 +36,9 @@ from powercontext.builtin.artifacts.search import (
     AdmissionCounts,
     AdmissionFloor,
     InvalidSearchScore,
+    admits_fts_projection,
     admits_fts_text,
+    analyze_text,
     lexical_search_score,
 )
 from powercontext.builtin.artifacts.skill import (
@@ -240,6 +242,7 @@ async def rebuild_experience_projections(connection: AsyncConnection, /) -> None
                     ARTIFACT_HEADS_TABLE.c.artifact_id,
                     ARTIFACT_HEADS_TABLE.c.revision,
                     ARTIFACTS_TABLE.c.content,
+                    ARTIFACT_HEADS_TABLE.c.searchable_text,
                 )
                 .join(
                     ARTIFACTS_TABLE,
@@ -254,50 +257,54 @@ async def rebuild_experience_projections(connection: AsyncConnection, /) -> None
         ).mappings()
     )
     for row in rows:
+        searchable = experience_searchable_text(_content(row["content"]))
+        if row["searchable_text"] == searchable:
+            continue
         await _update_searchable_text(
             connection,
             scope_id=str(row["scope_id"]),
             artifact_id=str(row["artifact_id"]),
             revision=int(row["revision"]),
-            searchable_text=experience_searchable_text(_content(row["content"])),
+            searchable_text=searchable,
         )
 
 
 async def rebuild_skill_projections(connection: AsyncConnection, /) -> None:
-    """Rebuild searchable text on managed Skill heads from durable content caches."""
-
-    rows = tuple(
-        (
-            await connection.execute(
-                select(
-                    ARTIFACT_HEADS_TABLE.c.scope_id,
-                    ARTIFACT_HEADS_TABLE.c.artifact_id,
-                    ARTIFACT_HEADS_TABLE.c.revision,
-                    ARTIFACTS_TABLE.c.content,
-                )
-                .join(
-                    ARTIFACTS_TABLE,
-                    (ARTIFACTS_TABLE.c.scope_id == ARTIFACT_HEADS_TABLE.c.scope_id)
-                    & (ARTIFACTS_TABLE.c.family == ARTIFACT_HEADS_TABLE.c.family)
-                    & (ARTIFACTS_TABLE.c.artifact_id == ARTIFACT_HEADS_TABLE.c.artifact_id)
-                    & (ARTIFACTS_TABLE.c.revision == ARTIFACT_HEADS_TABLE.c.revision),
-                )
-                .where(ARTIFACT_HEADS_TABLE.c.family == Skill.family)
-                .order_by(ARTIFACT_HEADS_TABLE.c.scope_id, ARTIFACT_HEADS_TABLE.c.artifact_id)
+    """Verify package authority and recover searchable text in bounded head pages."""
+    heads, artifacts = ARTIFACT_HEADS_TABLE, ARTIFACTS_TABLE
+    after = ("", "")
+    while True:
+        statement = (
+            select(
+                heads.c.scope_id, heads.c.artifact_id, heads.c.revision, artifacts.c.content, heads.c.searchable_text
             )
-        ).mappings()
-    )
-    for row in rows:
-        content = _skill_content(row["content"])
-        package = await _load_skill_package(connection, str(row["scope_id"]), content)
-        await _update_searchable_text(
-            connection,
-            scope_id=str(row["scope_id"]),
-            family=Skill.family,
-            artifact_id=str(row["artifact_id"]),
-            revision=int(row["revision"]),
-            searchable_text=skill_searchable_text(content, package),
+            .join(
+                artifacts,
+                (artifacts.c.scope_id == heads.c.scope_id)
+                & (artifacts.c.family == heads.c.family)
+                & (artifacts.c.artifact_id == heads.c.artifact_id)
+                & (artifacts.c.revision == heads.c.revision),
+            )
+            .where(heads.c.family == Skill.family, tuple_(heads.c.scope_id, heads.c.artifact_id) > after)
+            .order_by(heads.c.scope_id, heads.c.artifact_id)
+            .limit(32)
         )
+        rows = tuple((await connection.execute(statement)).mappings())
+        if not rows:
+            return
+        searchable = await _skill_projection_texts(connection, rows)
+        for row in rows:
+            value = searchable[row["scope_id"], row["artifact_id"]]
+            if row["searchable_text"] != value:
+                await _update_searchable_text(
+                    connection,
+                    scope_id=row["scope_id"],
+                    family=Skill.family,
+                    artifact_id=row["artifact_id"],
+                    revision=row["revision"],
+                    searchable_text=value,
+                )
+        after = (rows[-1]["scope_id"], rows[-1]["artifact_id"])
 
 
 async def replace_experience_projection(
@@ -424,8 +431,8 @@ def skill_search_hits(
     hits: list[SkillSearchHit] = []
     for row in rows:
         content = _skill_content(row["content"])
-        searchable = row.get("searchable_text") or skill_search_text(content)
-        if not admits_fts_text(query, str(searchable), floor=admission):
+        searchable = row.get("searchable_text") or analyze_text(skill_search_text(content))
+        if not admits_fts_projection(query, str(searchable), floor=admission):
             continue
         retrieval_score, channel_scores = _search_scores(row, required=require_scores or min_score is not None)
         if min_score is not None and (retrieval_score is None or retrieval_score < min_score):
@@ -500,25 +507,34 @@ def _skill_content(value: object) -> SkillContent:
     )
 
 
-async def _load_skill_package(
-    connection: AsyncConnection,
-    scope_id: str,
-    content: SkillContent,
-) -> SkillPackageSnapshot | None:
-    if content.package is None:
-        return None
-    archive = await connection.scalar(
-        select(SKILL_PACKAGES_TABLE.c.archive_bytes).where(
-            SKILL_PACKAGES_TABLE.c.scope_id == scope_id,
-            SKILL_PACKAGES_TABLE.c.tree_digest == content.package.tree_digest,
-        )
+async def _skill_projection_texts(connection, rows):
+    references = {}
+    searchable = {}
+    for row in rows:
+        content = _skill_content(row["content"])
+        identity = (row["scope_id"], row["artifact_id"])
+        if content.package is None:
+            searchable[identity] = skill_searchable_text(content, None)
+        else:
+            key = (row["scope_id"], content.package.tree_digest)
+            references.setdefault(key, []).append((identity, content))
+    if not references:
+        return searchable
+    packages = SKILL_PACKAGES_TABLE
+    statement = select(packages.c.scope_id, packages.c.tree_digest, packages.c.archive_bytes).where(
+        tuple_(packages.c.scope_id, packages.c.tree_digest).in_(tuple(references))
     )
-    if archive is None:
-        raise RepositoryNotFoundError("skill-package", (scope_id, content.package.tree_digest))
-    snapshot = capture_skill_archive(stored_bytes(archive, column="archive_bytes"))
-    if snapshot.reference != content.package:
-        raise RepositoryNotFoundError("skill-package", (scope_id, content.package.tree_digest))
-    return snapshot
+    async with connection.stream(statement.execution_options(yield_per=1)) as result:
+        async for package in result.mappings():
+            key = (package["scope_id"], package["tree_digest"])
+            snapshot = capture_skill_archive(stored_bytes(package["archive_bytes"], column="archive_bytes"))
+            for identity, content in references.pop(key):
+                if snapshot.reference != content.package:
+                    raise RepositoryNotFoundError("skill-package", key)
+                searchable[identity] = skill_searchable_text(content, snapshot)
+    if references:
+        raise RepositoryNotFoundError("skill-package", next(iter(references)))
+    return searchable
 
 
 __all__ = [

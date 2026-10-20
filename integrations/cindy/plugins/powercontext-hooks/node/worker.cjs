@@ -397,6 +397,17 @@ const OPERATIONS = {
 		successStatuses: [202],
 		emptyStatuses: []
 	},
+	capture_working_note: {
+		method: "POST",
+		path: "/v1/sources/working-notes",
+		location: "body",
+		scopeMode: "current",
+		pathParameters: [],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [202],
+		emptyStatuses: []
+	},
 	register_source_definition: {
 		method: "POST",
 		path: "/v1/source-definitions/register",
@@ -455,6 +466,28 @@ const OPERATIONS = {
 	prepare_context: {
 		method: "POST",
 		path: "/v1/context/prepare",
+		location: "body",
+		scopeMode: "current",
+		pathParameters: [],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [200],
+		emptyStatuses: []
+	},
+	prepare_bootstrap_context: {
+		method: "POST",
+		path: "/v1/context/bootstrap",
+		location: "body",
+		scopeMode: "current",
+		pathParameters: [],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [200],
+		emptyStatuses: []
+	},
+	record_bootstrap_delivery: {
+		method: "POST",
+		path: "/v1/context/bootstrap/receipts",
 		location: "body",
 		scopeMode: "current",
 		pathParameters: [],
@@ -1040,9 +1073,9 @@ const OPERATIONS = {
 		successStatuses: [200],
 		emptyStatuses: []
 	},
-	list_artifact_candidates: {
+	list_candidates: {
 		method: "POST",
-		path: "/v1/artifact-candidates/list",
+		path: "/v1/candidates/list",
 		location: "body",
 		scopeMode: "current",
 		pathParameters: [],
@@ -1051,9 +1084,9 @@ const OPERATIONS = {
 		successStatuses: [200],
 		emptyStatuses: []
 	},
-	get_artifact_candidate: {
+	get_candidate: {
 		method: "POST",
-		path: "/v1/artifact-candidates/get",
+		path: "/v1/candidates/get",
 		location: "body",
 		scopeMode: "current",
 		pathParameters: [],
@@ -1062,9 +1095,9 @@ const OPERATIONS = {
 		successStatuses: [200],
 		emptyStatuses: []
 	},
-	approve_artifact_candidate: {
+	approve_candidate: {
 		method: "POST",
-		path: "/v1/artifact-candidates/approve",
+		path: "/v1/candidates/approve",
 		location: "body",
 		scopeMode: "current",
 		pathParameters: [],
@@ -1073,9 +1106,9 @@ const OPERATIONS = {
 		successStatuses: [200],
 		emptyStatuses: []
 	},
-	reject_artifact_candidate: {
+	reject_candidate: {
 		method: "POST",
-		path: "/v1/artifact-candidates/reject",
+		path: "/v1/candidates/reject",
 		location: "body",
 		scopeMode: "current",
 		pathParameters: [],
@@ -1084,9 +1117,20 @@ const OPERATIONS = {
 		successStatuses: [200],
 		emptyStatuses: []
 	},
-	revise_artifact_candidate: {
+	revise_candidate: {
 		method: "POST",
-		path: "/v1/artifact-candidates/revise",
+		path: "/v1/candidates/revise",
+		location: "body",
+		scopeMode: "current",
+		pathParameters: [],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [200],
+		emptyStatuses: []
+	},
+	get_candidate_history: {
+		method: "POST",
+		path: "/v1/candidates/history",
 		location: "body",
 		scopeMode: "current",
 		pathParameters: [],
@@ -1177,6 +1221,36 @@ const OPERATIONS = {
 			"limit",
 			"cursor"
 		],
+		headerParams: [],
+		successStatuses: [200],
+		emptyStatuses: []
+	},
+	resolve_artifact_handle: {
+		method: "GET",
+		path: "/v1/scopes/{scope_id}/artifact-handles/{family}/{key}",
+		location: null,
+		scopeMode: "none",
+		pathParameters: [
+			"scope_id",
+			"family",
+			"key"
+		],
+		queryParams: [],
+		headerParams: [],
+		successStatuses: [200],
+		emptyStatuses: []
+	},
+	bind_artifact_handle: {
+		method: "PUT",
+		path: "/v1/scopes/{scope_id}/artifact-handles/{family}/{key}",
+		location: "body",
+		scopeMode: "none",
+		pathParameters: [
+			"scope_id",
+			"family",
+			"key"
+		],
+		queryParams: [],
 		headerParams: [],
 		successStatuses: [200],
 		emptyStatuses: []
@@ -1642,6 +1716,7 @@ var PowerContextClient = class {
 	}
 	buildInit(spec, request, signal, requestTimeoutMs = this.requestTimeoutMs) {
 		const headers = {
+			"X-PowerContext-Dream-Contract": "2",
 			Accept: "application/json",
 			"User-Agent": this.userAgent,
 			...request.headers

@@ -73,6 +73,8 @@ for (const item of Object.values(contract.paths))
     if (wanted.includes(op?.operationId)) collectSchemas(op);
 function rustType(schema) {
   if (schema.$ref) return schema.$ref.split("/").at(-1);
+  // A single-member allOf is how the contract annotates a nullable or described reference.
+  if (schema.allOf?.length === 1) return rustType(schema.allOf[0]);
   switch (schema.type) {
     case "string":
       return "String";
@@ -169,7 +171,9 @@ for (const [name, text] of Object.entries(outputs)) {
   const target = new URL(name, root);
   if (process.argv.includes("--check")) {
     if ((await readFile(target, "utf8")).replaceAll("\r\n", "\n") !== text)
-      throw new Error("Contract drift: " + name);
+      throw new Error(
+        "Contract drift: " + name + ". Run 'pnpm --dir desktop generate'.",
+      );
   } else {
     await mkdir(fileURLToPath(new URL(".", target)), { recursive: true });
     await writeFile(target, text);

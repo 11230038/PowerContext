@@ -55,7 +55,7 @@ from powercontext.builtin.persistence import RecurrenceRepository
 from powercontext.builtin.persistence.artifacts import ArtifactRepository, RepositoryArtifactDraft
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.runtime import (
-    ApproveArtifactCandidateRequest,
+    ApproveCandidateRequest,
     BuiltinConfig,
     BuiltinRuntime,
     CaptureSource,
@@ -141,7 +141,7 @@ def test_scoped_statistics_reports_current_inventory_and_recall_reduction() -> N
                 )
             )
             await runtime.review.for_scope(scope_id).approve(
-                ApproveArtifactCandidateRequest(
+                ApproveCandidateRequest(
                     candidate_id=candidate.candidate_id,
                     expected_version=candidate.version,
                 )
@@ -208,7 +208,7 @@ def test_recall_estimates_each_source_as_complete_text() -> None:
                 )
             )
             await runtime.review.for_scope(scope_id).approve(
-                ApproveArtifactCandidateRequest(
+                ApproveCandidateRequest(
                     candidate_id=candidate.candidate_id,
                     expected_version=candidate.version,
                 )
@@ -528,7 +528,7 @@ def _statement_tables(statement: str, /) -> set[str]:
 
 _BUDGETED_TABLES = (
     "pc_source_journal_heads",
-    "pc_artifact_candidate_heads",
+    "pc_candidate_heads",
     "pc_source_cursors",
     "pc_model_usage_daily",
     "pc_recall_token_daily",
@@ -606,3 +606,44 @@ def test_statistics_selection_reports_the_same_scope_rows_as_scoped_overviews() 
             assert batched[scope_id] == scoped[scope_id].by_scope[0]
 
     asyncio.run(scenario())
+
+
+# Measured on the default text-recall path; slack of one statement above the observed value.
+_PREPARE_STATEMENT_CEILING = 48
+
+
+def test_prepare_context_statement_count_does_not_grow_with_memory_count() -> None:
+    """Recall must not cost one authority read per candidate; see issue #2075."""
+
+    async def counted(memory_count: int) -> int:
+        statements: list[str] = []
+
+        def record(_conn, _cursor, statement, *_args) -> None:
+            statements.append(statement)
+
+        event.listen(Engine, "before_cursor_execute", record)
+        try:
+            async with open_builtin_runtime(BuiltinConfig(database=SQLiteConfig())) as runtime:
+                scope_id = await _create_scope(runtime, f"recall-fanout-{memory_count}")
+                assert runtime.atomic_memory is not None
+                await runtime.atomic_memory.for_scope(scope_id).create(
+                    tuple(
+                        AtomicMemoryContent(kind="fact", text=f"Contract decision {entry} binds the gateway to mTLS.")
+                        for entry in range(memory_count)
+                    )
+                )
+                statements.clear()
+                prepared = await runtime.context.for_scope(scope_id).prepare(
+                    PrepareContextRequest(query="contract gateway")
+                )
+        finally:
+            event.remove(Engine, "before_cursor_execute", record)
+
+        assert prepared.status == "ready"
+        return len(statements)
+
+    pool = asyncio.run(counted(8))
+    beyond = asyncio.run(counted(40))
+
+    assert pool == beyond
+    assert beyond <= _PREPARE_STATEMENT_CEILING
