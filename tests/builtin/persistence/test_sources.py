@@ -320,14 +320,19 @@ def test_bound_aliased_history_does_not_treat_business_fields_as_identity(busine
         ))
         repository = SourceRepository(registry)
         source = AliasedSource(
-            name="aliased-history", source_version="2", source_materialization=SourceMaterialization.CAPTURED,
-            definition_version=business_version, materialization="referenced", body="Retained.",
+            name="aliased-history",
+            source_version="2",
+            source_materialization=SourceMaterialization.CAPTURED,
+            definition_version=business_version,
+            materialization="referenced",
+            body="Retained.",
         )
         async with repository_profile() as (profile, _repositories), profile.database.transaction() as connection:
             stored = await repository.add(connection, "scope-a", source)
             expected = await repository.historical_evidence(connection, "scope-a", (stored.ref,))
             payload = json.dumps({
-                "encoding": "powercontext-source-v1", "representation": "native",
+                "encoding": "powercontext-source-v1",
+                "representation": "native",
                 "value": source.model_dump(mode="json", by_alias=True),
             }).encode()
             await connection.execute(

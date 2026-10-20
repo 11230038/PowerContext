@@ -425,7 +425,11 @@ class SourceRepository:
         if {"name", "definition_version", "materialization"} <= material.keys() and material[
             "name"
         ] == reference.source_id:
-            return load_model(Source, rfc8785.dumps(material), kind="source", name=reference.source_type)
+            definition = None
+            with suppress(SourceDefinitionNotFoundError):
+                definition = self._registry.definition_for_name(reference.source_type)
+            if definition is None or not _claims_identity_keys(definition.source_class):
+                return load_model(Source, rfc8785.dumps(material), kind="source", name=reference.source_type)
         with suppress(SourceDefinitionNotFoundError):
             definition = self._registry.definition_for_name(reference.source_type)
             if any(
@@ -877,6 +881,21 @@ def _source_keys(source: Source, material: dict[str, JsonValue] | None = None) -
             if alias not in material:
                 keys[key] = generator(key)
     return keys
+
+
+def _claims_identity_keys(source_class: type[Source]) -> bool:
+    """Report whether a business field serializes to a canonical identity spelling.
+
+    A headerless envelope cannot distinguish an identity value from a business
+    value with that name. When the registered model claims the spelling for a
+    different field, only its declared aliases are authoritative.
+    """
+
+    return any(
+        name not in Source.model_fields and key in (field.alias, field.validation_alias, field.serialization_alias)
+        for name, field in source_class.model_fields.items()
+        for key in Source.model_fields
+    )
 
 
 def _normalize_native_material(source_class: type[Source], material: dict[str, JsonValue]) -> dict[str, JsonValue]:
