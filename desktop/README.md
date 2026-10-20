@@ -151,4 +151,5 @@ executes a private read-only copy of the verified launcher. Use a self-contained
 launcher with an absolute interpreter path; launchers that locate dependencies relative to themselves
 are unsuitable. The CLI must not depend on a shell profile or an interactive terminal.
 Diagnostics keep the existing output limits and deadlines and terminate their private process group
-on completion, timeout and cancellation. The app does not install or manage a LaunchAgent.
+on completion, timeout and cancellation. Before normal application exit, Desktop rejects new diagnostics,
+cancels active work and waits for process-group cleanup and launcher reaping. The app does not install or manage a LaunchAgent.

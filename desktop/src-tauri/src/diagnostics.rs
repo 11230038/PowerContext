@@ -268,11 +268,34 @@ struct CliRegistration {
     _legacy_version: Option<serde::de::IgnoredAny>,
     source: String,
 }
+#[cfg(any(windows, target_os = "macos"))]
+#[derive(Default)]
+struct DiagnosticLifecycle {
+    state: std::sync::Mutex<DiagnosticLifecycleState>,
+    completed: std::sync::Condvar,
+}
+#[cfg(any(windows, target_os = "macos"))]
+#[derive(Default)]
+struct DiagnosticLifecycleState {
+    closed: bool,
+    active: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+#[cfg(any(windows, target_os = "macos"))]
+struct DiagnosticCompletion(std::sync::Arc<DiagnosticLifecycle>);
+#[cfg(any(windows, target_os = "macos"))]
+impl Drop for DiagnosticCompletion {
+    fn drop(&mut self) {
+        let mut state = self.0.state.lock().unwrap();
+        state.active = None;
+        self.0.completed.notify_all();
+    }
+}
 /// Native-only registration. A renderer cannot supply a program, path, arguments, or environment.
 #[cfg(any(windows, target_os = "macos"))]
 pub struct LocalDiagnostics {
     registration: std::path::PathBuf,
     running: std::sync::Arc<tokio::sync::Semaphore>,
+    lifecycle: std::sync::Arc<DiagnosticLifecycle>,
 }
 #[cfg(any(windows, target_os = "macos"))]
 impl LocalDiagnostics {
@@ -280,6 +303,21 @@ impl LocalDiagnostics {
         Self {
             registration,
             running: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+            lifecycle: std::sync::Arc::new(DiagnosticLifecycle::default()),
+        }
+    }
+    /// Stop active diagnostic work before the application exits.
+    pub fn shutdown(&self) {
+        use std::sync::atomic::Ordering;
+        let mut state = self.lifecycle.state.lock().unwrap();
+        // Close admission before cancelling, including a worker not yet started
+        // by spawn_blocking. Completion follows process-group cleanup and reap.
+        state.closed = true;
+        if let Some(cancelled) = &state.active {
+            cancelled.store(true, Ordering::Relaxed);
+        }
+        while state.active.is_some() {
+            state = self.lifecycle.completed.wait(state).unwrap();
         }
     }
     pub async fn run(&self, kind: DiagnosticKind) -> Result<DiagnosticReport, SafeError> {
@@ -299,9 +337,18 @@ impl LocalDiagnostics {
             }
         }
         let cancelled = Cancel(Arc::new(AtomicBool::new(false)));
+        let completion = {
+            let mut state = self.lifecycle.state.lock().unwrap();
+            if state.closed {
+                return Err(SafeError::StaleContext);
+            }
+            state.active = Some(cancelled.0.clone());
+            DiagnosticCompletion(self.lifecycle.clone())
+        };
         let flag = cancelled.0.clone();
         let registration = self.registration.clone();
         tauri::async_runtime::spawn_blocking(move || {
+            let _completion = completion;
             let _permit = permit;
             execute(&registration, kind, flag)
         })
@@ -423,6 +470,13 @@ pub struct DiagnosticHost {
     pub local: Option<LocalDiagnostics>,
 }
 impl DiagnosticHost {
+    /// Finish native process cleanup before Tauri directly exits the process.
+    pub fn shutdown(&self) {
+        #[cfg(any(windows, target_os = "macos"))]
+        if let Some(local) = &self.local {
+            local.shutdown();
+        }
+    }
     pub fn new(directory: Option<std::path::PathBuf>) -> Self {
         #[cfg(any(windows, target_os = "macos"))]
         {

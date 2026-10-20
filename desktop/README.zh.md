@@ -117,4 +117,4 @@ pnpm desktop:build
 
 构建产物是未签名的内部预览。Developer ID 签名、公证、干净机器上的 Gatekeeper、辅助功能权限、真实输入法输入以及安装版钥匙串弹窗仍需单独验收。macOS CI 任务会测试 Apple Silicon 和 Intel 构建，但任务本身的存在不代表运行已通过。
 
-macOS 本机诊断读取 `~/Library/Application Support/com.powercontext.desktop.preview/diagnostic-cli.json`。登记与 Windows 使用相同的 JSON 契约：绝对路径的 `powercontext` 可执行文件、经核对的 SHA-256 摘要和 `source: "explicit_local_installation"`。渲染进程无法提供可执行文件或参数。原生适配器只执行经过核验的 launcher 的私有只读副本。请使用自包含可执行文件，或解释器路径为绝对路径的 launcher；以自身位置查找依赖的 launcher 不适用。CLI 不能依赖 shell 配置或交互式终端。诊断沿用既有的输出上限与超时，并在完成、超时和取消时终止自己的私有进程组。应用不会安装或管理 LaunchAgent。
+macOS 本机诊断读取 `~/Library/Application Support/com.powercontext.desktop.preview/diagnostic-cli.json`。登记与 Windows 使用相同的 JSON 契约：绝对路径的 `powercontext` 可执行文件、经核对的 SHA-256 摘要和 `source: "explicit_local_installation"`。渲染进程无法提供可执行文件或参数。原生适配器只执行经过核验的 launcher 的私有只读副本。请使用自包含可执行文件，或解释器路径为绝对路径的 launcher；以自身位置查找依赖的 launcher 不适用。CLI 不能依赖 shell 配置或交互式终端。诊断沿用既有的输出上限与超时，并在完成、超时和取消时终止自己的私有进程组。应用正常退出前会拒绝新诊断、取消当前诊断，并等待进程组清理和 launcher 回收完成。应用不会安装或管理 LaunchAgent。

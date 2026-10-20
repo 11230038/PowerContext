@@ -69,3 +69,90 @@ fi
         SafeError::CompatibilityUnverified
     );
 }
+
+#[tokio::test]
+async fn shutdown_terminates_inflight_launcher_and_descendants_and_closes_admission() {
+    use std::{sync::Arc, time::Duration};
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("powercontext");
+    let pid_file = directory.path().join("pids");
+    std::fs::write(
+        &executable,
+        format!(
+            "#!/bin/sh\nsleep 300 &\necho $$ $! > '{}'\nwait\n",
+            pid_file.display()
+        ),
+    )
+    .unwrap();
+    let registration = directory.path().join("diagnostic-cli.json");
+    std::fs::write(
+        &registration,
+        serde_json::to_vec(&serde_json::json!({
+            "executable": executable,
+            "sha256": format!("{:x}", Sha256::digest(std::fs::read(&executable).unwrap())),
+            "source": "explicit_local_installation"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let local = Arc::new(LocalDiagnostics::new(registration));
+    let worker = local.clone();
+    let mut check = tokio::spawn(async move { worker.run(DiagnosticKind::Service).await });
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let pids = loop {
+        if let Ok(text) = std::fs::read_to_string(&pid_file) {
+            let pids: Vec<i32> = text
+                .split_whitespace()
+                .filter_map(|pid| pid.parse().ok())
+                .collect();
+            if pids.len() == 2 {
+                break pids;
+            }
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "launcher did not become ready"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    struct Cleanup(i32);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            unsafe {
+                libc::kill(-self.0, libc::SIGKILL);
+            }
+        }
+    }
+    let _cleanup = Cleanup(pids[0]);
+    let shutdown = local.clone();
+    let started = std::time::Instant::now();
+    tokio::task::spawn_blocking(move || shutdown.shutdown())
+        .await
+        .unwrap();
+    // Inspect before aborting the async caller: dropping that future also cancels
+    // diagnostics, which would hide a missing shutdown implementation.
+    let stopped: Vec<bool> = pids
+        .iter()
+        .map(|pid| {
+            let state = std::process::Command::new("/bin/ps")
+                .args(["-o", "stat=", "-p", &pid.to_string()])
+                .output()
+                .unwrap();
+            let state = String::from_utf8_lossy(&state.stdout);
+            state.trim().is_empty() || state.trim().starts_with('Z')
+        })
+        .collect();
+    let result = tokio::time::timeout(Duration::from_secs(2), &mut check).await;
+    check.abort();
+    assert!(
+        stopped.iter().all(|stopped| *stopped),
+        "shutdown left diagnostic processes running"
+    );
+    assert!(matches!(result, Ok(Ok(Err(SafeError::StaleContext)))));
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert_eq!(
+        local.run(DiagnosticKind::Service).await.unwrap_err(),
+        SafeError::StaleContext
+    );
+    local.shutdown(); // Repeated shutdown remains safe.
+}

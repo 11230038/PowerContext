@@ -86,6 +86,15 @@ pub fn run() {
                 .build()?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("desktop host failed");
+        .build(tauri::generate_context!())
+        .expect("desktop host failed")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit)
+                && let Some(host) = app.try_state::<diagnostics::DiagnosticHost>()
+            {
+                // Tauri exits directly after this callback; worker Drop alone
+                // cannot supervise child processes once the application exits.
+                host.shutdown();
+            }
+        });
 }
