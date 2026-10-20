@@ -283,14 +283,14 @@ class ZCodeInstaller:
             )
         mcp = _read_config(destination / ".mcp.json")
         server = mcp["mcpServers"]["powercontext"]
-        server["url"] = endpoint + "/mcp"
         headers = server.setdefault("headers", {})
         authorization = (setup_environment() | dict(os.environ)).get("POWERCONTEXT_ZCODE_AUTHORIZATION")
-        if authorization or endpoint != previous.get("server_url"):
+        if authorization or endpoint != _endpoint(server["url"]):
             headers = {name: value for name, value in headers.items() if name.lower() != "authorization"}
             server["headers"] = headers
         if authorization:
             headers["Authorization"] = "${POWERCONTEXT_ZCODE_AUTHORIZATION}"
+        server["url"] = endpoint + "/mcp"
         settings = {
             "server_url": endpoint,
             "allow_insecure_http": connection.allow_insecure_http,

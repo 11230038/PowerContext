@@ -29,7 +29,7 @@ from shutil import which
 from typing import Any
 from urllib.parse import urlsplit
 
-from powercontext.cli.guidance import preserve_installed_guidance
+from powercontext.cli.guidance import guidance_region, preserve_installed_guidance
 from powercontext.cli.installation import publish, write_json
 from powercontext.cli.system import Diagnostic, DiagnosticStatus, SetupError
 from powercontext.cli.transport import setup_transport_updates
@@ -104,6 +104,24 @@ def _endpoint(value: str) -> str:
     ):
         raise SetupError("Kimi Server URL must be a loopback HTTP or HTTPS origin")  # noqa: TRY003
     return endpoint
+
+
+def _configured_skill(skill: Path, *, scope: str | None, previous_scope: str | None, scope_script: Path) -> bytes:
+    existing = skill.read_bytes().decode("utf-8")
+    region = guidance_region(existing)
+    if region is None:
+        raise SetupError("Add managed guidance markers to the installed Skill before reconfiguring")  # noqa: TRY003
+    start, end = region
+    content = existing[start:end]
+    old_scope = (
+        "__POWERCONTEXT_SCOPE_JSON__"
+        if "__POWERCONTEXT_SCOPE_JSON__" in content
+        else json.dumps(previous_scope, ensure_ascii=False)
+    )
+    for label in ("The configured Scope is", "The configured explicit Scope is"):
+        content = content.replace(f"{label} {old_scope}.", f"{label} {json.dumps(scope, ensure_ascii=False)}.")
+    content = content.replace("__POWERCONTEXT_SCOPE_SCRIPT_JSON__", json.dumps(str(scope_script), ensure_ascii=False))
+    return (existing[:start] + content + existing[end:]).encode("utf-8")
 
 
 @dataclass
@@ -184,18 +202,13 @@ class KimiInstaller:
                 (staged / OWNER_MARKER).write_text("powercontext-kimi-code-v1\n", encoding="utf-8")
                 if previous:
                     skill = staged / "skills/powercontext-project-context/SKILL.md"
-                    skill.write_text(
-                        skill
-                        .read_text(encoding="utf-8")
-                        .replace(
-                            "__POWERCONTEXT_SCOPE_JSON__",
-                            json.dumps(previous["scope_id"], ensure_ascii=False),
+                    skill.write_bytes(
+                        _configured_skill(
+                            skill,
+                            scope=previous["scope_id"],
+                            previous_scope=previous["scope_id"],
+                            scope_script=destination / "scripts/scope.mjs",
                         )
-                        .replace(
-                            "__POWERCONTEXT_SCOPE_SCRIPT_JSON__",
-                            json.dumps(str(destination / "scripts/scope.mjs"), ensure_ascii=False),
-                        ),
-                        encoding="utf-8",
                     )
                 write_json(staged / "kimi.plugin.json", manifest)
                 now = datetime.now(UTC).isoformat()
@@ -235,23 +248,15 @@ class KimiInstaller:
         elif server.get("bearerTokenEnvVar") == "POWERCONTEXT_KIMI_TOKEN":
             del server["bearerTokenEnvVar"]
         skill = destination / "skills/powercontext-project-context/SKILL.md"
-        content = skill.read_text(encoding="utf-8")
-        old_scope = (
-            "__POWERCONTEXT_SCOPE_JSON__"
-            if "__POWERCONTEXT_SCOPE_JSON__" in content
-            else json.dumps(previous.get("scope_id"), ensure_ascii=False)
-        )
-        for label in ("The configured Scope is", "The configured explicit Scope is"):
-            content = content.replace(f"{label} {old_scope}.", f"{label} {json.dumps(scope, ensure_ascii=False)}.")
-        content = content.replace(
-            "__POWERCONTEXT_SCOPE_SCRIPT_JSON__", json.dumps(str(destination / "scripts/scope.mjs"), ensure_ascii=False)
+        content = _configured_skill(
+            skill, scope=scope, previous_scope=previous.get("scope_id"), scope_script=destination / "scripts/scope.mjs"
         )
         publish(
             writes={
                 **setup_transport_updates(connection),
                 destination / "powercontext.json": (json.dumps(settings, ensure_ascii=False, indent=2) + "\n").encode(),
                 destination / "kimi.plugin.json": (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode(),
-                skill: content.encode(),
+                skill: content,
             }
         )
         return {"server_url": endpoint, "scope_id": scope}

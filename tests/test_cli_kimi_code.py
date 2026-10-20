@@ -190,6 +190,25 @@ def test_reconfiguration_rejects_installed_source_with_stale_scope(kimi_home):
     assert (installed / "powercontext.json").read_bytes() == before
 
 
+@pytest.mark.parametrize("command", ["setup", "config"])
+def test_scope_changes_preserve_personal_guidance(kimi_home, installed_agent_checks, command):
+    installed = install()
+    skill = Path(installed["plugin_path"]) / "skills/powercontext-project-context/SKILL.md"
+    notes = (
+        '\r\nPersonal example: The configured explicit Scope is "scope-中文".\r\n'
+        "Literal templates: __POWERCONTEXT_SCOPE_JSON__ __POWERCONTEXT_SCOPE_SCRIPT_JSON__\r\n"
+    ).encode()
+    skill.write_bytes(skill.read_bytes() + notes)
+    arguments = (
+        ["setup", "kimi-code", "--source", str(REPOSITORY)] if command == "setup" else ["config", "agent", "kimi-code"]
+    )
+    result = CliRunner().invoke(create_cli(), [*arguments, "--scope-id", "new-scope", "--json"])
+    assert result.exit_code == 0, result.output
+    content = skill.read_bytes()
+    assert content.endswith(notes)
+    assert b'The configured explicit Scope is "new-scope".' in content
+
+
 def test_configuration_updates_scope_without_reinstalling(kimi_home):
     from powercontext.cli.transport import SetupTransport
 

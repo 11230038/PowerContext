@@ -400,6 +400,14 @@ def test_zcode_upgrade_keeps_saved_capture_and_boundary_options(tmp_path: Path, 
 
 @pytest.mark.parametrize("command", ["setup", "config"])
 @pytest.mark.parametrize(
+    ("mcp_endpoint", "selected_endpoint"),
+    [
+        ("https://old.example", "https://old.example"),
+        ("https://mcp-previous.example", "https://old.example"),
+        ("https://mcp-previous.example", "https://mcp-previous.example"),
+    ],
+)
+@pytest.mark.parametrize(
     ("header", "authorization"),
     [
         ("Authorization", "Bearer previous-server-token"),
@@ -408,7 +416,7 @@ def test_zcode_upgrade_keeps_saved_capture_and_boundary_options(tmp_path: Path, 
     ],
 )
 def test_zcode_rebinding_preserves_other_headers_and_drops_old_authorization(
-    tmp_path, monkeypatch, installed_agent_checks, command, header, authorization
+    tmp_path, monkeypatch, installed_agent_checks, command, header, authorization, mcp_endpoint, selected_endpoint
 ):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(zcode, "zcode_config_file", lambda: tmp_path / "zcode/config.json")
@@ -418,16 +426,17 @@ def test_zcode_rebinding_preserves_other_headers_and_drops_old_authorization(
     installed = install_plugin("zcode", source=source, server_url="https://old.example")
     mcp_path = Path(installed["plugin_path"]) / ".mcp.json"
     mcp = json.loads(mcp_path.read_text())
+    mcp["mcpServers"]["powercontext"]["url"] = mcp_endpoint + "/mcp"
     mcp["mcpServers"]["powercontext"]["headers"] = {header: authorization, "X-Custom": "keep"}
     mcp_path.write_text(json.dumps(mcp))
     arguments = ["setup", "zcode", "--source", source] if command == "setup" else ["config", "agent", "zcode"]
     cli, runner = create_cli(), CliRunner()
-    result = runner.invoke(cli, [*arguments, "--server-url", "https://old.example", "--json"])
+    result = runner.invoke(cli, [*arguments, "--server-url", selected_endpoint, "--json"])
     assert result.exit_code == 0, result.output
-    assert json.loads(mcp_path.read_text())["mcpServers"]["powercontext"]["headers"] == {
-        header: authorization,
-        "X-Custom": "keep",
-    }
+    expected = {"X-Custom": "keep"}
+    if mcp_endpoint == selected_endpoint:
+        expected[header] = authorization
+    assert json.loads(mcp_path.read_text())["mcpServers"]["powercontext"]["headers"] == expected
     result = runner.invoke(cli, [*arguments, "--server-url", "https://new.example", "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(mcp_path.read_text())["mcpServers"]["powercontext"]["headers"] == {"X-Custom": "keep"}
