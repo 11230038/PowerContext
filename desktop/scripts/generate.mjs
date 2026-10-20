@@ -82,11 +82,16 @@ function snakeCase(name) {
 }
 function run(command, args, cwd) {
   return new Promise((resolve, reject) => {
-    const shell = process.platform === "win32" && command.endsWith(".cmd");
-    const child = spawn(command, args, {
+    const useWindowsCmd = process.platform === "win32" && command === "pnpm";
+    const executable = useWindowsCmd
+      ? (process.env.ComSpec ?? "cmd.exe")
+      : command;
+    const executableArgs = useWindowsCmd
+      ? ["/d", "/s", "/c", command, ...args]
+      : args;
+    const child = spawn(executable, executableArgs, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      shell,
     });
     let stdout = "";
     let stderr = "";
@@ -110,7 +115,7 @@ async function generateRustModels() {
   );
   const output = join(temporary, "generated");
   const modelNames = [...schemaNames].sort();
-  const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+  const pnpm = "pnpm";
   try {
     await run(
       pnpm,
