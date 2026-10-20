@@ -1464,6 +1464,7 @@ class ScopedContextApplication:
         embedding_calls = 0
         generation_calls = 0
         memory_recoverable = False
+        shared_embedding = next((embedding for embedding in reuse.values() if embedding is not None), None)
         for scope_id in scope_ids:
             memory_limit = (
                 builder.memory_candidate_limit + sum(identity[0] == scope_id for identity in excluded_memory)
@@ -1476,7 +1477,7 @@ class ScopedContextApplication:
                 memory_limit=memory_limit,
                 experience_limit=builder.experience_candidate_limit if EXPERIENCE_FAMILY in families else 0,
                 admission=admission,
-                reuse=reuse.get(scope_id),
+                reuse=reuse.get(scope_id, shared_embedding),
                 allow_embedding=scope_id not in reuse or reuse[scope_id] is not None,
             )
             memory_recoverable |= outcome.memory_recoverable
@@ -1494,6 +1495,8 @@ class ScopedContextApplication:
             )
             experience_candidates.append(outcome.experience)
             reuse[scope_id] = outcome.memory_query_embedding
+            if outcome.memory_query_embedding is not None:
+                shared_embedding = outcome.memory_query_embedding
             admissions.extend(
                 count for count in (outcome.memory_admission, outcome.experience_admission) if count is not None
             )
@@ -1504,12 +1507,21 @@ class ScopedContextApplication:
             experience_candidates,
             builder.experience_candidate_limit,
         )
+        atomic = self._runtime.atomic_memory
+        topic_embedding = topic_reuse.get(self.scope_id)
+        if (
+            self.scope_id not in topic_reuse
+            and atomic is not None
+            and self._runtime._topic_memory_embedding_model is atomic._application.embedding_model
+            and bounded_topic_memory_query(request.query.strip()) == request.query
+        ):
+            topic_embedding = shared_embedding
         topic_outcome = (
             await self._topic_memory_hits(
                 request.query.strip(),
                 builder.topic_memory_candidate_limit,
                 admission=admission,
-                reuse=topic_reuse.get(self.scope_id),
+                reuse=topic_embedding,
                 allow_embedding=self.scope_id not in topic_reuse or topic_reuse[self.scope_id] is not None,
             )
             if TOPIC_MEMORY_FAMILY in families
@@ -3728,8 +3740,6 @@ class BuiltinRuntime:
         if self._topic_memory_searcher is None and topic_memory_search is not None:
             self._topic_memory_searcher = TopicMemorySearcher(
                 search=topic_memory_search,
-                get=topic_memory_get,
-                browse=topic_memory_browse,
                 embedding_model=topic_memory_embedding_model,
                 observer=topic_memory_search_observer,
             )

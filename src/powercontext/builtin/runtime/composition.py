@@ -96,7 +96,9 @@ from powercontext.builtin.inference.usage import (
     UsageReportingEmbeddingModel,
     UsageReportingStructuredGenerator,
 )
-from powercontext.builtin.persistence.atomic_memory_index import AtomicMemoryIndexCapabilities
+from powercontext.builtin.persistence.atomic_memory_index import (
+    AtomicMemoryIndexCapabilities,
+)
 from powercontext.builtin.persistence.atomic_memory_readiness import (
     assert_atomic_memory_migration_ready,
     ensure_supported_atomic_memory_schema,
@@ -748,8 +750,6 @@ async def open_builtin_runtime(
         artifact_search.register(contexts.list_skills)
         topic_memory_searcher = TopicMemorySearcher(
             search=contexts.search_topic_memories,
-            get=contexts.get_topic_memory,
-            browse=contexts.browse_topic_memories,
             embedding_model=configured_embedding,
             observer=topic_memory_search_observer,
             capabilities=contexts.topic_memory_index.capabilities,
@@ -1143,6 +1143,7 @@ async def open_builtin_contexts(
                 if not _topic_memory_worker:
                     await _initialize_atomic_memory_authority(connection)
                     await atomic_index.initialize(connection)
+                    await atomic_index.validate_current(connection)
                     await refresh_lexical_projections(
                         connection, atomic_index.table if atomic_index.table in atomic_index.tables else None
                     )
@@ -1224,6 +1225,7 @@ async def open_builtin_contexts(
             if not _topic_memory_worker:
                 await _initialize_atomic_memory_authority(connection)
                 await atomic_index.initialize(connection)
+                await atomic_index.validate_current(connection)
                 await refresh_lexical_projections(
                     connection, atomic_index.table if atomic_index.table in atomic_index.tables else None
                 )
