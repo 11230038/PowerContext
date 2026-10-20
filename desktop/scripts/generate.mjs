@@ -192,8 +192,14 @@ async function generateRustModels() {
   }
 }
 const rustModels = await generateRustModels();
+// OpenAPI Generator also emits inline enums and helper models that are not
+// component schemas. Include every generated Rust declaration in the ts-rs
+// export list so referenced TypeScript names are emitted as well.
+const rustModelNames = [
+  ...rustModels.matchAll(/pub (?:struct|enum) (\w+)/gu),
+].map(([, name]) => name);
 const rustDeclarations = `\n#[rustfmt::skip]\npub fn declarations(config: &ts_rs::Config) -> Vec<String> {\n    vec![\n${[
-  ...schemaNames,
+  ...new Set([...schemaNames, ...rustModelNames]),
 ]
   .sort()
   .map((name) => `        <${name} as ts_rs::TS>::decl(config),`)

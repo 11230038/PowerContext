@@ -133,7 +133,8 @@ pub struct AccessPrincipal {
     pub r#type: Type,
     #[serde(rename = "id")]
     pub id: String,
-    #[ts(type = "string | null | undefined")]
+    #[ts(optional)]
+    #[ts(type = "string | null")]
     #[serde(
         rename = "description",
         default,
@@ -449,7 +450,8 @@ pub struct ArtifactRevision {
     #[serde(rename = "content_digest")]
     pub content_digest: String,
     /// When this revision was committed. Absent for revisions stored before this field existed.
-    #[ts(type = "string | null | undefined")]
+    #[ts(optional)]
+    #[ts(type = "string | null")]
     #[serde(
         rename = "created_at",
         default,
@@ -458,7 +460,8 @@ pub struct ArtifactRevision {
     )]
     pub created_at: Option<Option<String>>,
     /// Principal that committed a rollback. Ordinary revisions omit it.
-    #[ts(type = " | null | undefined")]
+    #[ts(optional)]
+    #[ts(type = "AccessPrincipal | null")]
     #[serde(
         rename = "created_by",
         default,
@@ -467,7 +470,8 @@ pub struct ArtifactRevision {
     )]
     pub created_by: Option<Option<AccessPrincipal>>,
     /// Historical revision restored by this rollback.
-    #[ts(type = "number | null | undefined")]
+    #[ts(optional)]
+    #[ts(type = "number | null")]
     #[serde(
         rename = "restored_from_revision",
         default,
@@ -476,7 +480,8 @@ pub struct ArtifactRevision {
     )]
     pub restored_from_revision: Option<Option<i64>>,
     /// Reason recorded for a rollback.
-    #[ts(type = "string | null | undefined")]
+    #[ts(optional)]
+    #[ts(type = "string | null")]
     #[serde(
         rename = "reason",
         default,
@@ -643,13 +648,15 @@ impl std::fmt::Display for AtomicMemoryState {
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 pub struct Capabilities {
-    #[ts(type = "Record<string, unknown>")]
+    #[ts(optional)]
     #[serde(rename = "prompts", skip_serializing_if = "Option::is_none")]
     pub prompts: Option<std::collections::HashMap<String, PromptCapability>>,
     /// Whether asynchronous Artifact Dream execution is configured.
+    #[ts(optional)]
     #[serde(rename = "artifact_dreaming", skip_serializing_if = "Option::is_none")]
     pub artifact_dreaming: Option<bool>,
     /// Dream operations enabled by the current Runtime, including their reviewed effect.
+    #[ts(optional)]
     #[serde(
         rename = "artifact_dreaming_operations",
         skip_serializing_if = "Option::is_none"
@@ -662,21 +669,25 @@ pub struct Capabilities {
     /// Whether pending Sources can be extracted into Memory.
     #[serde(rename = "memory_extraction")]
     pub memory_extraction: bool,
+    #[ts(optional)]
     #[serde(rename = "extraction", skip_serializing_if = "Option::is_none")]
     pub extraction: Option<ExtractionStatus>,
     /// Whether the configured model can generate reviewed Experience Candidates.
+    #[ts(optional)]
     #[serde(
         rename = "experience_generation",
         skip_serializing_if = "Option::is_none"
     )]
     pub experience_generation: Option<bool>,
     /// Whether the configured model can generate reviewed managed Skill Candidates.
+    #[ts(optional)]
     #[serde(
         rename = "managed_skill_generation",
         skip_serializing_if = "Option::is_none"
     )]
     pub managed_skill_generation: Option<bool>,
     /// Whether host-local external Skill discovery and exact resolution are configured.
+    #[ts(optional)]
     #[serde(
         rename = "external_skill_registry",
         skip_serializing_if = "Option::is_none"
@@ -767,7 +778,8 @@ pub struct ExtractionBackground {
     #[serde(rename = "location")]
     pub location: Location,
     /// Current local Supervisor leadership role. Standby is normal; null means no running local Supervisor.
-    #[ts(type = "Role | null | undefined")]
+    #[ts(optional)]
+    #[ts(type = "Role | null")]
     #[serde(
         rename = "role",
         default,
@@ -779,7 +791,8 @@ pub struct ExtractionBackground {
     #[serde(rename = "state")]
     pub state: State,
     /// Whether this process schedules automatic Memory extraction. False still permits explicit flush and recovery of accepted work. Null means the external worker schedule is unknown.
-    #[ts(type = "boolean | null | undefined")]
+    #[ts(optional)]
+    #[ts(type = "boolean | null")]
     #[serde(
         rename = "automatic_processing_enabled",
         default,
@@ -891,10 +904,12 @@ pub struct ExtractionObservation {
     /// UTC start of this Runtime's observation window. Records cover this process and its child Memory workers, reset on Runtime restart, and do not include remote workers or a durable per-Scope failure history.
     #[serde(rename = "since")]
     pub since: String,
+    #[ts(optional)]
     #[serde(rename = "last_failure", skip_serializing_if = "Option::is_none")]
     pub last_failure: Option<ExtractionFailure>,
     /// UTC time of the most recent local successful nonempty synchronous flush or acknowledged Memory worker invocation. This does not prove that a model was called or that any previous failure has recovered.
-    #[ts(type = "string | null | undefined")]
+    #[ts(optional)]
+    #[ts(type = "string | null")]
     #[serde(
         rename = "last_success_at",
         default,
@@ -1115,7 +1130,6 @@ pub enum BuiltinProfile {
 pub struct ReadinessResponse {
     #[serde(rename = "status")]
     pub status: ReadinessStatus,
-    #[ts(type = "Record<string, unknown>")]
     #[serde(rename = "checks")]
     pub checks: std::collections::HashMap<String, String>,
 }
@@ -1163,7 +1177,8 @@ pub struct RememberMemoryRequest {
     /// Must not exceed 8192 UTF-8 bytes after normalization.
     #[serde(rename = "text")]
     pub text: String,
-    #[ts(type = "string | null | undefined")]
+    #[ts(optional)]
+    #[ts(type = "string | null")]
     #[serde(
         rename = "reason",
         default,
@@ -1171,7 +1186,8 @@ pub struct RememberMemoryRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub reason: Option<Option<String>>,
-    #[ts(type = "number | null | undefined")]
+    #[ts(optional)]
+    #[ts(type = "number | null")]
     #[serde(
         rename = "expected_revision",
         default,
@@ -1203,7 +1219,8 @@ pub struct ScopeDescriptor {
     pub title: String,
     #[serde(rename = "summary")]
     pub summary: String,
-    #[ts(type = "string | null | undefined")]
+    #[ts(optional)]
+    #[ts(type = "string | null")]
     #[serde(
         rename = "parent_scope_id",
         default,
@@ -1262,7 +1279,8 @@ impl ScopeExternalReference {
 pub struct ScopePage {
     #[serde(rename = "items")]
     pub items: Vec<ScopeDescriptor>,
-    #[ts(type = "string | null | undefined")]
+    #[ts(optional)]
+    #[ts(type = "string | null")]
     #[serde(
         rename = "next_cursor",
         default,
@@ -1314,14 +1332,17 @@ impl std::fmt::Display for ScopeQueryField {
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 pub struct SearchMemoryRequest {
+    #[ts(optional)]
     #[serde(rename = "tag_filter", skip_serializing_if = "Option::is_none")]
     pub tag_filter: Option<TagFilter>,
     #[serde(rename = "scope_id")]
     pub scope_id: String,
     #[serde(rename = "query")]
     pub query: String,
+    #[ts(optional)]
     #[serde(rename = "limit", skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    #[ts(optional)]
     #[serde(rename = "mode", skip_serializing_if = "Option::is_none")]
     pub mode: Option<MemorySearchMode>,
 }
@@ -1384,6 +1405,7 @@ impl SourceTypeReference {
 pub struct TagFilter {
     #[serde(rename = "tags")]
     pub tags: Vec<String>,
+    #[ts(optional)]
     #[serde(rename = "match", skip_serializing_if = "Option::is_none")]
     pub r#match: Option<TagMatch>,
 }
@@ -1437,28 +1459,42 @@ pub fn declarations(config: &ts_rs::Config) -> Vec<String> {
         <AtomicMemorySearchHit as ts_rs::TS>::decl(config),
         <AtomicMemorySearchMode as ts_rs::TS>::decl(config),
         <AtomicMemoryState as ts_rs::TS>::decl(config),
+        <BuiltinProfile as ts_rs::TS>::decl(config),
         <Capabilities as ts_rs::TS>::decl(config),
+        <Configuration as ts_rs::TS>::decl(config),
         <DreamOperation as ts_rs::TS>::decl(config),
+        <Effect as ts_rs::TS>::decl(config),
         <ExtractionBackground as ts_rs::TS>::decl(config),
         <ExtractionFailure as ts_rs::TS>::decl(config),
         <ExtractionObservation as ts_rs::TS>::decl(config),
+        <ExtractionObservationStatus as ts_rs::TS>::decl(config),
         <ExtractionStatus as ts_rs::TS>::decl(config),
         <HealthResponse as ts_rs::TS>::decl(config),
+        <Location as ts_rs::TS>::decl(config),
+        <MatchedBy as ts_rs::TS>::decl(config),
         <MemoryMutationResponse as ts_rs::TS>::decl(config),
         <MemorySearchMode as ts_rs::TS>::decl(config),
+        <OutputKind as ts_rs::TS>::decl(config),
         <PreparedContextSchema as ts_rs::TS>::decl(config),
         <PromptCapability as ts_rs::TS>::decl(config),
+        <PromptCapabilityStatus as ts_rs::TS>::decl(config),
         <ReadinessResponse as ts_rs::TS>::decl(config),
         <ReadinessStatus as ts_rs::TS>::decl(config),
+        <Reason as ts_rs::TS>::decl(config),
         <RememberMemoryRequest as ts_rs::TS>::decl(config),
+        <Role as ts_rs::TS>::decl(config),
         <ScopeDescriptor as ts_rs::TS>::decl(config),
         <ScopeExternalReference as ts_rs::TS>::decl(config),
         <ScopePage as ts_rs::TS>::decl(config),
         <ScopeQueryField as ts_rs::TS>::decl(config),
         <SearchMemoryRequest as ts_rs::TS>::decl(config),
         <SearchMemoryResponse as ts_rs::TS>::decl(config),
+        <ShareUnit as ts_rs::TS>::decl(config),
         <SourceTypeReference as ts_rs::TS>::decl(config),
+        <Stage as ts_rs::TS>::decl(config),
+        <State as ts_rs::TS>::decl(config),
         <TagFilter as ts_rs::TS>::decl(config),
         <TagMatch as ts_rs::TS>::decl(config),
+        <Type as ts_rs::TS>::decl(config),
     ]
 }
