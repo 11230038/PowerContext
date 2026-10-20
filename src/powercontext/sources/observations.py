@@ -175,6 +175,15 @@ def _manifest_for_definition(
     aliases = _transport_identity_aliases(definition.source_class) if transport else {}
     source_schema = _json_object(definition.source_class.model_json_schema(mode="serialization"))
     if aliases:
+        reference = source_schema.get("$ref")
+        definitions = source_schema.get("$defs")
+        if isinstance(reference, str) and reference.startswith("#/$defs/") and isinstance(definitions, dict):
+            key = reference.removeprefix("#/$defs/").replace("~1", "/").replace("~0", "~")
+            root = definitions.get(key)
+            if isinstance(root, dict):
+                # Inline only the root: recursive children retain their serialized aliases in $defs.
+                source_schema = {**source_schema, **root}
+                source_schema.pop("$ref")
         properties = source_schema.get("properties")
         if isinstance(properties, dict):
             source_schema["properties"] = {aliases.get(key, key): value for key, value in properties.items()}

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import urllib.request
+from typing import Self
 
 import pytest
 from pydantic import Field, ValidationError
@@ -157,6 +158,70 @@ def test_serialization_aliases_preserve_the_worker_envelope_during_ingestion(nam
             assert native_manifest is not None
             assert native_manifest.source_schema == AliasedSource.model_json_schema(mode="serialization")
             assert native_manifest.fingerprint != manifest.fingerprint
+
+    asyncio.run(scenario())
+
+
+def test_recursive_source_transport_preserves_nested_serialization_aliases() -> None:
+    class RecursiveSource(Source):
+        name: str = Field(serialization_alias="source_name")
+        definition_version: str = Field(default="1", serialization_alias="wire_version")
+        body: str = Field(serialization_alias="wire_text")
+        children: list[Self] = Field(default_factory=list)
+
+    class RecursiveAdapter:
+        name = "recursive"
+        input_class = str
+        source_class = RecursiveSource
+
+        async def resolve(self, value: str, /) -> RecursiveSource:
+            leaf = RecursiveSource(name="leaf", materialization=SourceMaterialization.CAPTURED, body="Nested text.")
+            return RecursiveSource(
+                name="root",
+                definition_version="2",
+                materialization=SourceMaterialization.CAPTURED,
+                body=value,
+                children=[leaf],
+            )
+
+        async def read(self, source: RecursiveSource, /) -> str:
+            return source.body
+
+    async def scenario() -> None:
+        definition = AdapterSourceDefinition(RecursiveAdapter(), version="2")
+        worker = SourceDefinitionRegistry((definition,))
+        source = await worker.resolve("Root text.")
+        manifest = manifest_for_definition(definition)
+        observation = project_source_for_transport(worker, source)
+        expected = {
+            "name": "root",
+            "definition_version": "2",
+            "materialization": "captured",
+            "description": None,
+            "wire_text": "Root text.",
+            "children": [
+                {
+                    "source_name": "leaf",
+                    "wire_version": "1",
+                    "materialization": "captured",
+                    "description": None,
+                    "wire_text": "Nested text.",
+                    "children": [],
+                }
+            ],
+        }
+
+        async with SQLiteProfile.open(SQLiteConfig(), tables=SHARED_TABLES) as profile:
+            contexts = RelationalContexts(database=profile.database, source_registry=SourceDefinitionRegistry(()))
+            await contexts.register_source_definition(manifest)
+            receipt = await contexts.submit_source_observation(
+                SubmitSourceObservation(scope_id="scope-a", observation=observation)
+            )
+            stored = await (await contexts.get("scope-a")).sources.get(observation)
+
+        assert receipt.source_ref.source_id == "root"
+        assert isinstance(stored, SourceObservation)
+        assert stored.payload == expected
 
     asyncio.run(scenario())
 
