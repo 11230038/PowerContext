@@ -82,9 +82,11 @@ function snakeCase(name) {
 }
 function run(command, args, cwd) {
   return new Promise((resolve, reject) => {
+    const shell = process.platform === "win32" && command.endsWith(".cmd");
     const child = spawn(command, args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
+      shell,
     });
     let stdout = "";
     let stderr = "";
@@ -165,7 +167,7 @@ async function generateRustModels() {
           );
         }
       }
-      let body = source.replace(/^\/\*[\s\S]*?\*\/\s*/u, "");
+      let body = source.replace(/^(?:\/\*[\s\S]*?\*\/\s*)+/u, "");
       body = body.replace(/^use crate::models;\s*$/gmu, "");
       body = body.replace(/^use .+;\s*$/gmu, (line) => {
         imports.add(line.trim());
