@@ -246,11 +246,31 @@ entries, `archived_collections`, `removed_collections` and reference conversion 
 counts exclude indexes, access records, database pages and replication; record actual coexistence storage
 through database monitoring.
 
-Plan, apply and verify read retained history and Source/task snapshots, materializing those records in
-memory. Read cost and peak memory grow with history. Record read volume, peak memory, embedding calls and
-downtime on a backup copy before scheduling production maintenance. Production scale costs have not been
-established by this implementation. The startup residual check only counts legacy objects in public tables
-and reads no retained history; its cost depends on those tables and the execution plan.
+Plan, apply and verify read retained history and Source/task snapshots. Each processing table's snapshot
+has a default 256 MiB working-set admission budget. Before reading payloads, database-side scalar byte
+counts estimate JSON escaping, retained rows and the largest row's encoding intermediates. Encoding also
+checks retained bytes. An over-budget run returns `ready: false` without a snapshot digest; an initial
+budget rejection occurs before migration writes. SQLite apply checks existing inputs through a read-only
+connection before opening them for writes, including before changing their journal mode.
+
+The budget preserves the frozen digest: full canonical JSON rows sorted lexicographically. It does not
+spill Source contents to temporary files. It is a conservative admission estimate, not a hard cap on total
+process RSS. Database driver buffers, retained legacy history, embedding and other migration work are
+outside this budget. Stop all writers throughout maintenance, including between preflight and apply.
+After measuring the deployment's available memory on a backup copy, explicitly raise the budget if needed:
+
+```shell
+powercontext server atomic-memory-migrate --action plan --env-file .env --snapshot-budget-mib 512
+powercontext server atomic-memory-migrate --action apply --env-file .env --maintenance-confirmed --snapshot-budget-mib 512
+powercontext server atomic-memory-migrate --action verify --env-file .env --snapshot-budget-mib 512
+```
+
+Cancellation or allocation failure does not produce a verified result. Keep maintenance in force and
+repeat the command after resolving the resource limit. Read cost and peak memory still grow with history.
+Record read volume, peak memory, embedding calls and downtime on a backup copy before scheduling production
+maintenance. Production scale costs have not been established by this implementation. The startup residual
+check only counts legacy objects in public tables and reads no retained history; its cost depends on those
+tables and the execution plan.
 
 A current table created during development of this branch (with copied read grants or Owner columns) belongs
 to no release and is rejected at initialization. Before migration completes, apply drops and recreates that

@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import unicodedata
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -96,6 +96,7 @@ from powercontext.builtin.persistence.migrations.atomic_memory_references import
 )
 
 MIGRATION_ID = "powercontext.memory.v1-to-atomic-memory.v1"
+DEFAULT_SNAPSHOT_BUDGET_BYTES = 256 * 1024 * 1024
 _FAMILY = "atomic-memory"
 _PROJECTION_FORMAT = "powercontext.atomic-memory.current.v1"
 _ENTRY_HASH_DOMAIN = b"powercontext:entry-content:v1\0"
@@ -108,6 +109,16 @@ class AtomicMemoryMigrationReport(BaseModel):
     counts: dict[str, int] = Field(default_factory=dict)
     errors: tuple[str, ...] = ()
     processing_snapshot_hash: str | None = None
+
+
+class AtomicMemorySnapshotBudgetError(AtomicMemoryMigrationError):
+    """The frozen processing snapshot exceeds its admitted working set."""
+
+    def __init__(self, table: str, required: int, budget: int) -> None:
+        super().__init__((
+            f"processing snapshot budget exceeded for {table}: estimated {required} bytes, budget {budget} bytes; "
+            "size --snapshot-budget-mib for this offline working set before retrying",
+        ))
 
 
 class _FrozenValue(BaseModel):
@@ -477,16 +488,74 @@ def _entry_hash(row: Mapping[str, Any]) -> str:
     return sha256(_ENTRY_HASH_DOMAIN + rfc8785.dumps(payload)).hexdigest()
 
 
-async def _processing_snapshot(connection: AsyncConnection, tables: set[str], errors: list[str]) -> str:
-    digest = sha256()
+async def preflight_processing_snapshot(
+    connection: AsyncConnection,
+    *,
+    snapshot_budget_bytes: int = DEFAULT_SNAPSHOT_BUDGET_BYTES,
+    tables: set[str] | None = None,
+) -> None:
+    """Admit each processing table using scalar byte counts, without fetching its payloads."""
+
+    if isinstance(snapshot_budget_bytes, bool) or snapshot_budget_bytes <= 0:
+        raise ValueError("snapshot budget must be a positive number of bytes")  # noqa: TRY003
+    if tables is None:
+        tables = await _tables(connection)
+    quote = connection.dialect.identifier_preparer.quote
     for name in _PROCESSING_TABLES:
         if name not in tables:
             continue
-        # Read unchanged scheduler records as bytes and scalar values, without
-        # routing them through future scheduling models.
-        records = (await connection.execute(text(f"SELECT * FROM {name}"))).mappings()  # noqa: S608
-        encoded: list[bytes] = []
-        for row in records:
+        columns = await connection.run_sync(lambda value, table_name=name: inspect(value).get_columns(table_name))
+        lengths = [
+            f"COALESCE(LENGTH(CAST({quote(column['name'])} AS BLOB)), 0)"
+            if connection.dialect.name == "sqlite"
+            else f"COALESCE(OCTET_LENGTH({quote(column['name'])}), 0)"
+            for column in columns
+        ]
+        size = " + ".join(lengths)
+        count, total, largest = (
+            await connection.execute(
+                text(
+                    f"SELECT COUNT(*), COALESCE(SUM({size}), 0), COALESCE(MAX({size}), 0) FROM {quote(name)}"  # noqa: S608 - inspected columns and frozen table names
+                )
+            )
+        ).one()
+        # JSON escaping can expand scalar bytes sixfold. Reserve for row/list
+        # objects and for one row's Unicode/hex/JSON intermediates before fetching.
+        overhead = 512 * (len(columns) + 1) + sum(len(_json_bytes(column["name"])) for column in columns)
+        required = 4096 + 6 * int(total) + overhead * int(count) + 32 * int(largest)
+        if required > snapshot_budget_bytes:
+            raise AtomicMemorySnapshotBudgetError(name, required, snapshot_budget_bytes)
+
+
+async def _processing_snapshot(
+    connection: AsyncConnection,
+    tables: set[str],
+    errors: list[str],
+    *,
+    snapshot_budget_bytes: int = DEFAULT_SNAPSHOT_BUDGET_BYTES,
+) -> str:
+    await preflight_processing_snapshot(connection, tables=tables, snapshot_budget_bytes=snapshot_budget_bytes)
+    digest = sha256()
+    for name in _PROCESSING_TABLES:
+        if name in tables:
+            await _hash_processing_table(connection, name, errors, digest.update, snapshot_budget_bytes)
+    return digest.hexdigest()
+
+
+async def _hash_processing_table(
+    connection: AsyncConnection,
+    name: str,
+    errors: list[str],
+    update_digest: Callable[[bytes], None],
+    snapshot_budget_bytes: int,
+) -> None:
+    # One table owns its complete sorting buffer; no previous table's last row
+    # or encoding intermediates survive into the next table.
+    encoded: list[bytes] = []
+    retained = 4096
+    statement = text(f"SELECT * FROM {name}")  # noqa: S608 - frozen processing table names
+    async with connection.stream(statement, execution_options={"yield_per": 1}) as records:
+        async for row in records.mappings():
             values = dict(row)
             # Completion drops the emptied legacy citation column from Candidate revisions.
             optional = {LEGACY_CITATION_COLUMN} | (
@@ -517,14 +586,21 @@ async def _processing_snapshot(connection: AsyncConnection, tables: set[str], er
                 else value
                 for key, value in values.items()
             }
-            encoded.append(_json_bytes(projected))
-        digest.update(name.encode())
-        for value in sorted(encoded):
-            digest.update(value)
-    return digest.hexdigest()
+            value = _json_bytes(projected)
+            retained += len(value) + 64
+            required = retained + 4 * len(value)
+            if required > snapshot_budget_bytes:
+                raise AtomicMemorySnapshotBudgetError(name, required, snapshot_budget_bytes)
+            encoded.append(value)
+    update_digest(name.encode())
+    encoded.sort()
+    for value in encoded:
+        update_digest(value)
 
 
-async def _inventory(connection: AsyncConnection) -> _Inventory:  # noqa: C901
+async def _inventory(  # noqa: C901 - One frozen historical inventory.
+    connection: AsyncConnection, *, snapshot_budget_bytes: int = DEFAULT_SNAPSHOT_BUDGET_BYTES
+) -> _Inventory:
     tables = await _tables(connection)
     errors: list[str] = []
     counts = {
@@ -560,6 +636,9 @@ async def _inventory(connection: AsyncConnection) -> _Inventory:  # noqa: C901
             ("legacy migration tables are absent: " + ", ".join(sorted(required - tables)),),
             sha256(b"").hexdigest(),
         )
+    processing_hash = await _processing_snapshot(
+        connection, tables, errors, snapshot_budget_bytes=snapshot_budget_bytes
+    )
     try:
         collections = await load_collections(connection, tables) if legacy_present else {}
     except ValueError as error:
@@ -570,7 +649,6 @@ async def _inventory(connection: AsyncConnection) -> _Inventory:  # noqa: C901
         if "pc_memory_entry_versions" not in tables
         else await _rows(connection, "pc_memory_entry_versions", _VERSION_COLUMNS)
     )
-    processing_hash = await _processing_snapshot(connection, tables, errors)
     for row in await _rows(
         connection,
         "pc_artifacts",
@@ -870,14 +948,15 @@ async def plan_atomic_memory_migration(
     *,
     index: AtomicMemoryIndex | None = None,
     decisions: Mapping[tuple[str, str, int], CandidateDecision] | None = None,
+    snapshot_budget_bytes: int = DEFAULT_SNAPSHOT_BUDGET_BYTES,
 ) -> AtomicMemoryMigrationReport:
     """Scan every legacy container, entry version and legacy reference without changing data."""
 
     try:
         await ensure_supported_atomic_memory_schema(connection)
+        inventory = await _inventory(connection, snapshot_budget_bytes=snapshot_budget_bytes)
     except AtomicMemoryMigrationError as error:
         return AtomicMemoryMigrationReport(action="plan", errors=error.errors)
-    inventory = await _inventory(connection)
     tables = await _tables(connection)
     pending = 0
     for entry in inventory.entries:
@@ -896,7 +975,11 @@ async def plan_atomic_memory_migration(
         reference_counts, reference_errors = await convert_references(
             dict(inventory.collections), dict(decisions or {}), connection=connection
         )
-    verification = await verify_atomic_memory_migration(connection, index=index) if pending == 0 else None
+    verification = (
+        await verify_atomic_memory_migration(connection, index=index, snapshot_budget_bytes=snapshot_budget_bytes)
+        if pending == 0
+        else None
+    )
     errors = (inventory.errors + schema_errors if verification is None else verification.errors) + reference_errors
     return AtomicMemoryMigrationReport(
         action="plan",
@@ -1205,6 +1288,7 @@ async def apply_atomic_memory_migration(  # noqa: C901 - One ordered offline mai
     maintenance_confirmed: bool,
     embedding_model: Any = None,
     decisions: Mapping[tuple[str, str, int], CandidateDecision] | None = None,
+    snapshot_budget_bytes: int = DEFAULT_SNAPSHOT_BUDGET_BYTES,
 ) -> AtomicMemoryMigrationReport:
     """Archive, import, convert references, then remove legacy collections and citation columns from public tables."""
 
@@ -1214,7 +1298,10 @@ async def apply_atomic_memory_migration(  # noqa: C901 - One ordered offline mai
     async with database.transaction() as connection:
         await ensure_supported_atomic_memory_schema(connection)
     async with database.transaction() as connection:
-        inventory = await _inventory(connection)
+        try:
+            inventory = await _inventory(connection, snapshot_budget_bytes=snapshot_budget_bytes)
+        except AtomicMemorySnapshotBudgetError as error:
+            return AtomicMemoryMigrationReport(action="apply", errors=error.errors)
         reference_errors: tuple[str, ...] = ()
         if not inventory.errors:
             _counts, reference_errors = await convert_references(
@@ -1242,7 +1329,7 @@ async def apply_atomic_memory_migration(  # noqa: C901 - One ordered offline mai
             except ValueError as error:
                 raise AtomicMemoryMigrationError((str(error),)) from error
     async with database.transaction() as connection:
-        archived_inventory = await _inventory(connection)
+        archived_inventory = await _inventory(connection, snapshot_budget_bytes=snapshot_budget_bytes)
     if archived_inventory.errors:
         raise AtomicMemoryMigrationError(archived_inventory.errors)
     publisher = AtomicMemoryProjectionPublisher(index, embedding_model=embedding_model)
@@ -1288,7 +1375,7 @@ async def apply_atomic_memory_migration(  # noqa: C901 - One ordered offline mai
             imported += 1
     async with database.transaction() as connection:
         tables = await _tables(connection)
-        after = await _processing_snapshot(connection, tables, [])
+        after = await _processing_snapshot(connection, tables, [], snapshot_budget_bytes=snapshot_budget_bytes)
         if after != inventory.processing_snapshot_hash:
             raise AtomicMemoryMigrationError((
                 "cursor, generation, high-water mark or accepted processing work changed",
@@ -1319,6 +1406,7 @@ async def apply_atomic_memory_migration(  # noqa: C901 - One ordered offline mai
             check_projection=not rebuilt_projection,
             thorough=True,
             collections_removed=False,
+            snapshot_budget_bytes=snapshot_budget_bytes,
         )
     if not report.ready:
         raise AtomicMemoryMigrationError(report.errors)
@@ -1358,16 +1446,27 @@ async def verify_atomic_memory_migration(
     *,
     index: AtomicMemoryIndex | None = None,
     thorough: bool = True,
+    snapshot_budget_bytes: int = DEFAULT_SNAPSHOT_BUDGET_BYTES,
 ) -> AtomicMemoryMigrationReport:
     """Prove import, reference conversion and removal plus current consistency; never reset a post-upgrade head."""
 
-    return await _verify_atomic_memory_migration(connection, index=index, check_projection=True, thorough=thorough)
+    return await _verify_atomic_memory_migration(
+        connection,
+        index=index,
+        check_projection=True,
+        thorough=thorough,
+        snapshot_budget_bytes=snapshot_budget_bytes,
+    )
 
 
-async def verify_atomic_memory_migration_authority(connection: AsyncConnection) -> AtomicMemoryMigrationReport:
+async def verify_atomic_memory_migration_authority(
+    connection: AsyncConnection, *, snapshot_budget_bytes: int = DEFAULT_SNAPSHOT_BUDGET_BYTES
+) -> AtomicMemoryMigrationReport:
     """Require completed history import before repairing only the derived current rows."""
 
-    return await _verify_atomic_memory_migration(connection, check_projection=False, thorough=False)
+    return await _verify_atomic_memory_migration(
+        connection, check_projection=False, thorough=False, snapshot_budget_bytes=snapshot_budget_bytes
+    )
 
 
 async def _verify_atomic_memory_migration(  # noqa: C901 - One frozen import verification with optional projection checks.
@@ -1377,13 +1476,14 @@ async def _verify_atomic_memory_migration(  # noqa: C901 - One frozen import ver
     check_projection: bool,
     thorough: bool,
     collections_removed: bool = True,
+    snapshot_budget_bytes: int = DEFAULT_SNAPSHOT_BUDGET_BYTES,
 ) -> AtomicMemoryMigrationReport:
 
     try:
         await ensure_supported_atomic_memory_schema(connection)
+        inventory = await _inventory(connection, snapshot_budget_bytes=snapshot_budget_bytes)
     except AtomicMemoryMigrationError as error:
         return AtomicMemoryMigrationReport(action="verify", errors=error.errors)
-    inventory = await _inventory(connection)
     errors = list(inventory.errors)
     tables = await _tables(connection)
     errors.extend(await residual_issues(connection, tables, thorough=thorough, collections_removed=collections_removed))
@@ -1533,12 +1633,15 @@ async def _verify_atomic_memory_migration(  # noqa: C901 - One frozen import ver
 
 
 __all__ = [
+    "DEFAULT_SNAPSHOT_BUDGET_BYTES",
     "MIGRATION_ID",
     "AtomicMemoryMigrationError",
     "AtomicMemoryMigrationReport",
+    "AtomicMemorySnapshotBudgetError",
     "apply_atomic_memory_migration",
     "assert_atomic_memory_migration_ready",
     "plan_atomic_memory_migration",
+    "preflight_processing_snapshot",
     "verify_atomic_memory_migration",
     "verify_atomic_memory_migration_authority",
 ]

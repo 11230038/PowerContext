@@ -216,6 +216,12 @@ def atomic_memory_migrate(
         Path | None,
         typer.Option(help="JSON decisions replacing Candidate evidence that cited only whole Memory collections."),
     ] = None,
+    snapshot_budget_mib: Annotated[
+        int,
+        typer.Option(
+            min=1, help="Conservative processing-snapshot working-set budget in MiB, not total process memory."
+        ),
+    ] = 256,
 ) -> None:
     """Archive Memory v1, convert its history and references to Atomic Memory, and remove it from public tables."""
 
@@ -231,7 +237,11 @@ def atomic_memory_migrate(
         try:
             ready = asyncio.run(
                 _atomic_memory_maintenance(
-                    settings, action, maintenance_confirmed=maintenance_confirmed, decisions=loaded
+                    settings,
+                    action,
+                    maintenance_confirmed=maintenance_confirmed,
+                    decisions=loaded,
+                    snapshot_budget_bytes=snapshot_budget_mib * 1024 * 1024,
                 )
             )
         except OperationalError as error:
@@ -270,6 +280,32 @@ def atomic_memory_rebuild_projection(
         raise typer.Exit(code=1)
 
 
+async def _sqlite_snapshot_budget_preflight(database: SQLiteConfig, snapshot_budget_bytes: int) -> bool:
+    from powercontext.builtin.persistence.migrations.atomic_memory_v1 import (
+        AtomicMemoryMigrationReport,
+        AtomicMemorySnapshotBudgetError,
+        preflight_processing_snapshot,
+    )
+
+    try:
+        # Reject existing inputs before writable opening can switch journal
+        # mode. Apply retains creation behavior when no database can be opened;
+        # its initial inventory repeats admission before migration writes.
+        async with (
+            SQLiteProfile.open_readonly(database) as inspection,
+            inspection.database.transaction() as connection,
+        ):
+            await preflight_processing_snapshot(connection, snapshot_budget_bytes=snapshot_budget_bytes)
+    except AtomicMemorySnapshotBudgetError as error:
+        typer.echo(AtomicMemoryMigrationReport(action="apply", errors=error.errors).model_dump_json())
+        return False
+    except OperationalError as error:
+        sqlite_code = getattr(error.orig, "sqlite_errorcode", None)
+        if not isinstance(sqlite_code, int) or sqlite_code & 0xFF != SQLITE_CANTOPEN:
+            raise
+    return True
+
+
 async def _atomic_memory_maintenance(
     settings: ServerSettings,
     action: Literal["plan", "apply", "verify", "rebuild-projection"],
@@ -277,6 +313,7 @@ async def _atomic_memory_maintenance(
     maintenance_confirmed: bool,
     batch_size: int = 100,
     decisions: dict[tuple[str, str, int], CandidateDecision] | None = None,
+    snapshot_budget_bytes: int = 256 * 1024 * 1024,
 ) -> bool:
     from powercontext.builtin.artifacts.memory import EmbeddingProfile
 
@@ -297,6 +334,8 @@ async def _atomic_memory_maintenance(
     if isinstance(database, SQLiteConfig):
         if not database.is_persistent:
             raise typer.BadParameter("offline migration requires a persistent database")  # noqa: TRY003
+        if action == "apply" and not await _sqlite_snapshot_budget_preflight(database, snapshot_budget_bytes):
+            return False
         opened = (
             SQLiteProfile.open_readonly(database, load_vector_extension=embedding_profile is not None)
             if read_only
@@ -332,6 +371,7 @@ async def _atomic_memory_maintenance(
                     maintenance_confirmed=maintenance_confirmed,
                     embedding_model=embedding_model,
                     decisions=decisions,
+                    snapshot_budget_bytes=snapshot_budget_bytes,
                 )
         else:
             from powercontext.builtin.persistence.migrations.atomic_memory_v1 import (
@@ -341,9 +381,13 @@ async def _atomic_memory_maintenance(
 
             async with profile.database.transaction() as connection:
                 report = (
-                    await plan_atomic_memory_migration(connection, index=index, decisions=decisions)
+                    await plan_atomic_memory_migration(
+                        connection, index=index, decisions=decisions, snapshot_budget_bytes=snapshot_budget_bytes
+                    )
                     if action == "plan"
-                    else await verify_atomic_memory_migration(connection, index=index)
+                    else await verify_atomic_memory_migration(
+                        connection, index=index, snapshot_budget_bytes=snapshot_budget_bytes
+                    )
                 )
         typer.echo(report.model_dump_json())
         return report.ready if action != "plan" else not report.errors
