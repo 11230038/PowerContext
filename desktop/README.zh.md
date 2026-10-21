@@ -16,7 +16,9 @@
 
 ## 开发与构建
 
-Windows 11 x64 上需要 Node 24.14.1、pnpm 11.13.1、Rust 1.95.0 MSVC、Visual Studio C++ Build Tools、Windows SDK 和 WebView2。安装后的用户程序不依赖 Node、Rust、Python 或本地 Server。
+Windows 11 x64 上需要 Node 24.14.1、pnpm 11.13.1、Rust 1.95.0 MSVC、JDK 11 或更高版本（确保 `java` 位于 `PATH` 中）、Visual Studio C++ Build Tools、Windows SDK 和 WebView2。安装后的用户程序不依赖 Node、Rust、Python 或本地 Server。
+
+`generate` 和 `generate:check` 会启动基于 Java 的 OpenAPI Generator。首次运行时，`openapi-generator-cli` 可能从 Maven Central 下载固定版本的 Generator JAR，因此首次生成或漂移检查需要网络访问；后续运行可以复用已下载的 JAR。
 
 从仓库根目录执行：
 
