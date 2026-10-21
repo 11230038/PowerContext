@@ -30,7 +30,7 @@ import {
   textBytes,
 } from "../src/app/MemoryWorkspace";
 import { App } from "../src/app/App";
-import { Overview } from "../src/app/Overview";
+import { TopBar } from "../src/app/TopBar";
 import { desktopApi } from "../src/shared/ipc";
 import type {
   ArtifactReference,
@@ -383,7 +383,7 @@ test.each(["forbidden", "not_found", "network"])(
   },
 );
 
-test("overview refresh shows the latest readiness instead of the activation snapshot", () => {
+test("global context shows the latest readiness instead of the activation snapshot", () => {
   const active = state.active!;
   const ready = {
     ...active.report,
@@ -397,14 +397,16 @@ test("overview refresh shows the latest readiness instead of the activation snap
     },
   };
   render(
-    <Overview
+    <TopBar
       state={{
         ...state,
         active: { ...active, report: ready },
         reports: [latest],
       }}
       language="en"
-      onNavigate={vi.fn()}
+      onManageConnections={vi.fn()}
+      onOpenScopes={vi.fn()}
+      onDisconnect={vi.fn()}
     />,
   );
   expect(screen.getByText("Service not ready")).toBeTruthy();
@@ -450,10 +452,10 @@ test.each(["scope", "page"])(
       await user.click(screen.getByRole("button", { name: "查找范围" }));
       await user.click(screen.getByRole("button", { name: "Scope B" }));
     } else {
-      await user.click(screen.getByRole("button", { name: "总览" }));
+      await user.click(screen.getByRole("button", { name: "观察" }));
       await waitFor(() =>
         expect(document.activeElement).toBe(
-          screen.getByRole("heading", { level: 1, name: "总览" }),
+          screen.getByRole("heading", { level: 1, name: "观察" }),
         ),
       );
       await user.click(screen.getByRole("button", { name: "记忆" }));
@@ -468,7 +470,7 @@ test.each(["scope", "page"])(
       finish(outcome("succeeded"));
     });
     confirm.mockClear().mockReturnValue(false);
-    await user.click(screen.getByRole("button", { name: "总览" }));
+    await user.click(screen.getByRole("button", { name: "观察" }));
     expect(confirm).toHaveBeenCalled();
     expect(
       (screen.getByLabelText("记忆内容") as HTMLTextAreaElement).value,

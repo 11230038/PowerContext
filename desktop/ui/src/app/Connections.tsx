@@ -33,10 +33,20 @@ type Props = {
   language: Language;
   onState: (value: DesktopState) => void;
   onDirty: (value: boolean) => void;
+  // External selection is accepted only after the application's draft guard.
+  selection?: { id: string | null; request: number };
 };
-export function Connections({ state, language, onState, onDirty }: Props) {
+export function Connections({
+  state,
+  language,
+  onState,
+  onDirty,
+  selection,
+}: Props) {
   const t = connectionMessages[language];
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(
+    selection?.id ?? null,
+  );
   const profile = state?.profiles.find((p) => p.id === selected);
   const report = state?.reports.find((r) => r.connectionId === selected);
   const [name, setName] = useState("");
@@ -78,6 +88,13 @@ export function Connections({ state, language, onState, onDirty }: Props) {
   useEffect(() => {
     reset(profile);
   }, [selected, profile?.revision]);
+  useEffect(() => {
+    if (!selection) return;
+    lifetime.current++;
+    setBusy(false);
+    setSelected(selection.id);
+    reset(state?.profiles.find((item) => item.id === selection.id));
+  }, [selection?.request]);
   function change(target = false) {
     setDirty(true);
     onDirty(true);

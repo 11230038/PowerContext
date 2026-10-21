@@ -318,8 +318,10 @@ main {
   top: calc(100% + 6px);
   left: 0;
   z-index: 20;
-  min-width: 260px;
-  max-width: 360px;
+  width: min(360px, calc(100vw - 32px));
+  min-width: 0;
+  max-height: min(480px, 60dvh);
+  overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -349,6 +351,75 @@ main {
   font-size: 13px;
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+
+/* Context and page containers remain readable with long exact identities. */
+.global-context {
+  flex-basis: 100%;
+  min-width: 0;
+}
+.global-context p {
+  margin: 4px 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.context-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  margin: 8px 0;
+  font-size: 14px;
+}
+.context-facts > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+.context-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.identity-details {
+  width: 100%;
+  min-width: 0;
+}
+.identity-details p,
+.topbar-group button {
+  overflow-wrap: anywhere;
+}
+.topbar-group button {
+  text-align: left;
+  min-width: 0;
+}
+.observation-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.observation-tabs [aria-selected="true"] {
+  border-color: var(--accent);
+  background: var(--selected);
+  color: var(--accent);
+  font-weight: 600;
+}
+.page-feedback {
+  margin: 16px 0;
+}
+.page-feedback h2 {
+  margin-bottom: 0;
+}
+.page-feedback.error {
+  border-inline-start: 4px solid var(--accent);
+}
+.feedback-body p:last-child {
+  margin-bottom: 0;
+}
+[tabindex="-1"]:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
 }
 .menu-separator {
   border-top: 1px solid var(--border);
@@ -1094,10 +1165,20 @@ footer {
 }
 @media (forced-colors: active) {
   button[aria-current="page"],
-  .notice {
+  .notice,
+  .observation-tabs [aria-selected="true"] {
     border: 2px solid Highlight;
   }
   .dot {
     background: CanvasText;
+  }
+}
+
+@media (max-width: 700px), (max-height: 600px) {
+  .topbar {
+    position: static;
+  }
+  :root {
+    scroll-padding-top: 16px;
   }
 }

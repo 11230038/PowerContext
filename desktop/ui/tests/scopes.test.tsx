@@ -26,6 +26,7 @@ vi.mock("../src/shared/ipc", () => ({
   desktopApi: {
     scopes: vi.fn(),
     cancelScopes: vi.fn(),
+    cancelMemory: vi.fn().mockResolvedValue(undefined),
     state: vi.fn(),
     selectScope: vi.fn(),
   },

@@ -370,7 +370,7 @@ def exercise_late_save(page: InstalledPage) -> None:
             gate.unlink()
             # This is shown only after the old form refreshes the native write record.
             page.wait_text("连接或范围已改变，旧正文已隐藏。")  # noqa: RUF001 - exact localized UI
-            page.button("总览")
+            page.button("观察")
             page.post("/alert/dismiss", {})
             if page.observe("return document.querySelector('.memory-workspace textarea')?.value;") != draft:
                 raise HarnessFailure("installed_late_save_lost_new_draft")

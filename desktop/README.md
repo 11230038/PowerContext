@@ -1,8 +1,26 @@
 # PowerContext Desktop preview
 
-Internal Windows preview for [#1654](https://github.com/oceanbase/powercontext/issues/1654), following RFC #1455. It provides a packaged Tauri 2 shell with Home, Connections, My memories, Chinese/English settings, semantic light/dark/system themes and honest disconnected states. Connection profiles, explicit activation, identity/readiness checks, exact Scope selection and local diagnostics are implemented. Shared note saving, bounded FTS search and exact-version reading are implemented; native workflow qualification remains open.
+Internal Windows preview for [#1654](https://github.com/oceanbase/powercontext/issues/1654), following RFC #1455. Its shared application layout provides Memory, Connections, Observation, and Settings & help, Chinese/English interfaces, and light/dark/system themes. Connection profiles, explicit activation, identity/readiness checks, exact Scope selection, local diagnostics, note saving, bounded FTS search and exact-version reading are implemented; native workflow qualification remains open.
 
 See [中文说明](README.zh.md), [security boundary](SECURITY.md), and [validation guide](VALIDATION.md). This is not a supported or signed release, and does not close #1654 or #1428.
+
+## Navigation and first use
+
+Memory is the initial page. After Desktop state loads, an inactive connection offers **Set up locally** and **Connect an existing server**. Local setup opens **Settings & help → Local Server**, which explains that installation and service management are not available yet. Prepare a Server independently using the instructions below, or obtain its address and applicable credentials from an administrator. The global connection menu opens the selected configuration without activating it. Explicitly activate a connection, select an exact Scope, and use the existing Memory workspace.
+
+The global context displays the connection, endpoint, exact Scope title and ID, identity, compatibility and last observed health facts on every page. Health does not grant operation permissions. Changing pages or connection targets requires confirmation when input is unsaved. Closing Scope selection leaves the current draft intact. Submitted writes retain their original target and are not automatically replayed.
+
+Observation contains **Runtime state**, **Current-Scope inventory & usage**, and **This session**. These are unavailable placeholders until their owning features are integrated; no sample data, invented zero-valued statistics or automatic readiness probes are shown. Connections retains its explicit connection checks, whose native readiness behavior is tracked separately by #2101.
+
+Settings & help remains available without HTTP and provides language, theme, Local Server guidance, explicit local CLI diagnostics, the observed Desktop version, and copyable usage/support links. An unavailable native version is shown as unknown. Local diagnostic failure does not disable independently available remote operations.
+
+Use Tab to reach navigation and controls. The connection menu supports arrow keys, Home/End and Escape; Observation tabs support Left/Right and Home/End. Scope selection contains keyboard focus and restores it to the opening control when closed. Small windows use collapsible navigation; context and dialog contents can scroll without hiding recovery controls.
+
+### UI integration interfaces
+
+`ui/src/app/navigation.ts` defines `Page`, `ObservationTab`, `Theme`, and `NavigationTarget`. Application navigation accepts an optional connection ID, Observation tab, or `local-server` settings section. External connection selections pass the application's draft guard before reaching the editor. The editor's `selection` request invalidates pending editor completions, so a late save cannot replace a different selected configuration.
+
+`Observation` accepts independent `panels` keyed by `runtime`, `inventory`, and `session`, with unavailable defaults. Each owning page provides data, authorization, refresh and cancellation behavior. `PageFeedback` presents loading/error/empty/unavailable states with caller-owned explanations and actions. Local setup and management belong to #2117; observation content belongs to #2105, #2106 and #2107. These interfaces do not extend native IPC or the public HTTP contract.
 
 ## Run the installed preview
 
@@ -59,7 +77,7 @@ Profiles persist under the app data directory; credentials never appear in profi
 
 ## Save, find and read a note
 
-After explicitly activating a qualified connection and choosing a Scope, use Home's note form or **My memories → Add note**. The target connection and exact Scope are shown before submission. Enter inserts a newline; only the save button submits. The input is plain text, limited conservatively to 8192 raw UTF-8 bytes without truncation. The Server owns normalization and the returned text is authoritative.
+After explicitly activating a qualified connection and choosing a Scope, open **Memories** and enter a note in the save form. The target connection and exact Scope are shown before submission. Enter inserts a newline; only the save button submits. The input is plain text, limited conservatively to 8192 raw UTF-8 bytes without truncation. The Server owns normalization and the returned text is authoritative.
 
 Search uses FTS in the selected Scope and returns at most 10 matches. This is not a full directory or history, and ten matches do not establish a total count. **Read exact version** reads the returned Atomic Memory reference (`{family: "atomic-memory", artifact_id, revision}`) at that exact revision; it never substitutes the latest version. Copy buttons explicitly copy either the full plain text or the reference JSON.
 

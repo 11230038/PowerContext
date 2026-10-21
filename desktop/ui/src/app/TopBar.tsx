@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { DesktopState } from "../generated/ipc";
 import { messages, type Language } from "./messages";
 import { connectionMessages } from "./connection-messages";
@@ -22,7 +22,7 @@ import { connectionMessages } from "./connection-messages";
 type Props = {
   state: DesktopState | null;
   language: Language;
-  onManageConnections: () => void;
+  onManageConnections: (connectionId?: string) => void;
   onOpenScopes: () => void;
   onDisconnect: () => void;
 };
@@ -35,17 +35,21 @@ export function TopBar({
 }: Props) {
   const t = messages[language];
   const ct = connectionMessages[language];
-  const [open, setOpen] = useState<"connection" | "identity" | null>(null);
+  const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
+  const connectionWrap = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const firstItem = useRef(0);
+  const menuId = useId();
   useEffect(() => {
     const bar = wrap.current;
     if (!bar) return;
-    const update = () => {
+    const update = () =>
       document.documentElement.style.setProperty(
         "--topbar-height",
         `${bar.getBoundingClientRect().height}px`,
       );
-    };
     update();
     const observer =
       typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
@@ -57,149 +61,244 @@ export function TopBar({
   }, []);
   useEffect(() => {
     if (!open) return;
+    const items =
+      menu.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
+    items?.[firstItem.current === -1 ? items.length - 1 : 0]?.focus();
     function onPointerDown(event: PointerEvent) {
-      if (event.target instanceof Node && !wrap.current?.contains(event.target))
-        setOpen(null);
-    }
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(null);
+      if (
+        event.target instanceof Node &&
+        !connectionWrap.current?.contains(event.target)
+      )
+        setOpen(false);
     }
     document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
+    return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
   const active = state?.active;
-  const report = active?.report;
   const activeProfile = state?.profiles.find(
-    (p) => p.id === active?.connectionId,
+    (profile) => profile.id === active?.connectionId,
   );
+  const latest = state?.reports.find(
+    (report) =>
+      report.connectionId === active?.connectionId &&
+      report.revision === active?.report.revision,
+  );
+  const report =
+    latest && active && latest.checkedAt >= active.report.checkedAt
+      ? latest
+      : active?.report;
   const principal = report?.anonymousAccess
     ? null
     : report?.identity.value?.principal;
   const identityText = !active
-    ? t.notConnected
+    ? t.unverified
     : report?.anonymousAccess
       ? t.anonymousIdentity
       : principal
         ? (principal.description ?? `${principal.type}: ${principal.id}`)
         : t.identityUnverified;
+  function closeMenu() {
+    setOpen(false);
+    trigger.current?.focus();
+  }
   return (
     <div className="topbar" ref={wrap}>
-      <div className="menu-wrap">
+      <div className="menu-wrap" ref={connectionWrap}>
         <button
           className="menu-trigger"
-          aria-expanded={open === "connection"}
+          aria-expanded={open}
           aria-haspopup="menu"
-          onClick={() => setOpen(open === "connection" ? null : "connection")}
+          aria-controls={menuId}
+          ref={trigger}
+          aria-label={`${t.current}: ${activeProfile?.name ?? (state ? t.notConnected : t.unverified)}`}
+          onClick={() => {
+            firstItem.current = 0;
+            setOpen(!open);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              firstItem.current = event.key === "ArrowUp" ? -1 : 0;
+              setOpen(true);
+            }
+          }}
         >
-          <span className="label">{activeProfile?.name ?? t.notConnected}</span>
+          <span className="label">
+            {activeProfile?.name ?? (state ? t.notConnected : t.unverified)}
+          </span>
           <span aria-hidden="true">▾</span>
         </button>
-        {open === "connection" && (
-          <div className="menu" role="menu">
-            {state?.profiles.map((p) => (
+        {open && (
+          <div
+            className="menu"
+            id={menuId}
+            role="menu"
+            aria-label={t.manageConnections}
+            ref={menu}
+            onBlur={(event) => {
+              if (
+                event.relatedTarget instanceof Node &&
+                !connectionWrap.current?.contains(event.relatedTarget)
+              )
+                setOpen(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                closeMenu();
+                return;
+              }
+              if (event.key === "Tab") {
+                setOpen(false);
+                return;
+              }
+              const items = Array.from(
+                menu.current?.querySelectorAll<HTMLButtonElement>(
+                  '[role="menuitem"]',
+                ) ?? [],
+              );
+              const index = items.indexOf(
+                document.activeElement as HTMLButtonElement,
+              );
+              let next: number;
+              if (event.key === "ArrowDown") next = (index + 1) % items.length;
+              else if (event.key === "ArrowUp")
+                next = (index + items.length - 1) % items.length;
+              else if (event.key === "Home") next = 0;
+              else if (event.key === "End") next = items.length - 1;
+              else return;
+              event.preventDefault();
+              items[next]?.focus();
+            }}
+          >
+            {state?.profiles.map((profile) => (
               <button
-                key={p.id}
+                key={profile.id}
                 className="menu-item"
                 role="menuitem"
+                tabIndex={-1}
                 onClick={() => {
-                  setOpen(null);
-                  onManageConnections();
+                  closeMenu();
+                  onManageConnections(profile.id);
                 }}
               >
                 <span>
-                  {p.name}
-                  {state.active?.connectionId === p.id
+                  {profile.name}
+                  {active?.connectionId === profile.id
                     ? ` · ${ct.activeBadge}`
                     : ""}
                 </span>
-                <span className="meta">{p.endpoint}</span>
+                <span className="meta">{profile.endpoint}</span>
               </button>
             ))}
-            {state?.profiles.length ? <div className="menu-separator" /> : null}
             <button
               className="menu-item"
               role="menuitem"
+              tabIndex={-1}
               onClick={() => {
-                setOpen(null);
+                closeMenu();
                 onManageConnections();
               }}
             >
               {t.manageConnections}
             </button>
-            {state?.active && (
-              <>
-                <div className="menu-separator" />
-                <button
-                  className="menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    setOpen(null);
-                    onDisconnect();
-                  }}
-                >
-                  {ct.disconnect}
-                </button>
-              </>
+            {active && (
+              <button
+                className="menu-item"
+                role="menuitem"
+                tabIndex={-1}
+                onClick={() => {
+                  closeMenu();
+                  onDisconnect();
+                }}
+              >
+                {ct.disconnect}
+              </button>
             )}
             <p className="menu-note">{t.switchHint}</p>
           </div>
         )}
       </div>
-      <span className={active ? "status-pill ok" : "status-pill"} role="status">
-        <span aria-hidden="true" className={active ? "dot ok" : "dot"} />
-        {active ? t.connected : t.notConnected}
+      <span className="status-pill">
+        {active ? t.connected : state ? t.notConnected : t.unverified}
       </span>
-      <span aria-hidden="true" className="divider" />
       <div className="topbar-group">
         <span className="topbar-label">{t.scopeLabel}</span>
-        <button className="menu-trigger" onClick={onOpenScopes}>
-          <span className="label">
-            {active?.scope?.title ?? t.noScopeSelected}
-          </span>
-          <span aria-hidden="true">▾</span>
-        </button>
-      </div>
-      <span className="topbar-spacer" />
-      <div className="menu-wrap">
         <button
           className="menu-trigger"
-          aria-expanded={open === "identity"}
-          aria-haspopup="menu"
-          onClick={() => setOpen(open === "identity" ? null : "identity")}
+          disabled={!active}
+          onClick={onOpenScopes}
+          aria-haspopup="dialog"
         >
-          <span className="label">{identityText}</span>
+          <span>{active?.scope?.title ?? t.noScopeSelected}</span>
           <span aria-hidden="true">▾</span>
         </button>
-        {open === "identity" && (
-          <div className="menu right" role="menu">
-            <p className="menu-note">
-              <strong>{t.identityDetails}</strong>
-            </p>
-            {principal ? (
-              <>
-                <p className="menu-note">
-                  {principal.type}: {principal.id}
-                  {principal.description ? ` · ${principal.description}` : ""}
-                </p>
-                <p className="menu-note">
-                  {t.accessMode}: {report?.identity.value?.mode ?? t.unverified}
-                </p>
-              </>
-            ) : (
-              <p className="menu-note">
-                {report?.anonymousAccess ? ct.noIdentity : t.identityUnverified}
-              </p>
+      </div>
+      <div className="global-context">
+        {activeProfile && (
+          <p className="context-endpoint">{activeProfile.endpoint}</p>
+        )}
+        {active?.scope && (
+          <p>
+            <span>{t.exactScope}: </span>
+            <code>{active.scope.scope_id}</code>
+          </p>
+        )}
+        {active && (
+          <dl className="context-facts">
+            <div>
+              <dt>{t.identityLabel}</dt>
+              <dd>{identityText}</dd>
+            </div>
+            <div>
+              <dt>{t.compatibility}</dt>
+              <dd>
+                {report?.compatibilityVerified
+                  ? t.compatibilityVerified
+                  : t.unverified}
+              </dd>
+            </div>
+            <div>
+              <dt>{t.liveness}</dt>
+              <dd>{report?.liveness.value?.status ?? t.unverified}</dd>
+            </div>
+            <div>
+              <dt>{t.readiness}</dt>
+              <dd>
+                {report?.readiness.value?.status === "ready"
+                  ? t.serviceReady
+                  : report?.readiness.value
+                    ? t.serviceNotReady
+                    : t.unverified}
+              </dd>
+            </div>
+          </dl>
+        )}
+        {report && (
+          <p className="small">
+            {t.lastChecked}:{" "}
+            {new Date(report.checkedAt * 1000).toLocaleString(
+              language === "zh" ? "zh-CN" : "en-US",
             )}
-          </div>
+            . {t.readinessNote}
+          </p>
         )}
       </div>
-      <span aria-hidden="true" className="avatar">
-        {identityText.charAt(0).toUpperCase()}
-      </span>
+      {active && (
+        <details className="identity-details" key={active.generation}>
+          <summary>{t.identityDetails}</summary>
+          {principal ? (
+            <p>
+              {principal.type}: {principal.id} · {t.accessMode}:{" "}
+              {report?.identity.value?.mode ?? t.unverified}
+            </p>
+          ) : (
+            <p>
+              {report?.anonymousAccess ? ct.noIdentity : t.identityUnverified}
+            </p>
+          )}
+        </details>
+      )}
     </div>
   );
 }

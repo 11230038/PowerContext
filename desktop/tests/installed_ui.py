@@ -86,12 +86,12 @@ def wait_packaged_page(client: httpx.Client, prefix: str) -> str:
         )
         response.raise_for_status()
         page = response.json()["value"]
-        if "总览" in page["text"]:
+        if all(label in page["text"] for label in ("记忆", "连接", "观察", "设置与帮助")):
             if not page["url"].startswith("http://tauri.localhost"):
                 raise HarnessFailure("installed_resources_not_packaged")
             return page["url"]
         time.sleep(0.2)
-    raise HarnessFailure("installed_overview_not_rendered")
+    raise HarnessFailure("installed_shell_not_rendered")
 
 
 def screenshot(client: httpx.Client, prefix: str, artifacts: Path) -> bool:

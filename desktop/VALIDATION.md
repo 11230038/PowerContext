@@ -61,6 +61,24 @@ uv run python desktop/tests/fixture_qualification.py --server-commit "$DESKTOP_F
 pnpm --dir desktop tauri build --bundles nsis --ci --features ci-fixtures -- --locked
 ```
 
+## Shared application layout and navigation (#2102)
+
+Local verification on 2026-10-21 used Windows x64, Node 24.14.1, pnpm 11.13.1, and Rust 1.95.0 for generated-contract checking:
+
+- `pnpm --dir desktop test`: 48 UI behavior tests passed. These use mocked IPC and cover navigation, exact-Scope context, draft guards, late completions, keyboard/focus behavior, and existing Memory/connection/diagnostic journeys.
+- `pnpm --dir desktop typecheck`, `lint`, and `build` passed. Lint includes OpenAPI drift, canonical brand-resource, and formatting checks; generated contracts were checked without updating them.
+- Ruff 0.15.7 lint and formatting checks passed for the changed installed-acceptance Python scripts. Their startup/navigation selectors were updated; the installed harness itself was not executed locally.
+- Headless Microsoft Edge 155.0.4283.62 exercised four pages and three Observation tabs across Chinese/English, light/dark/system, and CSS viewports 1180×800, 800×600, 400×400, and 400×300. The 24 combinations passed horizontal-overflow, Scope dialog focus/return, connection-menu, and local diagnostic error checks using synthetic IPC. The 400×300 viewport with device scale factor 2 checks layout equivalent to 800×600 at 200%; it does not establish actual WebView zoom behavior.
+- Additional browser scenarios exercised draft-confirmation dismissal/acceptance at all four viewports, and disconnected first use, Local Server placement and initialization failure in both languages at 800×600, 400×400 and 400×300. Drafts survived canceled navigation, and first-use/error pages remained free of horizontal overflow.
+
+Browser checks and mocked IPC do not establish Server compatibility, installed-package behavior, actual IME, screen-reader output, native confirmation presentation, or macOS qualification. Those remain platform acceptance work under #2108/#2109. Local installation and service management remain unavailable pending #2117; observation content remains unavailable pending #2105/#2106/#2107.
+
+2026-10-21 的本地验证使用 Windows x64、Node 24.14.1、pnpm 11.13.1，生成合同检查使用 Rust 1.95.0。48 项 UI 行为测试及类型、lint、生产构建检查通过；UI 测试使用模拟 IPC，覆盖导航、精确 Scope、草稿保护、迟到响应、键盘与焦点，以及现有业务流程。修改的安装验收 Python 脚本通过 Ruff 0.15.7 检查，本地未执行安装验收脚本。
+
+无头 Edge 155.0.4283.62 使用合成 IPC，检查中英文、三种主题及上述四组 CSS 视口，共 24 种组合，覆盖四个页面、三个观察标签、横向溢出、Scope 弹窗焦点、连接菜单和本机诊断错误。400×300 配合设备缩放因子 2 仅验证 800×600 在 200% 下的等效布局，不代表实际 WebView 缩放验收。真实 Server、安装包、IME、屏幕阅读器、原生确认框呈现和 macOS 仍需对应平台验收；本地安装和观察数据功能仍明确标注尚未可用。
+
+额外浏览器场景验证了四组视口中的草稿确认取消／接受，以及中英文在 800×600、400×400、400×300 下的未连接首次使用、本地 Server 入口和初始化失败状态。取消导航保留草稿，首次使用及错误页面没有横向溢出。
+
 ## Remaining release qualification
 
 - Clean standard-user Windows 11, including absent/present WebView2 and bootstrap recovery.
