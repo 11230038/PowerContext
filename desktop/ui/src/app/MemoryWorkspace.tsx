@@ -25,13 +25,16 @@ import type {
 import { desktopApi } from "../shared/ipc";
 import { connectionError } from "./connection-messages";
 import { memoryMessages } from "./memory-messages";
-import type { Language } from "./messages";
+import { messages, type Language } from "./messages";
+import { PageFeedback, ErrorFeedback } from "./PageFeedback";
 import memoryIcon from "../assets/memory.svg";
 type Props = {
   state: DesktopState | null;
   language: Language;
   onState: (state: DesktopState) => void;
   onDirty: (dirty: boolean) => void;
+  onManageConnections?: () => void;
+  onOpenScopes?: () => void;
 };
 export const textBytes = (value: string) =>
   new TextEncoder().encode(value).length;
@@ -148,28 +151,41 @@ export function NoteForm({ state, language, onState, onDirty }: Props) {
           t.noScope
         )}
       </p>
-      {bytes > 8192 && <p role="alert">{t.bytesError}</p>}
+      {busy && <PageFeedback compact kind="loading" title={t.saving} />}
+      {bytes > 8192 && (
+        <PageFeedback compact kind="error" title={t.bytesError} />
+      )}
       {error != null && (
-        <p role="alert">
-          {t.failed} {connectionError(error, language)}
-        </p>
+        <ErrorFeedback error={error} language={language} title={t.failed} />
       )}
       {outcome && (
-        <p role={outcome.record.status === "succeeded" ? "status" : "alert"}>
-          {outcome.record.status === "succeeded"
-            ? outcome.result?.records.length
-              ? t.success
-              : t.noEntry
-            : outcome.record.status === "unknown"
-              ? t.unknown
-              : `${t.failed} ${connectionError(outcome.record.error, language)}`}
-        </p>
+        <PageFeedback
+          compact
+          kind={
+            outcome.record.status === "succeeded"
+              ? "success"
+              : outcome.record.status === "unknown"
+                ? "warning"
+                : "error"
+          }
+          title={
+            outcome.record.status === "succeeded"
+              ? outcome.result?.records.length
+                ? t.success
+                : t.noEntry
+              : outcome.record.status === "unknown"
+                ? t.unknown
+                : `${t.failed} ${connectionError(outcome.record.error, language)}`
+          }
+        />
       )}
     </section>
   );
 }
 export function MemoryWorkspace(props: Props) {
   const { state, language, onState, onDirty } = props;
+  const common = messages[language];
+  const failedReference = useRef<ArtifactReference | undefined>(undefined);
   const t = memoryMessages[language];
   const active = state?.active;
   const readerHeading = useRef<HTMLHeadingElement>(null);
@@ -187,6 +203,7 @@ export function MemoryWorkspace(props: Props) {
   current.current = active?.generation;
   const enabled = !!active?.scope && active.report.compatibilityVerified;
   function clearRead() {
+    failedReference.current = undefined;
     sequence.current++;
     setHits(null);
     setEntry(null);
@@ -217,6 +234,7 @@ export function MemoryWorkspace(props: Props) {
     if (!active?.scope) return;
     const generation = active.generation;
     const ticket = ++sequence.current;
+    failedReference.current = reference;
     setError(null);
     setEntry(null);
     setCopied("");
@@ -270,6 +288,32 @@ export function MemoryWorkspace(props: Props) {
   const record = state?.lastWrite;
   return (
     <div className="stack memory-workspace">
+      {state && !enabled && (
+        <PageFeedback
+          kind="unavailable"
+          title={
+            !active
+              ? common.noActiveTitle
+              : !active.report.compatibilityVerified
+                ? common.compatibilityNeeded
+                : common.chooseScopeTitle
+          }
+          action={
+            !active || !active.report.compatibilityVerified
+              ? props.onManageConnections && (
+                  <button onClick={props.onManageConnections}>
+                    {common.chooseConnection}
+                  </button>
+                )
+              : props.onOpenScopes && (
+                  <button onClick={props.onOpenScopes}>
+                    {common.chooseScopeTitle}
+                  </button>
+                )
+          }
+        />
+      )}
+
       {record &&
         (record.status === "unknown" ||
           record.status === "pending" ||
@@ -334,9 +378,31 @@ export function MemoryWorkspace(props: Props) {
         </div>
         <p className="small search-meta">{t.searchSummary}</p>
         {!enabled && <p>{t.noScope}</p>}
-        {textBytes(query) > 8192 && <p role="alert">{t.inputError}</p>}
+        {busy && (
+          <PageFeedback
+            compact
+            kind="loading"
+            title={busy === "search" ? t.searching : t.loading}
+          />
+        )}
+        {textBytes(query) > 8192 && (
+          <PageFeedback compact kind="error" title={t.inputError} />
+        )}
         {error != null && (
-          <p role="alert">{connectionError(error, language)}</p>
+          <ErrorFeedback
+            error={error}
+            language={language}
+            action={
+              enabled && (
+                <button
+                  disabled={!!busy}
+                  onClick={() => void read(failedReference.current)}
+                >
+                  {common.retryRead}
+                </button>
+              )
+            }
+          />
         )}
       </section>
       <div className="memory-grid">
@@ -344,8 +410,12 @@ export function MemoryWorkspace(props: Props) {
           <div className="card-heading">
             <h2>{t.results}</h2>
           </div>
-          {hits === null && !busy && error == null && <p>{t.start}</p>}
-          {hits?.length === 0 && <p>{t.none}</p>}
+          {hits === null && !busy && error == null && (
+            <PageFeedback compact kind="empty" title={t.start} />
+          )}
+          {hits?.length === 0 && (
+            <PageFeedback compact kind="empty" title={t.none} />
+          )}
           {hits?.length === 10 && <p>{t.limit}</p>}
           {hits && (
             <p className="small">
@@ -466,7 +536,7 @@ export function MemoryWorkspace(props: Props) {
                   ))}
                 </ul>
               ) : (
-                <p>{t.noSources}</p>
+                <PageFeedback compact kind="empty" title={t.noSources} />
               )}
             </details>
             <p className="note-line">{t.agentScopeNote}</p>

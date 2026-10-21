@@ -64,7 +64,9 @@ test("Overview remains the initial page and all original entries remain reachabl
       .getAllByRole("button")
       .map((button) => button.textContent),
   ).toEqual(["总览", "连接", "记忆", "观察"]);
-  expect(screen.getByRole("heading", { name: "尚未连接服务" })).toBeTruthy();
+  expect(
+    await screen.findByRole("heading", { name: "尚未连接服务" }),
+  ).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "连接" }));
   expect(screen.getByRole("heading", { name: "添加连接" })).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "记忆" }));
@@ -75,7 +77,9 @@ test("Overview remains the initial page and all original entries remain reachabl
   expect(screen.getByLabelText("语言")).toBeTruthy();
   expect(screen.getByRole("heading", { name: "本地诊断" })).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "总览" }));
-  expect(screen.getByRole("heading", { name: "尚未连接服务" })).toBeTruthy();
+  expect(
+    await screen.findByRole("heading", { name: "尚未连接服务" }),
+  ).toBeTruthy();
 });
 
 test("Observation tabs support the keyboard and stay unavailable without starting checks", async () => {

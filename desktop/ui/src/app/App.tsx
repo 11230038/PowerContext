@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { messages, type Language } from "./messages";
 import { getFoundationInfo, desktopApi } from "../shared/ipc";
 import type { FoundationInfo, DesktopState } from "../generated/ipc";
@@ -32,7 +32,9 @@ import { Diagnostics } from "./Diagnostics";
 import { Connections } from "./Connections";
 import { Scopes } from "./Scopes";
 import { Observation, type ObservationTab } from "./Observation";
-import { connectionMessages, connectionError } from "./connection-messages";
+import { connectionMessages } from "./connection-messages";
+import { PageFeedback, ErrorFeedback } from "./PageFeedback";
+import { activeCheckReport } from "./context";
 
 type Page = "home" | "connections" | "memories" | "observation" | "settings";
 type Theme = "light" | "dark" | "system";
@@ -46,6 +48,9 @@ export function App() {
   const [host, setHost] = useState<FoundationInfo | null>(null);
   const [desktop, setDesktop] = useState<DesktopState | null>(null);
   const [nativeError, setNativeError] = useState<unknown>(null);
+  const [stateError, setStateError] = useState<unknown>(null);
+  const [stateLoading, setStateLoading] = useState(true);
+  const stateRequest = useRef(0);
   const [dirty, setDirty] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -60,12 +65,26 @@ export function App() {
   const activeProfile = desktop?.profiles.find(
     (p) => p.id === desktop.active?.connectionId,
   );
-  const activeReport = desktop?.active?.report;
+  const activeReport = activeCheckReport(desktop);
   const heading = useRef<HTMLHeadingElement>(null);
+  const scopeDialog = useRef<HTMLDivElement>(null);
+  const scopeReturnFocus = useRef<HTMLElement | null>(null);
   const t = messages[language];
   const ct = connectionMessages[language];
+  async function loadState() {
+    const request = ++stateRequest.current;
+    setStateLoading(true);
+    setStateError(null);
+    try {
+      receiveState(await desktopApi.state());
+    } catch (error) {
+      if (request === stateRequest.current) setStateError(error);
+    } finally {
+      if (request === stateRequest.current) setStateLoading(false);
+    }
+  }
   useEffect(() => {
-    desktopApi.state().then(receiveState).catch(setNativeError);
+    void loadState();
     getFoundationInfo()
       .then(setHost)
       .catch(() => setHost(null));
@@ -76,24 +95,72 @@ export function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+  useLayoutEffect(() => {
+    heading.current?.focus();
+  }, [page]);
+  function openScopes() {
+    scopeReturnFocus.current = document.activeElement as HTMLElement;
+    setScopeOpen(true);
+  }
   useEffect(() => {
     if (!scopeOpen) return;
+    const previous = scopeReturnFocus.current;
+    const dialog = scopeDialog.current;
+    const background = Array.from(
+      document.querySelector(".app")?.children ?? [],
+    ).filter(
+      (element): element is HTMLElement =>
+        element instanceof HTMLElement &&
+        !element.classList.contains("modal-backdrop"),
+    );
+    const inertValues = background.map((element) => element.inert);
+    background.forEach((element) => {
+      element.inert = true;
+    });
+    dialog?.querySelector<HTMLButtonElement>("button")?.focus();
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setScopeOpen(false);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setScopeOpen(false);
+      }
+      if (event.key !== "Tab") return;
+      const controls = Array.from(
+        dialog?.querySelectorAll<HTMLElement>(
+          'button, input, select, [tabindex="0"]',
+        ) ?? [],
+      ).filter((element) => !element.matches(":disabled"));
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
     }
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      background.forEach((element, index) => {
+        element.inert = inertValues[index];
+      });
+      if (scopeReturnFocus.current === null) return;
+      if (previous?.isConnected) previous.focus();
+      else
+        document
+          .querySelector<HTMLButtonElement>(".topbar-group button")
+          ?.focus();
+    };
   }, [scopeOpen]);
   function navigate(next: Page) {
     if (next === page || !confirmSwitch()) return;
     setDirty(false);
     setPage(next);
     setMenu(false);
-    requestAnimationFrame(() => heading.current?.focus());
   }
   function disconnect() {
     if (!confirmSwitch()) return;
-    setDirty(false);
     void desktopApi.disconnect().then(receiveState).catch(setNativeError);
   }
   async function refresh() {
@@ -166,11 +233,13 @@ export function App() {
           </button>
           <div className="sidebar-status">
             <p className="status">
-              <span
-                aria-hidden="true"
-                className={desktop?.active ? "dot ok" : "dot"}
-              />
-              {activeProfile?.name ?? t.disconnected}
+              <span aria-hidden="true" className="dot" />
+              {activeProfile?.name ??
+                (stateLoading
+                  ? t.loadingState
+                  : desktop
+                    ? t.disconnected
+                    : t.stateUnavailable)}
             </p>
             <p className="caption">{t.sidebarRunning}</p>
           </div>
@@ -180,16 +249,38 @@ export function App() {
         <TopBar
           state={desktop}
           language={language}
+          loading={stateLoading}
           onManageConnections={() => navigate("connections")}
-          onOpenScopes={() => setScopeOpen(true)}
+          onOpenScopes={openScopes}
           onDisconnect={disconnect}
         />
         <main id="main">
           <h1 className="sr-only" tabIndex={-1} ref={heading}>
             {t[page]}
           </h1>
+          {stateLoading && (
+            <PageFeedback kind="loading" title={t.loadingState} />
+          )}
+          {!stateLoading && stateError != null && (
+            <ErrorFeedback
+              error={stateError}
+              language={language}
+              title={t.stateFailed}
+              action={
+                <button onClick={() => void loadState()}>{t.retryState}</button>
+              }
+            />
+          )}
           {nativeError != null && (
-            <p role="alert">{connectionError(nativeError, language)}</p>
+            <ErrorFeedback
+              error={nativeError}
+              language={language}
+              action={
+                <button onClick={() => navigate("connections")}>
+                  {t.manageConnections}
+                </button>
+              }
+            />
           )}
           {page === "memories" && desktop?.active && (
             <div className="context-line">
@@ -198,6 +289,9 @@ export function App() {
               <span>{activeProfile?.endpoint}</span>
               <span aria-hidden="true">·</span>
               <span>{desktop.active.scope?.title ?? t.noScopeSelected}</span>
+              {desktop.active.scope && (
+                <code>{desktop.active.scope.scope_id}</code>
+              )}
               <span className={ready ? "badge success" : "badge subtle"}>
                 {ready ? t.serviceReady : t.unverified}
               </span>
@@ -219,6 +313,8 @@ export function App() {
               language={language}
               onState={receiveState}
               onDirty={setDirty}
+              onManageConnections={() => navigate("connections")}
+              onOpenScopes={openScopes}
             />
           )}
           {page === "connections" && (
@@ -296,6 +392,7 @@ export function App() {
             role="dialog"
             aria-modal="true"
             aria-label={ct.scope}
+            ref={scopeDialog}
           >
             <div className="modal-heading">
               <h2>{ct.scope}</h2>
@@ -314,6 +411,11 @@ export function App() {
                 setScopeOpen(false);
               }}
               hideHeading
+              onManageConnections={() => {
+                scopeReturnFocus.current = null;
+                setScopeOpen(false);
+                navigate("connections");
+              }}
             />
           </div>
         </div>

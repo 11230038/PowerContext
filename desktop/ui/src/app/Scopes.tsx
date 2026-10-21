@@ -17,8 +17,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { DesktopState, ScopeDescriptor } from "../generated/ipc";
 import { desktopApi } from "../shared/ipc";
-import { connectionMessages, connectionError } from "./connection-messages";
-import type { Language } from "./messages";
+import { connectionMessages } from "./connection-messages";
+import { messages, type Language } from "./messages";
+import { PageFeedback, ErrorFeedback } from "./PageFeedback";
 export function Scopes({
   state,
   language,
@@ -26,6 +27,7 @@ export function Scopes({
   confirmSwitch,
   onSelected,
   hideHeading = false,
+  onManageConnections,
 }: {
   state: DesktopState | null;
   language: Language;
@@ -33,14 +35,20 @@ export function Scopes({
   confirmSwitch: () => boolean;
   onSelected?: () => void;
   hideHeading?: boolean;
+  onManageConnections?: () => void;
 }) {
   const t = connectionMessages[language];
+  const common = messages[language];
+  const manage = onManageConnections && (
+    <button onClick={onManageConnections}>{common.chooseConnection}</button>
+  );
   const active = state?.active;
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<ScopeDescriptor[] | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [operation, setOperation] = useState<"list" | "select">("list");
   const sequence = useRef(0);
   const pendingCancellation = useRef(Promise.resolve());
   const currentGeneration = useRef(active?.generation);
@@ -55,6 +63,7 @@ export function Scopes({
   }, [active?.generation]);
   async function load(next: string | null) {
     if (!active) return;
+    setOperation("list");
     const generation = active.generation;
     const ticket = ++sequence.current;
     setBusy(true);
@@ -92,6 +101,7 @@ export function Scopes({
   }
   async function select(id: string) {
     if (!active || !confirmSwitch()) return;
+    setOperation("select");
     setBusy(true);
     setError(null);
     try {
@@ -113,7 +123,12 @@ export function Scopes({
       {!hideHeading && <h2>{t.scope}</h2>}
       <p className="small">{t.scopeHint}</p>
       {!active ? (
-        <p>{t.noConnection}</p>
+        <PageFeedback
+          compact
+          kind="unavailable"
+          title={t.noConnection}
+          action={manage}
+        />
       ) : (
         <>
           {active.scope && (
@@ -123,11 +138,45 @@ export function Scopes({
             </p>
           )}
           {!active.report.compatibilityVerified && (
-            <p role="status">{t.noCompatibility}</p>
+            <PageFeedback
+              compact
+              kind="unavailable"
+              title={t.noCompatibility}
+              action={manage}
+            />
           )}
           {error != null && (
-            <p role="alert">{connectionError(error, language)}</p>
+            <ErrorFeedback
+              error={error}
+              language={language}
+              action={
+                operation === "list" ? (
+                  <button disabled={busy} onClick={() => void load(null)}>
+                    {common.restartScopeSearch}
+                  </button>
+                ) : undefined
+              }
+            />
           )}
+          {busy && (
+            <PageFeedback
+              compact
+              kind="loading"
+              title={
+                operation === "list"
+                  ? common.loadingScopes
+                  : common.selectingScope
+              }
+            />
+          )}
+          {!busy &&
+            error == null &&
+            items === null &&
+            active.report.compatibilityVerified && (
+              <PageFeedback compact kind="empty" title={common.scopeIdle}>
+                <p>{common.scopeIdleHint}</p>
+              </PageFeedback>
+            )}
           <fieldset disabled={!active.report.compatibilityVerified}>
             <label>
               {t.scopeQuery}
@@ -170,7 +219,9 @@ export function Scopes({
                 ))}
               </ul>
             )}
-            {items?.length === 0 && <p>{t.empty}</p>}
+            {items?.length === 0 && (
+              <PageFeedback compact kind="empty" title={t.empty} />
+            )}
             {cursor && (
               <button disabled={busy} onClick={() => void load(cursor)}>
                 {t.more}

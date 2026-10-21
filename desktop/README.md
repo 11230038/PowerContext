@@ -8,6 +8,15 @@ See [中文说明](README.zh.md), [security boundary](SECURITY.md), and [validat
 
 The sidebar provides Overview, Connections, Memories, and Observation, with Settings & diagnostics at the bottom. Overview is the initial page. Observation contains Runtime state, Current-Scope inventory & usage, and This session tabs. Their data views are explicitly unavailable until integrated; opening the page or switching tabs does not run connection checks or local diagnostics. English/Chinese and existing theme settings apply to Observation.
 
+
+## Shared feedback and current context
+
+Every page uses the same loading, empty, unavailable and error presentation. Loading local state is distinct from being disconnected; a local-state failure offers **Reload local state**, without probing Server readiness. Empty search results mean no matches for that query, not an empty Scope inventory. Unimplemented Observation views remain unavailable.
+
+Errors explain the affected operation and recovery. Read failures offer an explicit retry; exact reads retain the original Artifact revision. An expired Scope cursor restarts from the first page. Credential, permission and compatibility failures explain the required configuration or authorization change. Save failures keep the draft; unknown writes retain their original target and require the existing confirmation before another submission. Writes are never replayed automatically. Local diagnostic failures offer a retry of the same selected local check and do not indicate remote unavailability.
+
+The global bar shows the active connection, full Server address, Scope title and complete `scope_id` on every page. Identically named Scopes remain distinguishable. Identity, compatibility, liveness and readiness are separate facts; the latest check for the active configuration revision supplies the displayed facts and check time. A healthy Server does not grant operation permissions. Addresses and IDs wrap in small windows. The connection menu supports arrow keys, Home/End and Escape; the Scope dialog constrains focus and restores it when closed.
+
 ## Run the installed preview
 
 Download and extract `desktop-windows-internal-unsigned` from a successful **Desktop validation** Actions run on this branch. The installer is under `src-tauri/target/release/bundle/nsis/`. Its accompanying `.artifacts/windows-smoke.json` records the commit, SHA-256 and signature status; compare the downloaded installer with `Get-FileHash -Algorithm SHA256 <installer-path>`. The current package is unsigned and intended for internal validation.

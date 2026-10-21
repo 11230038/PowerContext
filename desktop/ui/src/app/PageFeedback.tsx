@@ -15,28 +15,84 @@
  */
 
 import type { ReactNode } from "react";
+import { connectionError, connectionErrorCode } from "./connection-messages";
+import { messages, type Language } from "./messages";
 
 export function PageFeedback({
   kind,
   title,
   children,
   action,
+  compact = false,
+  headingLevel,
 }: {
-  kind: "loading" | "empty" | "unavailable" | "error";
+  kind: "loading" | "empty" | "unavailable" | "error" | "success" | "warning";
   title: string;
   children?: ReactNode;
   action?: ReactNode;
+  compact?: boolean;
+  headingLevel?: 3;
 }) {
+  const Container = compact ? "div" : "section";
+  const Title = headingLevel === 3 ? "h3" : compact ? "p" : "h2";
   return (
-    <section
-      className={`card stack page-feedback ${kind}`}
+    <Container
+      className={`${compact ? "feedback-inline" : "card stack"} page-feedback ${kind}`}
       role={
-        kind === "error" ? "alert" : kind === "loading" ? "status" : undefined
+        kind === "error" || kind === "warning"
+          ? "alert"
+          : kind === "loading" || kind === "success"
+            ? "status"
+            : undefined
       }
     >
-      <h2>{title}</h2>
+      <Title className="feedback-title">{title}</Title>
       {children && <div className="feedback-body">{children}</div>}
       {action && <div className="actions">{action}</div>}
-    </section>
+    </Container>
+  );
+}
+
+export function ErrorFeedback({
+  error,
+  language,
+  title,
+  action,
+}: {
+  error: unknown;
+  language: Language;
+  title?: string;
+  action?: ReactNode;
+}) {
+  const t = messages[language];
+  const code = connectionErrorCode(error);
+  const hint =
+    code === "forbidden"
+      ? t.recoverAccess
+      : code === "unauthorized" ||
+          code === "credential_missing" ||
+          code === "invalid_credential" ||
+          code === "authentication_unavailable" ||
+          code === "credential_unavailable"
+        ? t.recoverCredentials
+        : code === "compatibility_unverified" || code === "invalid_response"
+          ? t.recoverCompatibility
+          : code === "scope_required"
+            ? t.recoverScope
+            : code === "stale_context" || code === "not_connected"
+              ? t.recoverContext
+              : code === "cursor_expired"
+                ? t.recoverCursor
+                : t.recoverOperation;
+  return (
+    <PageFeedback
+      compact
+      kind="error"
+      title={title ?? connectionError(error, language)}
+      action={action}
+    >
+      {title && <p>{connectionError(error, language)}</p>}
+      <p>{hint}</p>
+    </PageFeedback>
   );
 }

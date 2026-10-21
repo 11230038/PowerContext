@@ -75,6 +75,19 @@ Headless Edge 155.0.4283.62 with synthetic IPC checked all five pages in 24 comb
 
 无头 Edge 155.0.4283.62 使用合成 IPC 检查中英文、三种主题及上述四组 CSS 视口，共 24 种组合，五个页面没有横向溢出。在桌面宽度下，有无观察入口时“设置与诊断”的坐标一致；小窗口中它仍位于主导航下方。400×300 配合设备缩放因子 2 仅检查 800×600 在 200% 下的等效布局，不代表安装版 WebView 缩放。真实 Server、安装包、原生 IME、屏幕阅读器和 macOS 仍需实际验收。
 
+
+## Shared feedback and global context (#2102)
+
+On 2026-10-22, Windows x64 local checks used Node 24.14.1, pnpm 11.13.1 and Rust 1.95.0. Focused feedback/context tests and all 50 frontend tests passed, together with typecheck, lint (including generated contracts and icons in check mode) and production build. Coverage includes pending/failed/disconnected initialization, local-state recovery without readiness probes, same-name Scope IDs, latest matching connection facts, identity/health/compatibility separation, prerequisite recovery, Scope pagination recovery, failed exact-read retries retaining the original revision, preserved drafts, local diagnostics, keyboard menus and modal focus. Existing save, unknown-write and late-response protections remain covered.
+
+Headless Edge 155.0.4283.62 with synthetic IPC exercised all five pages in 48 combinations: connected/disconnected, English/Chinese, light/dark/system, and CSS viewports 1180×800, 800×600, 400×400 and 400×300. Long addresses and Scope IDs, permission errors, Scope selection and missing-local-CLI errors had no horizontal overflow. A forced-colors run checked pending-search feedback. Screenshots were inspected for the 800×600 Scope dialog and forced-colors loading view. The 400×300 viewport with device scale factor 2 is a layout equivalent of 800×600 at 200%, not actual installed WebView zoom.
+
+These checks use browser fixtures and mock IPC. No real native/backend, installer, platform IME or screen-reader acceptance was executed for this change. Repository-wide `uv run --locked prek run -a` retains the existing Windows `ty check` failures involving `os.O_NOFOLLOW`, `fcntl` and `resource` in unchanged Python code; other hooks passed. Logs and browser evidence are under ignored `.artifacts/desktop-shell/`.
+
+2026-10-22 在 Windows x64 上使用上述固定工具版本，专项测试及全部 50 项前端测试、typecheck、lint 和生产构建通过。测试覆盖加载／失败／未连接区分、恢复入口、同名 Scope 的完整 ID、最新匹配连接事实、身份／健康／兼容性分别表达、原版本精确读取重试、草稿保护及键盘焦点。
+
+Edge 合成 IPC 检查覆盖上述 48 组配置和五个页面，包含权限及本机诊断错误、长地址和 Scope ID、Scope 弹窗，无横向溢出；另检查强制高对比度的加载反馈并查看截图。200% 为等效布局检查。本次没有执行真实原生／后端、安装包、平台 IME 或屏幕阅读器验收。仓库检查中，未修改 Python 代码的 Windows 类型检查存在上述既有错误，其余钩子通过。
+
 ## Remaining release qualification
 
 - Clean standard-user Windows 11, including absent/present WebView2 and bootstrap recovery.

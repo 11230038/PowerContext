@@ -16,6 +16,42 @@
 
 export const messages = {
   zh: {
+    loadingState: "正在加载 Desktop 状态…",
+    stateUnavailable: "Desktop 状态尚不可用",
+    stateFailed: "无法加载 Desktop 状态",
+    retryState: "重新加载本机状态",
+    retryRead: "重试读取",
+    restartScopeSearch: "从第一页重新查找",
+    retryDiagnostics: "重新执行本机检查",
+    operationPending: "操作正在进行，请稍候…",
+    diagnosticIdle: "尚未执行本机检查",
+    diagnosticEmpty: "本次检查没有返回诊断项目",
+    connectionsEmptyHint:
+      "填写右侧配置并保存，再显式检查和启用连接。保存配置不会激活连接。",
+    recoverAccess:
+      "请申请此操作所需的权限，或选择已有权限的连接或精确 Scope。健康状态不代表授权。",
+    recoverCredentials:
+      "请在连接页核对凭据和认证设置，再显式检查连接。不会自动降级为匿名访问。",
+    recoverCompatibility:
+      "请在连接页核对受支持的 Server 与兼容配置，再显式检查。健康状态不代表兼容性。",
+    recoverScope:
+      "请使用全局 Scope 选择器选择精确目标；这不会修改 Agent 绑定。",
+    recoverContext:
+      "请核对当前连接和精确 Scope。旧读取已失效，已提交写入仍属于原目标。",
+    recoverCursor: "请从第一页重新查找，不再使用已过期的分页游标。",
+    recoverOperation:
+      "请检查相关输入、连接或本机配置，再显式执行受影响的操作。不会自动重放已提交写入。",
+    globalContext: "当前连接与精确 Scope",
+    activeContext: "连接已激活",
+    liveness: "存活状态",
+    lastChecked: "上次检查",
+    loadingScopes: "正在查找范围…",
+    selectingScope: "正在核对并选择精确 Scope…",
+    scopeIdle: "尚未查找范围",
+    scopeIdleHint: "输入名称并查找，只从 Server 返回的范围中选择精确目标。",
+    chooseConnection: "管理连接与凭据",
+    chooseScopeTitle: "请先选择精确 Scope",
+    compatibilityNeeded: "当前连接的兼容性尚未验证",
     observation: "观察",
     runtime: "运行状态",
     inventory: "当前 Scope 库存与用量",
@@ -140,6 +176,44 @@ export const messages = {
       "连接已有的 PowerContext Server 并选择精确范围后，即可保存和查找记忆。",
   },
   en: {
+    loadingState: "Loading Desktop state…",
+    stateUnavailable: "Desktop state is unavailable",
+    stateFailed: "Could not load Desktop state",
+    retryState: "Reload local state",
+    retryRead: "Retry read",
+    restartScopeSearch: "Search again from the first page",
+    retryDiagnostics: "Run local check again",
+    operationPending: "An operation is in progress. Please wait…",
+    diagnosticIdle: "No local check has run",
+    diagnosticEmpty: "This check returned no diagnostic items",
+    connectionsEmptyHint:
+      "Fill in and save a configuration, then explicitly check and activate it. Saving does not activate a connection.",
+    recoverAccess:
+      "Request permission for this operation, or choose an authorized connection or exact Scope. Health does not grant access.",
+    recoverCredentials:
+      "Review credentials and authentication in Connections, then explicitly check the connection. There is no automatic anonymous downgrade.",
+    recoverCompatibility:
+      "Review the supported Server and compatibility profile in Connections, then explicitly check it. Health does not establish compatibility.",
+    recoverScope:
+      "Choose an exact target with the global Scope selector. This does not change Agent bindings.",
+    recoverContext:
+      "Review the current connection and exact Scope. Previous reads are invalid; submitted writes still belong to their original targets.",
+    recoverCursor:
+      "Search again from the first page without reusing the expired cursor.",
+    recoverOperation:
+      "Review the relevant input, connection or local configuration before explicitly performing the affected operation. Submitted writes are never replayed automatically.",
+    globalContext: "Current connection and exact Scope",
+    activeContext: "Connection active",
+    liveness: "Liveness",
+    lastChecked: "Last checked",
+    loadingScopes: "Finding scopes…",
+    selectingScope: "Verifying and selecting the exact Scope…",
+    scopeIdle: "No Scope search has run",
+    scopeIdleHint:
+      "Enter a name and search, then select an exact target returned by the Server.",
+    chooseConnection: "Manage connections and credentials",
+    chooseScopeTitle: "Select an exact Scope first",
+    compatibilityNeeded: "Connection compatibility is not verified",
     observation: "Observation",
     runtime: "Runtime state",
     inventory: "Current-Scope inventory & usage",

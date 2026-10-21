@@ -26,6 +26,7 @@ import { contractSha256 } from "../generated/operations";
 import { desktopApi } from "../shared/ipc";
 import { connectionMessages, connectionError } from "./connection-messages";
 import { messages, type Language } from "./messages";
+import { PageFeedback, ErrorFeedback } from "./PageFeedback";
 import connectionsIcon from "../assets/connections.svg";
 
 type Props = {
@@ -183,7 +184,13 @@ export function Connections({ state, language, onState, onDirty }: Props) {
           </button>
         </div>
         {state && state.profiles.length === 0 && (
-          <p>{messages[language].noConnections}</p>
+          <PageFeedback
+            compact
+            kind="empty"
+            title={messages[language].noConnections}
+          >
+            <p>{messages[language].connectionsEmptyHint}</p>
+          </PageFeedback>
         )}
         <ul className="profile-list">
           {state?.profiles.map((p) => (
@@ -219,9 +226,14 @@ export function Connections({ state, language, onState, onDirty }: Props) {
           {isActive && <span className="badge success">{t.activeBadge}</span>}
         </div>
         {dirty && <p role="status">{t.dirty}</p>}
-        {error != null && (
-          <p role="alert">{connectionError(error, language)}</p>
+        {busy && (
+          <PageFeedback
+            compact
+            kind="loading"
+            title={messages[language].operationPending}
+          />
         )}
+        {error != null && <ErrorFeedback error={error} language={language} />}
         <fieldset disabled={busy || !state} className="profile-form">
           <label>
             {t.name}
@@ -355,11 +367,17 @@ export function Connections({ state, language, onState, onDirty }: Props) {
           </label>
           <p className="field-hint">{t.compatibilityHint}</p>
           {unavailableCompatibility && (
-            <p role="alert">
-              {selectedCompatibility
-                ? t.profileContractMismatch
-                : t.profileMissing}
-            </p>
+            <PageFeedback
+              compact
+              kind="error"
+              title={
+                selectedCompatibility
+                  ? t.profileContractMismatch
+                  : t.profileMissing
+              }
+            >
+              <p>{messages[language].recoverCompatibility}</p>
+            </PageFeedback>
           )}
           <details>
             <summary>{t.ca}</summary>
