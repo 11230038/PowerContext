@@ -21,7 +21,7 @@ from urllib.parse import quote, unquote
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 from pydantic.alias_generators import to_camel
-from sqlalchemy import delete, insert, update
+from sqlalchemy import delete, insert, select, update
 
 from powercontext import InvalidSourceDefinitionError
 from powercontext.builtin.persistence import (
@@ -37,6 +37,7 @@ from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.persistence.tables import SHARED_TABLES, SOURCES_TABLE
 from powercontext.builtin.runtime import SubmitSourceObservation
 from powercontext.builtin.runtime.relational import RelationalContexts
+from powercontext.builtin.sources.content import CONTENT_SOURCE_ADAPTER, ContentSource
 from powercontext.sources import (
     AdapterSourceDefinition,
     MemoryEvidenceDeclaration,
@@ -230,7 +231,7 @@ def test_remote_observation_ingestion_accepts_serialization_aliases(
             "definition_version": "2",
             "materialization": "captured",
             "description": "Remote alias description.",
-            "wire_text": "Remote note text.",
+            "body": "Remote note text.",
         }
 
     asyncio.run(scenario())
@@ -272,12 +273,13 @@ def test_native_generated_alias_source_survives_read_replay_and_restart(tmp_path
 
 @pytest.mark.parametrize("current_version", ["1", "2"])
 def test_canonical_history_survives_current_identity_aliases(current_version) -> None:
-    class CurrentSource(NativeCamelCaseSource):
+    class CurrentSource(SerializationAliasSource):
         name: str = Field(alias="source_name")
+        label: str = Field(alias="name")
 
     async def scenario() -> None:
-        original = SourceRepository((SerializationAliasAdapter(NativeCamelCaseSource),))
-        source = NativeCamelCaseSource(
+        original = SourceRepository((SerializationAliasAdapter(SerializationAliasSource),))
+        source = SerializationAliasSource(
             name="canonical", materialization=SourceMaterialization.CAPTURED, body="Retained."
         )
         material = source.model_dump(mode="json", by_alias=True)
@@ -301,6 +303,50 @@ def test_canonical_history_survives_current_identity_aliases(current_version) ->
             assert await current.historical_evidence(connection, "scope-a", (stored.ref,)) == expected
             assert expected[0].definition_version == "1"
             assert expected[0].declaration == MemoryEvidenceDeclaration()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("has_header", [False, True])
+def test_business_name_alias_does_not_reinterpret_canonical_history(has_header: bool) -> None:
+    class CurrentSource(SerializationAliasSource):
+        label: str = Field(alias="name")
+
+    async def scenario() -> None:
+        original = SourceRepository((SerializationAliasAdapter(SerializationAliasSource),))
+        current = SourceRepository(
+            SourceDefinitionRegistry((AdapterSourceDefinition(SerializationAliasAdapter(CurrentSource), version="1"),))
+        )
+        source = SerializationAliasSource(
+            name="canonical-business-alias",
+            materialization=SourceMaterialization.CAPTURED,
+            body="Retained.",
+        )
+        material = source.model_dump(mode="json", by_alias=True)
+        value = {"encoding": "powercontext-source-v1", "representation": "native", "value": material}
+        if has_header:
+            value.update(
+                source=Source(
+                    name=source.name,
+                    definition_version=source.definition_version,
+                    materialization=source.materialization,
+                ).model_dump(mode="json", exclude_none=True),
+                source_keys={
+                    "name": "name",
+                    "definition_version": "definition_version",
+                    "materialization": "materialization",
+                },
+            )
+        async with repository_profile() as (profile, _repositories), profile.database.transaction() as connection:
+            stored = await original.add(connection, "scope-a", source)
+            await connection.execute(
+                update(SOURCES_TABLE)
+                .where(SOURCES_TABLE.c.source_id == source.name)
+                .values(payload=json.dumps(value).encode())
+            )
+            await connection.execute(delete(SOURCE_EVIDENCE_BINDINGS_TABLE))
+            expected = await SourceRepository(()).historical_evidence(connection, "scope-a", (stored.ref,))
+            assert await current.historical_evidence(connection, "scope-a", (stored.ref,)) == expected
 
     asyncio.run(scenario())
 
@@ -346,6 +392,33 @@ def test_bound_aliased_history_does_not_treat_business_fields_as_identity(busine
     asyncio.run(scenario())
 
 
+def test_headerless_content_receipt_preserves_accepted_material_digest() -> None:
+    async def scenario() -> None:
+        repository = SourceRepository((CONTENT_SOURCE_ADAPTER,))
+        source = ContentSource(
+            name="receipt-digest",
+            materialization=SourceMaterialization.CAPTURED,
+            content="Receipt content.",
+            handoff_receipt=True,
+        )
+        async with repository_profile() as (profile, _repositories), profile.database.transaction() as connection:
+            stored = await repository.add(connection, "scope-a", source)
+            original = await repository.historical_evidence(connection, "scope-a", (stored.ref,))
+            material = source.model_dump(mode="json", by_alias=True)
+            payload = json.dumps({
+                "encoding": "powercontext-source-v1",
+                "representation": "native",
+                "value": material,
+            }).encode()
+            await connection.execute(
+                update(SOURCES_TABLE).where(SOURCES_TABLE.c.source_id == source.name).values(payload=payload)
+            )
+            restored = await repository.historical_evidence(connection, "scope-a", (stored.ref,))
+            assert restored == original
+
+    asyncio.run(scenario())
+
+
 def test_precanonical_generated_alias_source_rows_remain_readable_and_replayable() -> None:
     async def scenario() -> None:
         registry = SourceDefinitionRegistry((
@@ -356,7 +429,6 @@ def test_precanonical_generated_alias_source_rows_remain_readable_and_replayable
             name="legacy-2", definition_version="2", materialization=SourceMaterialization.CAPTURED, body="Retained."
         )
         material = source.model_dump(mode="json", by_alias=True)
-        material["definitionVersion"] = material.pop("definition_version")
         payload = json.dumps({
             "encoding": "powercontext-source-v1",
             "representation": "native",
@@ -483,6 +555,65 @@ def test_explicit_name_alias_evidence_survives_restart_without_the_native_defini
             loaded = await SourceRepository(updated).get(connection, "scope-a", stored.ref)
             assert loaded.value.description == "current description"
             assert await SourceRepository(()).historical_evidence(connection, "scope-a", (stored.ref,)) == evidence
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("representation", ["enveloped", "bare"])
+def test_replay_retains_historical_native_identity_spelling(representation) -> None:
+    from pydantic import AliasChoices
+
+    class OldSource(NativeCamelCaseSource):
+        name: str = Field(alias="legacy_name")
+
+    class CurrentSource(NativeCamelCaseSource):
+        name: str = Field(
+            validation_alias=AliasChoices("source_name", "legacy_name"),
+            serialization_alias="source_name",
+        )
+
+    async def scenario() -> None:
+        original_registry = SourceDefinitionRegistry((
+            AdapterSourceDefinition(SerializationAliasAdapter(OldSource), version="2"),
+        ))
+        current_registry = SourceDefinitionRegistry((
+            AdapterSourceDefinition(SerializationAliasAdapter(CurrentSource), version="2"),
+        ))
+        original = SourceRepository(original_registry)
+        current = SourceRepository(current_registry)
+        source = OldSource(
+            legacy_name="legacy-replay",
+            definition_version="2",
+            materialization=SourceMaterialization.CAPTURED,
+            body="Retained exactly.",
+        )
+        async with repository_profile() as (profile, _repositories), profile.database.transaction() as connection:
+            stored = await original.add(connection, "scope-a", source)
+            material = source.model_dump(mode="json", by_alias=True)
+            if representation == "bare":
+                payload = json.dumps(material).encode()
+            else:
+                payload = json.dumps({
+                    "encoding": "powercontext-source-v1",
+                    "representation": "native",
+                    "value": material,
+                }).encode()
+            await connection.execute(
+                update(SOURCES_TABLE).where(SOURCES_TABLE.c.source_id == source.name).values(payload=payload)
+            )
+            loaded = await current.get(connection, "scope-a", stored.ref)
+            assert loaded.value.name == source.name
+            replay = await current.add(connection, "scope-a", loaded.value)
+            assert replay.ref == stored.ref
+            assert await current.get(connection, "scope-a", stored.ref) == loaded
+            evidence = await current.historical_evidence(connection, "scope-a", (stored.ref,))
+            assert evidence[0].source_ref == stored.ref
+            raw = await connection.scalar(
+                select(SOURCES_TABLE.c.payload).where(SOURCES_TABLE.c.source_id == source.name)
+            )
+            assert isinstance(raw, bytes)
+            envelope = json.loads(raw)
+            assert envelope["source_keys"]["name"] == "legacy_name"
 
     asyncio.run(scenario())
 
@@ -647,5 +778,47 @@ def test_source_journal_allocator_serializes_concurrent_scope_writes_without_ide
                 ),
             )
             assert following.journal_position == 2
+
+    asyncio.run(scenario())
+
+
+def test_nested_uppercase_source_aliases_survive_read_replay_and_restart(tmp_path) -> None:
+    class UpperNested(Source):
+        model_config = ConfigDict(alias_generator=str.upper)
+        body: str
+
+    class NestedNativeSource(NativeCamelCaseSource):
+        nested: UpperNested
+
+    async def scenario() -> None:
+        adapter = SerializationAliasAdapter(NestedNativeSource)
+        registry = SourceDefinitionRegistry((AdapterSourceDefinition(adapter, version="2"),))
+        repository = SourceRepository(registry)
+        source = NestedNativeSource(
+            name="nested-legacy",
+            definition_version="2",
+            materialization=SourceMaterialization.CAPTURED,
+            body="Outer.",
+            nested=UpperNested(
+                name="inner",
+                materialization=SourceMaterialization.REFERENCED,
+                body="Nested.",
+            ),
+        )
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'nested-alias.db'}")
+        async with (
+            SQLiteProfile.open(config, tables=SHARED_TABLES) as profile,
+            profile.database.transaction() as connection,
+        ):
+            original = await repository.add(connection, "scope-a", source)
+        async with (
+            SQLiteProfile.open(config, tables=SHARED_TABLES) as profile,
+            profile.database.transaction() as connection,
+        ):
+            loaded = await repository.get(connection, "scope-a", original.ref)
+            assert loaded.value == source
+            assert await repository.add(connection, "scope-a", source) == original
+            evidence = await repository.historical_evidence(connection, "scope-a", (original.ref,))
+            assert evidence[0].source_ref == original.ref
 
     asyncio.run(scenario())

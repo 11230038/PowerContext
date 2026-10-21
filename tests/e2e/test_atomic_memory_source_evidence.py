@@ -22,8 +22,8 @@ from dataclasses import replace
 from typing import cast
 
 import pytest
-from pydantic import field_serializer, field_validator
-from sqlalchemy import event, text
+from pydantic import Field, field_serializer, field_validator
+from sqlalchemy import event, text, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from powercontext.artifacts import ArtifactLineage
@@ -33,6 +33,7 @@ from powercontext.builtin.artifacts.atomic_memory.extraction import (
     AtomicMemoryExtractionOutput,
 )
 from powercontext.builtin.inference import GenerationResult
+from powercontext.builtin.persistence.tables import SOURCES_TABLE
 from powercontext.builtin.runtime import (
     BuiltinConfig,
     SubmitSourceObservation,
@@ -131,6 +132,70 @@ def test_unverifiable_native_serializer_keeps_memory_evidence_neutral(migration_
             )
             assert report.ready, report.errors
             assert await contexts.atomic_memory.for_scope("scope").evidence("serialized", revision=1) == evidence
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("has_header", [False, True])
+def test_headerless_canonical_v1_evidence_survives_business_alias_rebuild(
+    migration_backend: MigrationBackend, has_header: bool
+) -> None:
+    class CurrentNote(NoteSource):
+        name: str = Field(alias="source_name")
+        label: str = Field(alias="name")
+
+    class CurrentAdapter(NoteAdapter):
+        source_class = CurrentNote
+
+    config = BuiltinConfig(database=migration_backend.config)
+    old_registry = SourceDefinitionRegistry((AdapterSourceDefinition(NoteAdapter()),))
+    current_registry = SourceDefinitionRegistry((AdapterSourceDefinition(CurrentAdapter(), version="2"),))
+
+    async def scenario():
+        source = NoteSource(name="canonical-v1", materialization=SourceMaterialization.CAPTURED, body="Retained.")
+        ref = SourceRef(source_type="note", source_id=source.name)
+        async with open_builtin_contexts(config, source_registry=old_registry) as contexts:
+            context = await contexts.get("scope")
+            await context.sources.add(source)
+            await _commit(contexts, "scope", "canonical", "Canonical historical fact.", sources=(ref,))
+            material = source.model_dump(mode="json", by_alias=True)
+            payload_value = {
+                "encoding": "powercontext-source-v1",
+                "representation": "native",
+                "value": material,
+            }
+            if has_header:
+                payload_value.update(
+                    source=source.model_dump(
+                        mode="json",
+                        by_alias=False,
+                        include={"name", "definition_version", "materialization"},
+                    ),
+                    source_keys={
+                        "name": "name",
+                        "definition_version": "definition_version",
+                        "materialization": "materialization",
+                    },
+                )
+            payload = json.dumps(payload_value).encode()
+            async with contexts.database.transaction() as connection:
+                await connection.execute(
+                    update(SOURCES_TABLE).where(SOURCES_TABLE.c.source_id == source.name).values(payload=payload)
+                )
+
+        async with open_builtin_contexts(config, source_registry=current_registry) as contexts:
+            before = await contexts.atomic_memory.for_scope("scope").evidence("canonical", revision=1)
+            assert before.sources[0].source_ref == ref
+            assert before.sources[0].declaration == MemoryEvidenceDeclaration()
+            report = await rebuild_atomic_memory_projection(
+                contexts.database,
+                contexts.atomic_memory.index,
+                maintenance_confirmed=True,
+                sources=contexts.repositories.sources,
+            )
+            assert report.ready, report.errors
+            after = await contexts.atomic_memory.for_scope("scope").evidence("canonical", revision=1)
+            assert after == before
 
     asyncio.run(scenario())
 

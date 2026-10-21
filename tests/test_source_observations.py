@@ -15,14 +15,15 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import urllib.request
 from typing import Self
 
 import pytest
-from pydantic import Field, ValidationError
+import rfc8785
+from pydantic import Field, ValidationError, field_serializer
 from referencing.exceptions import Unresolvable
 
-from powercontext import InvalidSourceDefinitionError
 from powercontext.builtin.persistence.source_definitions import SourceDefinitionManifestRepository
 from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
 from powercontext.builtin.persistence.tables import SHARED_TABLES
@@ -87,7 +88,9 @@ def test_source_observation_remains_usable_without_worker_definition_code() -> N
     ("name_alias", "body_alias"),
     [("source_name", "wire_text"), ("body", "wire_text"), ("source_name", "name"), ("wire_text", "wire_text")],
 )
-def test_serialization_aliases_preserve_the_worker_envelope_during_ingestion(name_alias: str, body_alias: str) -> None:
+def test_serialization_aliases_preserve_the_worker_envelope_during_ingestion(
+    name_alias: str, body_alias: str, tmp_path
+) -> None:
     class AliasedSource(Source):
         name: str = Field(serialization_alias=name_alias)
         definition_version: str = Field(default="1", serialization_alias="wire_version")
@@ -116,12 +119,6 @@ def test_serialization_aliases_preserve_the_worker_envelope_during_ingestion(nam
         definition = AdapterSourceDefinition(AliasedAdapter(), version="2")
         worker = SourceDefinitionRegistry((definition,))
         source = await worker.resolve("Retain the aliased business value.")
-        if body_alias == "name" or name_alias == body_alias:
-            with pytest.raises(InvalidSourceDefinitionError):
-                manifest_for_definition(definition)
-            with pytest.raises(InvalidSourceDefinitionError):
-                project_source_for_transport(worker, source)
-            return
         manifest = manifest_for_definition(definition)
         observation = project_source_for_transport(worker, source)
         expected = {
@@ -129,20 +126,28 @@ def test_serialization_aliases_preserve_the_worker_envelope_during_ingestion(nam
             "definition_version": "2",
             "materialization": "captured",
             "description": "Aliased description.",
-            "wire_text": "Retain the aliased business value.",
+            "body": "Retain the aliased business value.",
         }
+        assert manifest.source_schema == AliasedSource.model_json_schema()
+        baseline_declaration = {
+            "name": definition.name,
+            "version": definition.version,
+            "source_schema": AliasedSource.model_json_schema(),
+            "projections": [],
+        }
+        baseline_fingerprint = f"sha256:{hashlib.sha256(rfc8785.dumps(baseline_declaration)).hexdigest()}"
+        assert manifest.fingerprint == baseline_fingerprint
         assert observation.payload == expected
-        assert source.model_dump(mode="json", by_alias=True) == {
-            name_alias: "remote-aliased",
-            "wire_version": "2",
-            "wire_materialization": "captured",
-            "wire_description": "Aliased description.",
-            "wire_text": "Retain the aliased business value.",
-        }
-
-        async with SQLiteProfile.open(SQLiteConfig(), tables=SHARED_TABLES) as profile:
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'remote-manifest.db'}")
+        async with SQLiteProfile.open(config, tables=SHARED_TABLES) as profile:
             contexts = RelationalContexts(database=profile.database, source_registry=SourceDefinitionRegistry(()))
-            await contexts.register_source_definition(manifest)
+            assert await contexts.register_source_definition(manifest) == manifest
+
+        current_manifest = manifest_for_definition(definition)
+        assert current_manifest == manifest
+        async with SQLiteProfile.open(config, tables=SHARED_TABLES) as profile:
+            contexts = RelationalContexts(database=profile.database, source_registry=SourceDefinitionRegistry(()))
+            assert await contexts.register_source_definition(current_manifest) == manifest
             receipt = await contexts.submit_source_observation(
                 SubmitSourceObservation(scope_id="scope-a", observation=observation)
             )
@@ -162,7 +167,7 @@ def test_serialization_aliases_preserve_the_worker_envelope_during_ingestion(nam
     asyncio.run(scenario())
 
 
-def test_recursive_source_transport_preserves_nested_serialization_aliases() -> None:
+def test_recursive_source_transport_preserves_canonical_nested_payload() -> None:
     class RecursiveSource(Source):
         name: str = Field(serialization_alias="source_name")
         definition_version: str = Field(default="1", serialization_alias="wire_version")
@@ -198,14 +203,14 @@ def test_recursive_source_transport_preserves_nested_serialization_aliases() -> 
             "definition_version": "2",
             "materialization": "captured",
             "description": None,
-            "wire_text": "Root text.",
+            "body": "Root text.",
             "children": [
                 {
-                    "source_name": "leaf",
-                    "wire_version": "1",
+                    "name": "leaf",
+                    "definition_version": "1",
                     "materialization": "captured",
                     "description": None,
-                    "wire_text": "Nested text.",
+                    "body": "Nested text.",
                     "children": [],
                 }
             ],
@@ -234,6 +239,40 @@ def test_remote_source_observation_requires_captured_materialization() -> None:
 
         with pytest.raises(ValidationError):
             SourceObservation.model_validate(observation.model_dump(mode="json") | {"materialization": "referenced"})
+
+    asyncio.run(scenario())
+
+
+def test_remote_identity_exclusions_and_serializers_fail_observation_validation() -> None:
+    class ExcludedIdentitySource(Source):
+        definition_version: str = Field(default="1", exclude=True)
+
+    class TransformedIdentitySource(Source):
+        @field_serializer("name")
+        def encode_name(self, value: str) -> str:
+            return f"wire:{value}"
+
+    class Adapter:
+        input_class = str
+        name = "remote-identity"
+
+        def __init__(self, source_class: type[Source]) -> None:
+            self.source_class = source_class
+
+        async def resolve(self, value: str, /) -> Source:
+            return self.source_class(name=value, materialization=SourceMaterialization.CAPTURED)
+
+        async def read(self, source: Source, /) -> str:
+            return source.name
+
+    async def scenario() -> None:
+        for source_class in (ExcludedIdentitySource, TransformedIdentitySource):
+            definition = AdapterSourceDefinition(Adapter(source_class), version="1")
+            registry = SourceDefinitionRegistry((definition,))
+            assert manifest_for_definition(definition).source_schema == source_class.model_json_schema(by_alias=False)
+            source = await registry.resolve("identity")
+            with pytest.raises(ValidationError):
+                project_source_for_transport(registry, source)
 
     asyncio.run(scenario())
 

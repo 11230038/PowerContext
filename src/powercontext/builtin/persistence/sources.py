@@ -25,7 +25,7 @@ import rfc8785
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
-from pydantic import AliasGenerator, BaseModel, ConfigDict, JsonValue, TypeAdapter
+from pydantic import AliasChoices, AliasGenerator, BaseModel, ConfigDict, JsonValue, TypeAdapter
 from referencing import Registry
 from referencing.exceptions import Unresolvable
 from sqlalchemy import func, insert, select, tuple_, update
@@ -343,9 +343,15 @@ class SourceRepository:
         try:
             envelope = load_model(_StoredSourcePayload, payload, kind="source-envelope", name=reference.source_type)
         except InvalidStoredPayloadError:
-            return self._historical_legacy_material(reference, row, payload)
+            return await self._historical_legacy_material(connection, reference, row, payload)
         material = envelope.value
-        source = self._historical_source(reference, envelope)
+        source = (
+            await self._historical_canonical_source(connection, reference, row, material)
+            if envelope.representation == "native" and envelope.source is None
+            else None
+        )
+        if source is None:
+            source = self._historical_source(reference, envelope)
         decoded = SourceRef(
             source_type=source.source_type if isinstance(source, SourceObservation) else reference.source_type,
             source_id=source.name,
@@ -386,14 +392,21 @@ class SourceRepository:
             self._validate_unbound_material(reference, envelope, source)
         return source, material, True
 
-    def _historical_legacy_material(
-        self, reference: SourceRef, row: Mapping[Any, Any], payload: bytes
+    async def _historical_legacy_material(
+        self,
+        connection: AsyncConnection,
+        reference: SourceRef,
+        row: Mapping[Any, Any],
+        payload: bytes,
     ) -> tuple[Source, dict[str, JsonValue], bool]:
         """Read bare legacy material without guessing absent identity fields."""
         try:
             material = _JSON_OBJECT.validate_json(payload, strict=True)
         except ValueError as error:
             raise InvalidStoredPayloadError("source", reference.source_type, "payload is not JSON") from error
+        source = await self._historical_canonical_source(connection, reference, row, material)
+        if source is not None:
+            return source, material, False
         try:
             self._registry.definition_for_name(reference.source_type)
         except SourceDefinitionNotFoundError:
@@ -407,6 +420,78 @@ class SourceRepository:
         else:
             source = self._decode_row(row).value
         return source, material, True
+
+    async def _historical_canonical_source(
+        self,
+        connection: AsyncConnection,
+        reference: SourceRef,
+        row: Mapping[Any, Any],
+        material: dict[str, JsonValue],
+    ) -> Source | None:
+        """Recover evidence identity from canonical retained material, never a live alias."""
+
+        if not {"name", "definition_version", "materialization"} <= material.keys():
+            return None
+        if material["name"] != reference.source_id:
+            return None
+        digest_material = material
+        if reference.source_type == CONTENT_SOURCE_NAME:
+            digest_material = {key: value for key, value in material.items() if key != "handoff_receipt"}
+        material_digest = _source_material_digest_material(digest_material)
+        table = SOURCE_EVIDENCE_BINDINGS_TABLE
+        binding = (
+            await connection.execute(
+                select(table.c.definition_name, table.c.definition_version, table.c.material_digest).where(
+                    table.c.scope_id == row["scope_id"],
+                    table.c.source_type == reference.source_type,
+                    table.c.source_id == reference.source_id,
+                )
+            )
+        ).one_or_none()
+        if binding is not None:
+            if binding.definition_name != reference.source_type or binding.material_digest != material_digest:
+                return None
+            version = binding.definition_version
+        elif material["definition_version"] == "1":
+            version = "1"
+        else:
+            return None
+        try:
+            definition = self._registry.definition_for_name(reference.source_type)
+        except SourceDefinitionNotFoundError:
+            definition = None
+        if (
+            definition is not None
+            and definition.version == version
+            and any(
+                (
+                    (
+                        definition.source_class.model_fields[key].alias is not None
+                        and definition.source_class.model_fields[key].alias != key
+                    )
+                    or (
+                        definition.source_class.model_fields[key].serialization_alias is not None
+                        and definition.source_class.model_fields[key].serialization_alias != key
+                    )
+                    or (
+                        definition.source_class.model_fields[key].validation_alias is not None
+                        and definition.source_class.model_fields[key].validation_alias != key
+                    )
+                )
+                for key in ("definition_version", "materialization")
+            )
+        ):
+            # The current exact-version codec is required to disambiguate retained identity keys.
+            return None
+        try:
+            return Source.model_validate({
+                "name": reference.source_id,
+                "definition_version": version,
+                "materialization": material["materialization"],
+                "description": material.get("description"),
+            })
+        except (TypeError, ValueError):
+            return None
 
     def _historical_source(self, reference: SourceRef, envelope: _StoredSourcePayload) -> Source:
         """Decode identity independently of retained material and today's business defaults."""
@@ -464,6 +549,9 @@ class SourceRepository:
         try:
             definition = self._registry.definition_for_name(reference.source_type)
         except SourceDefinitionNotFoundError:
+            return
+        if _claims_identity_keys(definition.source_class):
+            # The retained canonical identity/header is authoritative; a live business alias may claim it.
             return
         if envelope.source is None and any(
             (definition.source_class.model_fields[key].serialization_alias or key) != key
@@ -868,18 +956,30 @@ def _source_header(source: Source) -> Source:
 
 
 def _source_keys(source: Source, material: dict[str, JsonValue] | None = None) -> dict[str, str]:
-    """Retain declared identity spellings, including pre-canonical generated keys."""
-    keys = {
-        key: type(source).model_fields[key].serialization_alias or key
-        for key in ("name", "definition_version", "materialization")
-    }
-    generator = type(source).model_config.get("alias_generator")
-    if isinstance(generator, AliasGenerator):
-        generator = generator.serialization_alias or generator.alias
-    if material is not None and generator is not None:
-        for key, alias in keys.items():
-            if alias not in material:
-                keys[key] = generator(key)
+    """Retain the exact serialized spelling used for each native identity."""
+    keys: dict[str, str] = {}
+    for key in ("name", "definition_version", "materialization"):
+        field = type(source).model_fields[key]
+        preferred = field.serialization_alias or key
+        candidates = [preferred]
+        if isinstance(field.validation_alias, str):
+            candidates.append(field.validation_alias)
+        elif isinstance(field.validation_alias, AliasChoices):
+            candidates.extend(choice for choice in field.validation_alias.choices if isinstance(choice, str))
+        if field.alias is not None:
+            candidates.append(field.alias)
+        generator = type(source).model_config.get("alias_generator")
+        if isinstance(generator, AliasGenerator):
+            generator = generator.serialization_alias or generator.alias
+        if generator is not None:
+            candidates.append(generator(key))
+        if material is not None:
+            keys[key] = next(
+                (alias for alias in dict.fromkeys(candidates) if material.get(alias) == getattr(source, key)),
+                preferred,
+            )
+        else:
+            keys[key] = preferred
     return keys
 
 
@@ -912,7 +1012,8 @@ def _normalize_native_material(source_class: type[Source], material: dict[str, J
         return material
     normalized = dict(material)
     for key in Source.model_fields:
-        if source_class.model_fields[key].validation_alias != key:
+        field = source_class.model_fields[key]
+        if field.validation_alias != key and field.alias_priority != 1:
             continue
         alias = generator(key)
         if any(
