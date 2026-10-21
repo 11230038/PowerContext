@@ -27,37 +27,10 @@ export const messages = {
       "此视图将展示当前精确 Scope 的库存和用量。尚未接入数据；未知值不表示为零。",
     sessionDescription:
       "此视图将展示本次 Desktop 会话的有限请求汇总。当前尚未提供请求统计或安全诊断摘要复制。",
-    loading: "正在加载 Desktop 状态…",
-    stateFailed: "无法加载 Desktop 状态",
-    desktopError: "Desktop 操作失败",
-    retryState: "重试加载",
-    setUpLocally: "本地设置",
-    firstUseDescription:
-      "在本机准备 Server，或连接已有 Server，然后选择精确 Scope 开始保存、搜索和读取记忆。本地设置的可用情况见设置说明。",
-    selectScopeDescription:
-      "选择 Desktop 保存和搜索使用的精确 Scope；这不会修改 Agent 绑定。",
-    appearance: "语言与外观",
-    localServer: "本地 Server",
-    localSetupUnavailable: "本地安装与服务管理尚未可用",
-    localSetupDescription:
-      "此 Desktop 尚未提供安装、启动、修复或移除本地 Server 的操作。即使 Server 未运行，仍可查看本说明和本地诊断。",
-    existingServerHelp:
-      "可以按使用指南独立准备 Server，或向管理员获取地址和适用的凭据，再到“连接”保存配置并显式激活。",
-    help: "帮助与支持",
-    guideDescription:
-      "使用指南包含独立准备 Server 的前提、连接步骤和本地 CLI 诊断说明。复制链接后在浏览器中打开。",
-    supportDescription:
-      "在问题反馈页面报告问题；分享诊断信息前请去除凭据、内容和其他敏感信息。",
-    copyGuide: "复制使用指南链接",
-    copySupport: "复制问题反馈链接",
-    copied: "链接已复制。",
-    copyFailed: "无法复制链接，请手动选择并复制地址。",
-    unknown: "未知",
-    liveness: "存活状态",
-    lastChecked: "上次检查",
+    home: "总览",
     connections: "连接",
     memories: "记忆",
-    settings: "设置与帮助",
+    settings: "设置与诊断",
     menu: "导航菜单",
     tagline: "确认连接状态，开始保存与检索记忆。",
     connectionIntro: "保存 Server 地址与凭据，在不同连接之间切换。",
@@ -178,39 +151,10 @@ export const messages = {
       "This view will show inventory and usage for the current exact Scope. Data is not connected yet; unknown values are not zero.",
     sessionDescription:
       "This view will show bounded request summaries for this Desktop session. Request statistics and safe diagnostic summary copying are not available yet.",
-    loading: "Loading Desktop state…",
-    stateFailed: "Could not load Desktop state",
-    desktopError: "Desktop operation failed",
-    retryState: "Retry loading",
-    setUpLocally: "Set up locally",
-    firstUseDescription:
-      "Prepare a local Server or connect an existing Server, then select an exact Scope to save, search and read memories. See settings for local setup availability.",
-    selectScopeDescription:
-      "Select the exact Scope for Desktop saves and searches. This does not change Agent bindings.",
-    appearance: "Language & appearance",
-    localServer: "Local Server",
-    localSetupUnavailable:
-      "Local installation and service management are not available yet",
-    localSetupDescription:
-      "This Desktop does not yet offer local Server installation, start, repair or removal. This guidance and local diagnostics remain accessible when the Server is not running.",
-    existingServerHelp:
-      "Follow the usage guide to prepare a Server independently, or obtain its address and applicable credentials from an administrator. Save its configuration in Connections and explicitly activate it.",
-    help: "Help & support",
-    guideDescription:
-      "The usage guide covers prerequisites for an independently prepared Server, connection steps and local CLI diagnostics. Copy the link and open it in a browser.",
-    supportDescription:
-      "Report problems on the issue tracker. Remove credentials, content and other sensitive information before sharing diagnostics.",
-    copyGuide: "Copy usage guide link",
-    copySupport: "Copy support link",
-    copied: "Link copied.",
-    copyFailed:
-      "Could not copy the link. Select and copy the address manually.",
-    unknown: "Unknown",
-    liveness: "Liveness",
-    lastChecked: "Last checked",
+    home: "Overview",
     connections: "Connections",
     memories: "Memories",
-    settings: "Settings & help",
+    settings: "Settings & diagnostics",
     menu: "Navigation",
     tagline: "Check the connection status, then save and search memories.",
     connectionIntro:

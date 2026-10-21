@@ -311,10 +311,10 @@ test("a save from the previous connection editor cannot dismiss a new draft", as
       endpoint: "http://localhost:8000",
     }),
   );
-  await user.click(screen.getByRole("button", { name: "观察" }));
+  await user.click(screen.getByRole("button", { name: "总览" }));
   await waitFor(() =>
     expect(document.activeElement).toBe(
-      screen.getByRole("heading", { level: 1, name: "观察" }),
+      screen.getByRole("heading", { level: 1, name: "总览" }),
     ),
   );
   await user.click(screen.getByRole("button", { name: "连接" }));
@@ -328,7 +328,7 @@ test("a save from the previous connection editor cannot dismiss a new draft", as
     finish(state({ ...profile, name: "First" }));
   });
   confirm.mockClear().mockReturnValue(false);
-  await user.click(screen.getByRole("button", { name: "观察" }));
+  await user.click(screen.getByRole("button", { name: "总览" }));
   expect(confirm).toHaveBeenCalled();
   expect((screen.getByLabelText("连接名称") as HTMLInputElement).value).toBe(
     "New draft",

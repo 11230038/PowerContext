@@ -16,8 +16,9 @@
 
 import type { ReactNode } from "react";
 import { messages, type Language } from "./messages";
-import type { ObservationTab } from "./navigation";
 import { PageFeedback } from "./PageFeedback";
+
+export type ObservationTab = "runtime" | "inventory" | "session";
 
 export function Observation({
   language,

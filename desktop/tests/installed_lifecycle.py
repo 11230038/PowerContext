@@ -91,8 +91,8 @@ def exercise_single_instance(client: httpx.Client, prefix: str, app: subprocess.
             != "single-instance unsaved draft"
         ):
             raise HarnessFailure("installed_second_launch_changed_draft")
-    page.button("观察")
+    page.button("总览")
     page.post("/alert/dismiss", {})
-    page.button("观察")
+    page.button("总览")
     page.post("/alert/accept", {})
     return {"secondLaunchesExited": 3, "originalEditorAndDraftPreserved": True}

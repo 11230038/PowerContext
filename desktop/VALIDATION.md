@@ -61,23 +61,19 @@ uv run python desktop/tests/fixture_qualification.py --server-commit "$DESKTOP_F
 pnpm --dir desktop tauri build --bundles nsis --ci --features ci-fixtures -- --locked
 ```
 
-## Shared application layout and navigation (#2102)
+## Observation navigation (#2102)
 
-Local verification on 2026-10-21 used Windows x64, Node 24.14.1, pnpm 11.13.1, and Rust 1.95.0 for generated-contract checking:
+The application opens Overview and provides Overview, Connections, Memories, and Observation in the main navigation. Settings & diagnostics remains at the bottom. Observation provides Runtime state, Current-Scope inventory & usage, and This session tabs with unavailable data views; navigation does not initiate connection checks or local diagnostics.
 
-- `pnpm --dir desktop test`: 48 UI behavior tests passed. These use mocked IPC and cover navigation, exact-Scope context, draft guards, late completions, keyboard/focus behavior, and existing Memory/connection/diagnostic journeys.
-- `pnpm --dir desktop typecheck`, `lint`, and `build` passed. Lint includes OpenAPI drift, canonical brand-resource, and formatting checks; generated contracts were checked without updating them.
-- Ruff 0.15.7 lint and formatting checks passed for the changed installed-acceptance Python scripts. Their startup/navigation selectors were updated; the installed harness itself was not executed locally.
-- Headless Microsoft Edge 155.0.4283.62 exercised four pages and three Observation tabs across Chinese/English, light/dark/system, and CSS viewports 1180×800, 800×600, 400×400, and 400×300. The 24 combinations passed horizontal-overflow, Scope dialog focus/return, connection-menu, and local diagnostic error checks using synthetic IPC. The 400×300 viewport with device scale factor 2 checks layout equivalent to 800×600 at 200%; it does not establish actual WebView zoom behavior.
-- Additional browser scenarios exercised draft-confirmation dismissal/acceptance at all four viewports, and disconnected first use, Local Server placement and initialization failure in both languages at 800×600, 400×400 and 400×300. Drafts survived canceled navigation, and first-use/error pages remained free of horizontal overflow.
+Local verification on Windows x64 on 2026-10-21 used Node 24.14.1, pnpm 11.13.1, and Rust 1.95.0 for generated-contract checking. All 37 UI tests, type checking, lint, and the frontend production build passed. Existing Overview, connection, Memory, Scope and diagnostic behavior tests remain in place; Observation tests cover navigation, English/Chinese, keyboard tabs, unavailable states and the existing draft confirmation.
 
-Browser checks and mocked IPC do not establish Server compatibility, installed-package behavior, actual IME, screen-reader output, native confirmation presentation, or macOS qualification. Those remain platform acceptance work under #2108/#2109. Local installation and service management remain unavailable pending #2117; observation content remains unavailable pending #2105/#2106/#2107.
+Headless Edge 155.0.4283.62 with synthetic IPC checked all five pages in 24 combinations of English/Chinese, light/dark/system, and CSS viewports 1180×800, 800×600, 400×400 and 400×300. The pages had no horizontal overflow. At desktop widths, Settings & diagnostics had the same coordinates with and without the Observation entry; at small widths it remained below the main navigation. The 400×300 viewport at device scale factor 2 checks layout equivalent to 800×600 at 200%, not installed WebView zoom. Browser fixtures and mocked IPC do not establish real Server, installed-package, native IME, screen-reader or macOS qualification.
 
-2026-10-21 的本地验证使用 Windows x64、Node 24.14.1、pnpm 11.13.1，生成合同检查使用 Rust 1.95.0。48 项 UI 行为测试及类型、lint、生产构建检查通过；UI 测试使用模拟 IPC，覆盖导航、精确 Scope、草稿保护、迟到响应、键盘与焦点，以及现有业务流程。修改的安装验收 Python 脚本通过 Ruff 0.15.7 检查，本地未执行安装验收脚本。
+应用默认进入总览，主导航包含总览、连接、记忆、观察，“设置与诊断”位于底部。观察包含运行状态、当前 Scope 库存与用量、本次会话三个标签页，数据视图尚未可用；页面及标签切换不会执行连接检查或本机诊断。
 
-无头 Edge 155.0.4283.62 使用合成 IPC，检查中英文、三种主题及上述四组 CSS 视口，共 24 种组合，覆盖四个页面、三个观察标签、横向溢出、Scope 弹窗焦点、连接菜单和本机诊断错误。400×300 配合设备缩放因子 2 仅验证 800×600 在 200% 下的等效布局，不代表实际 WebView 缩放验收。真实 Server、安装包、IME、屏幕阅读器、原生确认框呈现和 macOS 仍需对应平台验收；本地安装和观察数据功能仍明确标注尚未可用。
+2026-10-21 在 Windows x64 上使用 Node 24.14.1、pnpm 11.13.1 验证，生成合同检查使用 Rust 1.95.0。37 项 UI 测试、类型检查、lint 和前端生产构建通过。原有业务行为测试保留，观察测试覆盖导航、双语、键盘标签切换、不可用状态和现有草稿确认。
 
-额外浏览器场景验证了四组视口中的草稿确认取消／接受，以及中英文在 800×600、400×400、400×300 下的未连接首次使用、本地 Server 入口和初始化失败状态。取消导航保留草稿，首次使用及错误页面没有横向溢出。
+无头 Edge 155.0.4283.62 使用合成 IPC 检查中英文、三种主题及上述四组 CSS 视口，共 24 种组合，五个页面没有横向溢出。在桌面宽度下，有无观察入口时“设置与诊断”的坐标一致；小窗口中它仍位于主导航下方。400×300 配合设备缩放因子 2 仅检查 800×600 在 200% 下的等效布局，不代表安装版 WebView 缩放。真实 Server、安装包、原生 IME、屏幕阅读器和 macOS 仍需实际验收。
 
 ## Remaining release qualification
 
