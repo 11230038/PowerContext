@@ -9227,13 +9227,56 @@ OPENAPI_SCHEMA: dict[str, JsonValue] = {
                     "held_count": {
                         "type": "integer",
                         "minimum": 0.0,
-                        "description": "Compatibility field; Atomic Memory processing always returns zero.",
+                        "description": "Number "
+                        "of "
+                        "Sources "
+                        "in "
+                        "this "
+                        "window "
+                        "whose "
+                        "Memory "
+                        "writes "
+                        "the "
+                        "write "
+                        "gate "
+                        "held "
+                        "back, "
+                        "either "
+                        "0 "
+                        "or "
+                        "1. "
+                        "A "
+                        "held "
+                        "window "
+                        "is "
+                        "consumed: "
+                        "current_cursor "
+                        "advances "
+                        "past "
+                        "those "
+                        "Sources "
+                        "and "
+                        "the "
+                        "Runtime "
+                        "does "
+                        "not "
+                        "retry "
+                        "them, "
+                        "so "
+                        "a "
+                        "caller "
+                        "that "
+                        "needs "
+                        "the "
+                        "content "
+                        "re-captures "
+                        "it.",
                         "default": 0,
                     },
                     "hold_codes": {
                         "items": {"type": "string"},
                         "type": "array",
-                        "description": "Compatibility field; Atomic Memory processing always returns an empty array.",
+                        "description": "Gate rejection codes reported for this window; empty unless held_count is 1.",
                         "default": [],
                     },
                 },
