@@ -449,11 +449,17 @@ class SourceRepository:
             )
         ).one_or_none()
         if binding is not None:
-            if binding.definition_name != reference.source_type or binding.material_digest != material_digest:
+            if (
+                binding.definition_name != reference.source_type
+                or binding.material_digest != material_digest
+                or binding.definition_version != material["definition_version"]
+            ):
                 return None
             version = binding.definition_version
-        elif material["definition_version"] == "1":
-            version = "1"
+        elif isinstance(material["definition_version"], str):
+            # Canonical retained identity is explicit even when its historical
+            # evidence binding predates the evidence tables. It stays neutral.
+            version = material["definition_version"]
         else:
             return None
         try:

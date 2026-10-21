@@ -392,6 +392,58 @@ def test_bound_aliased_history_does_not_treat_business_fields_as_identity(busine
     asyncio.run(scenario())
 
 
+def test_unbound_versioned_canonical_history_ignores_new_definition_aliases() -> None:
+    class CurrentSource(SerializationAliasSource):
+        model_config = ConfigDict(populate_by_name=True)
+        name: str = Field(alias="source_name")
+        label: str = Field(alias="name")
+
+    async def scenario() -> None:
+        old_source = SerializationAliasSource(
+            name="old-version-two",
+            definition_version="2",
+            materialization=SourceMaterialization.CAPTURED,
+            body="Retained without an evidence binding.",
+        )
+        old_repository = SourceRepository(())
+
+        class CurrentAdapter:
+            name = "serialization-alias"
+            input_class = SerializationAliasInput
+            source_class = CurrentSource
+
+            async def resolve(self, value: SerializationAliasInput, /) -> CurrentSource:
+                raise AssertionError  # Historical evidence must not invoke the current decoder.
+
+            async def read(self, source: CurrentSource, /) -> str:
+                return source.body
+
+        registry = SourceDefinitionRegistry((AdapterSourceDefinition(CurrentAdapter(), version="3"),))
+        async with repository_profile() as (profile, _repositories), profile.database.transaction() as connection:
+            # Model a canonical Source accepted before evidence bindings existed.
+            await connection.execute(
+                insert(SOURCES_TABLE).values(
+                    scope_id="scope-a",
+                    source_type="serialization-alias",
+                    source_id=old_source.name,
+                    payload=json.dumps({
+                        "encoding": "powercontext-source-v1",
+                        "representation": "native",
+                        "value": old_source.model_dump(mode="json", by_alias=False),
+                    }).encode(),
+                    journal_position=1,
+                )
+            )
+            ref = SourceRef(source_type="serialization-alias", source_id=old_source.name)
+            baseline = await old_repository.historical_evidence(connection, "scope-a", (ref,))
+            upgraded = await SourceRepository(registry).historical_evidence(connection, "scope-a", (ref,))
+            assert upgraded == baseline
+            assert upgraded[0].definition_version == "2"
+            assert upgraded[0].declaration == MemoryEvidenceDeclaration()
+
+    asyncio.run(scenario())
+
+
 def test_headerless_content_receipt_preserves_accepted_material_digest() -> None:
     async def scenario() -> None:
         repository = SourceRepository((CONTENT_SOURCE_ADAPTER,))

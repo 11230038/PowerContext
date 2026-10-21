@@ -21,7 +21,7 @@ from typing import Self
 
 import pytest
 import rfc8785
-from pydantic import Field, ValidationError, field_serializer
+from pydantic import ConfigDict, Field, ValidationError, field_serializer
 from referencing.exceptions import Unresolvable
 
 from powercontext.builtin.persistence.source_definitions import SourceDefinitionManifestRepository
@@ -167,6 +167,61 @@ def test_serialization_aliases_preserve_the_worker_envelope_during_ingestion(
     asyncio.run(scenario())
 
 
+def test_alias_serialization_remote_manifest_and_payload_remain_upgrade_stable(tmp_path) -> None:
+    class AliasedSource(Source):
+        model_config = ConfigDict(serialize_by_alias=True, populate_by_name=True)
+        body: str = Field(alias="wire_text")
+
+    class AliasedAdapter:
+        name = "aliased-upgrade"
+        input_class = str
+        source_class = AliasedSource
+
+        async def resolve(self, value: str, /) -> AliasedSource:
+            return AliasedSource(
+                name="remote-aliased",
+                definition_version="2",
+                materialization=SourceMaterialization.CAPTURED,
+                wire_text=value,
+            )
+
+        async def read(self, source: AliasedSource, /) -> str:
+            return source.body
+
+    async def scenario() -> None:
+        definition = AdapterSourceDefinition(AliasedAdapter(), version="2")
+        registry = SourceDefinitionRegistry((definition,))
+        source = await registry.resolve("Retained alias.")
+        manifest = manifest_for_definition(definition)
+        observation = project_source_for_transport(registry, source)
+        expected = AliasedSource.model_json_schema()
+        expected_fingerprint = hashlib.sha256(
+            rfc8785.dumps({
+                "name": definition.name,
+                "version": definition.version,
+                "source_schema": expected,
+                "projections": [],
+            })
+        ).hexdigest()
+        assert manifest.source_schema == expected
+        assert manifest.fingerprint == f"sha256:{expected_fingerprint}"
+        assert observation.payload["wire_text"] == "Retained alias."
+
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'remote-alias-upgrade.db'}")
+        async with SQLiteProfile.open(config, tables=SHARED_TABLES) as profile:
+            contexts = RelationalContexts(database=profile.database, source_registry=SourceDefinitionRegistry(()))
+            assert await contexts.register_source_definition(manifest) == manifest
+        async with SQLiteProfile.open(config, tables=SHARED_TABLES) as profile:
+            contexts = RelationalContexts(database=profile.database, source_registry=SourceDefinitionRegistry(()))
+            assert await contexts.register_source_definition(manifest) == manifest
+            receipt = await contexts.submit_source_observation(
+                SubmitSourceObservation(scope_id="scope-a", observation=observation)
+            )
+            assert receipt.source_ref.source_id == "remote-aliased"
+
+    asyncio.run(scenario())
+
+
 def test_recursive_source_transport_preserves_canonical_nested_payload() -> None:
     class RecursiveSource(Source):
         name: str = Field(serialization_alias="source_name")
@@ -269,7 +324,9 @@ def test_remote_identity_exclusions_and_serializers_fail_observation_validation(
         for source_class in (ExcludedIdentitySource, TransformedIdentitySource):
             definition = AdapterSourceDefinition(Adapter(source_class), version="1")
             registry = SourceDefinitionRegistry((definition,))
-            assert manifest_for_definition(definition).source_schema == source_class.model_json_schema(by_alias=False)
+            assert manifest_for_definition(definition).source_schema == source_class.model_json_schema(
+                mode="serialization", by_alias=False
+            )
             source = await registry.resolve("identity")
             with pytest.raises(ValidationError):
                 project_source_for_transport(registry, source)

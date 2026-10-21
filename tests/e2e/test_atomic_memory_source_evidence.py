@@ -137,8 +137,9 @@ def test_unverifiable_native_serializer_keeps_memory_evidence_neutral(migration_
 
 
 @pytest.mark.parametrize("has_header", [False, True])
-def test_headerless_canonical_v1_evidence_survives_business_alias_rebuild(
-    migration_backend: MigrationBackend, has_header: bool
+@pytest.mark.parametrize("historical_version", ["1", "2"])
+def test_canonical_historical_evidence_survives_business_alias_rebuild(
+    migration_backend: MigrationBackend, has_header: bool, historical_version: str
 ) -> None:
     class CurrentNote(NoteSource):
         name: str = Field(alias="source_name")
@@ -148,11 +149,18 @@ def test_headerless_canonical_v1_evidence_survives_business_alias_rebuild(
         source_class = CurrentNote
 
     config = BuiltinConfig(database=migration_backend.config)
-    old_registry = SourceDefinitionRegistry((AdapterSourceDefinition(NoteAdapter()),))
-    current_registry = SourceDefinitionRegistry((AdapterSourceDefinition(CurrentAdapter(), version="2"),))
+    old_registry = SourceDefinitionRegistry((AdapterSourceDefinition(NoteAdapter(), version=historical_version),))
+    current_registry = SourceDefinitionRegistry((
+        AdapterSourceDefinition(CurrentAdapter(), version=str(int(historical_version) + 1)),
+    ))
 
     async def scenario():
-        source = NoteSource(name="canonical-v1", materialization=SourceMaterialization.CAPTURED, body="Retained.")
+        source = NoteSource(
+            name=f"canonical-v{historical_version}",
+            definition_version=historical_version,
+            materialization=SourceMaterialization.CAPTURED,
+            body="Retained.",
+        )
         ref = SourceRef(source_type="note", source_id=source.name)
         async with open_builtin_contexts(config, source_registry=old_registry) as contexts:
             context = await contexts.get("scope")

@@ -172,11 +172,15 @@ def _manifest_for_definition(
     *,
     transport: bool,
 ) -> SourceDefinitionManifest:
-    source_schema = _json_object(
-        definition.source_class.model_json_schema(mode="validation", by_alias=False)
-        if transport
-        else definition.source_class.model_json_schema(mode="serialization")
-    )
+    if transport:
+        source_schema = _json_object(
+            definition.source_class.model_json_schema(
+                mode="serialization",
+                by_alias=bool(definition.source_class.model_config.get("serialize_by_alias")),
+            )
+        )
+    else:
+        source_schema = _json_object(definition.source_class.model_json_schema(mode="serialization"))
     projections = tuple(
         SourceProjectionManifest(
             key=SourceProjectionKey(name=projection.name, version=projection.version),
@@ -212,7 +216,7 @@ def project_source_for_transport(
             "remote Source observations must retain their canonical value",
         )
     manifest = manifest_for_definition(definition)
-    payload = _json_object(source.model_dump(mode="json", by_alias=False))
+    payload = _json_object(source.model_dump(mode="json"))
     projections = tuple(
         SourceProjectionValue(key=key, value=registry.project(source, key)) for key in registry.projection_keys(source)
     )
