@@ -144,10 +144,13 @@ async def _processing_maintenance(
     )
     manifest = canonical_processing_manifest(config)
     database = settings.database
+    # A plan only inspects an existing database: opening it read-only keeps the
+    # command from creating the directory, the file or a journal mode it reports on.
+    read_only = action == "plan"
     if isinstance(database, SQLiteConfig):
         if not database.is_persistent:
             raise typer.BadParameter("offline migration requires a persistent database")  # noqa: TRY003
-        opened = SQLiteProfile.open(database, tables=())
+        opened = SQLiteProfile.open_readonly(database) if read_only else SQLiteProfile.open(database, tables=())
     elif isinstance(database, OceanBaseConfig):
         opened = OceanBaseProfile.open(database, tables=())
     elif isinstance(database, SeekDBConfig):
