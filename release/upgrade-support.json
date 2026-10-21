@@ -1,0 +1,10 @@
+{
+  "format": 1,
+  "target_version": "1.4.0",
+  "mode": "fresh-install-only",
+  "schema_review": {
+    "persistence_sha256": "ca3b475f2d0c883e19291a8d8b1dadbe50f93ebd93aad550a9112a3497737927",
+    "rationale": "The full Server upgrade framework is incomplete (#2154). Existing databases are unsupported; no production upgrade combination is advertised until installed-release acceptance passes."
+  },
+  "cases": []
+}

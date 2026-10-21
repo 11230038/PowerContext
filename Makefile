@@ -19,7 +19,7 @@ notebooks-test: ## Execute provider-free tutorials in fresh kernels; use ARGS fo
 	@uv run --locked --group notebooks python examples/jupyter/run.py $(ARGS)
 
 .PHONY: check
-check: version-check workflow-actions-check integration-manifest-check integration-guidance-check ## Run code quality tools.
+check: version-check upgrade-policy-check workflow-actions-check integration-manifest-check integration-guidance-check ## Run code quality tools.
 
 .PHONY: integration-guidance integration-guidance-check
 integration-guidance: ## Refresh the managed regions of packaged integration guidance.
@@ -235,8 +235,16 @@ version-check: ## Check release references and generated API code; optionally as
 	@$(MAKE) api-generate-check js-api-generate-check
 
 .PHONY: release-check
-release-check: version-check docs-install ## Check version references and require matching bilingual notes for a stable release.
+release-check: version-check upgrade-policy-check docs-install ## Check version references and require matching bilingual notes for a stable release.
 	@cd website && node --import tsx --test tests/releases.test.ts
+
+.PHONY: upgrade-policy-check
+upgrade-policy-check: ## Verify the declared upgrade matrix, persistence review, and installation guidance.
+	@uv run python scripts/upgrade_release_gate.py
+
+.PHONY: upgrade-release-test
+upgrade-release-test: ## Run installed-release acceptance for the single wheel in dist (fresh-install-only makes no upgrade claim).
+	@uv run python scripts/run_upgrade_release_gate.py
 
 .PHONY: clean-build
 clean-build: ## Clean build artifacts
@@ -244,7 +252,8 @@ clean-build: ## Clean build artifacts
 	@uv run python -c "import shutil; import os; shutil.rmtree('dist') if os.path.exists('dist') else None"
 
 .PHONY: publish
-publish: ## Publish a release to PyPI.
+publish: ## Publish after release upgrade acceptance; UPGRADE_RELEASE_NOTES must name the reviewed release notes file.
+	@uv run python scripts/run_upgrade_release_gate.py --release --release-notes "$$UPGRADE_RELEASE_NOTES"
 	@echo "🚀 Publishing."
 	@uv publish dist/*
 

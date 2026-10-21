@@ -14,7 +14,7 @@ concurrency:
 jobs:
   release-build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 90
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -73,6 +73,21 @@ jobs:
         run: |
           uv build --out-dir dist
           uvx --from twine twine check dist/*
+
+      - name: Gate upgrade claims on installed release acceptance
+        run: >-
+          uv run python scripts/run_upgrade_release_gate.py
+          --release --release-event "$GITHUB_EVENT_PATH"
+          --output "$RUNNER_TEMP/upgrade-release-evidence"
+
+      - name: Preserve upgrade acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: upgrade-release-evidence
+          path: ${{ runner.temp }}/upgrade-release-evidence/
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload release distributions
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

@@ -56,6 +56,7 @@ the website lists stable releases only. `make docs-test` also runs this check as
 | Source | Managed value |
 | --- | --- |
 | `openapi/powercontext.yaml` | `info.version`, the prepared release version. |
+| `release/upgrade-support.json` | Target release version; source versions and the support policy require compatibility review. |
 | `src/powercontext/http/_generated/` | `API_VERSION` in `operations.py` and `info.version` in `schema.py`, regenerated through `make api-generate`. |
 | `README.md`, `README_CN.md`, `README_JP.md` | Current release prose, pinned package installation commands, and matching Agent integration tag. |
 | `docs/en/docs/get-started/quickstart.md`, `docs/zh/docs/get-started/quickstart.md` | Current release and matching installation/tag instructions. |
@@ -125,6 +126,39 @@ The DSH README's statement that a capability was included in release `1.1.0` is 
 installation pins are synchronized.
 
 ## Verify before publication
+
+### Database upgrade support
+
+`release/upgrade-support.json` declares the target version and every supported source version, backend, and
+configuration. The current policy is `fresh-install-only`; existing Server database upgrades are unsupported.
+Do not advertise a supported upgrade until its installed-release acceptance suite is implemented and passes.
+The suite contract and evidence requirements are in `tests/release_upgrades/README.md` in the repository.
+
+`make check` and `make release-check` validate this policy and the bilingual installation notices. Changes to
+managed persistence inputs require a compatibility review with an updated digest and rationale. A digest is a
+review trigger, not evidence that a migration is correct. `make version-bump` also updates the policy target;
+regenerate the support notices with `uv run python scripts/upgrade_release_gate.py --write-docs` after matrix changes.
+
+After building exactly one wheel into `dist/`, execute the declared upgrade cases:
+
+```bash
+make upgrade-release-test
+uv run python scripts/run_upgrade_release_gate.py --release --release-notes /path/to/release-notes.md
+```
+
+The release check requires the actual wheel version to match the policy and the release notes to include the exact
+English support declaration from the installation guide. It installs each exact source release and the target wheel
+in separate environments. Missing tests, skipped backends, failures, and missing evidence block the check. A passing
+`fresh-install-only` policy check does not establish an upgrade path. Ordinary PR builds may have a development
+version; the `--release` check must run against the final tagged wheel without overriding its version.
+
+The **Upgrade release gate** CI job also reproduces the known unsupported upgrade rejections using a real 1.3.0
+SQLite Server database. Replace that negative fixture with supported-path acceptance when implementing the full
+migration chain. Repository administrators must make this job required in branch protection.
+The release workflow gates distribution upload, PyPI publication, and release assets on the acceptance result and
+archives its evidence. It runs after `release.published`, so it cannot prevent the earlier manual publication of
+the GitHub Release page: run the command above before that action. `make publish` requires
+`UPGRADE_RELEASE_NOTES=/path/to/release-notes.md` and runs the same gate before uploading packages.
 
 Run the checks for the complete release changes, including generated contracts and documentation:
 
