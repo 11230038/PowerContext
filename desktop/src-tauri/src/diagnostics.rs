@@ -294,7 +294,6 @@ impl Drop for DiagnosticCompletion {
 #[cfg(any(windows, target_os = "macos"))]
 pub struct LocalDiagnostics {
     registration: std::path::PathBuf,
-    running: std::sync::Arc<tokio::sync::Semaphore>,
     lifecycle: std::sync::Arc<DiagnosticLifecycle>,
 }
 #[cfg(any(windows, target_os = "macos"))]
@@ -302,7 +301,6 @@ impl LocalDiagnostics {
     pub fn new(registration: std::path::PathBuf) -> Self {
         Self {
             registration,
-            running: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
             lifecycle: std::sync::Arc::new(DiagnosticLifecycle::default()),
         }
     }
@@ -325,11 +323,6 @@ impl LocalDiagnostics {
             Arc,
             atomic::{AtomicBool, Ordering},
         };
-        let permit = self
-            .running
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| SafeError::Busy)?;
         struct Cancel(Arc<AtomicBool>);
         impl Drop for Cancel {
             fn drop(&mut self) {
@@ -342,6 +335,11 @@ impl LocalDiagnostics {
             if state.closed {
                 return Err(SafeError::StaleContext);
             }
+            // Admission and completion share one lock. A finishing invocation
+            // cannot clear the cancellation flag of its successor.
+            if state.active.is_some() {
+                return Err(SafeError::Busy);
+            }
             state.active = Some(cancelled.0.clone());
             DiagnosticCompletion(self.lifecycle.clone())
         };
@@ -349,7 +347,6 @@ impl LocalDiagnostics {
         let registration = self.registration.clone();
         tauri::async_runtime::spawn_blocking(move || {
             let _completion = completion;
-            let _permit = permit;
             execute(&registration, kind, flag)
         })
         .await

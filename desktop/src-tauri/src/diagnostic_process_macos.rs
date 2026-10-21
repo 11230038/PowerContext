@@ -65,9 +65,12 @@ fn collect(
         let mut file = unsafe { File::from_raw_fd(reader.into_raw_fd()) };
         let mut output = Vec::new();
         let mut buffer = [0; 8192];
-        loop {
-            if cancelled.load(Ordering::Relaxed) || Instant::now() >= deadline {
-                break;
+        let result = loop {
+            if cancelled.load(Ordering::Relaxed) {
+                break Err(SafeError::StaleContext);
+            }
+            if Instant::now() >= deadline {
+                break Err(SafeError::Timeout);
             }
             let slice = deadline
                 .saturating_duration_since(Instant::now())
@@ -81,38 +84,46 @@ fn collect(
                 revents: 0,
             };
             let ready = unsafe { libc::poll(&mut descriptor, 1, slice) };
+            if ready < 0
+                && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
+            {
+                break Err(SafeError::Storage);
+            }
             if ready <= 0 {
-                // Interrupted or no data yet; the schedule check above ends the loop.
                 continue;
             }
             match file.read(&mut buffer) {
-                Ok(0) => break,
+                Ok(0) => break Ok(output),
                 Ok(n) => {
                     if total.fetch_add(n, Ordering::Relaxed).saturating_add(n) > OUTPUT_LIMIT {
                         exceeded.store(true, Ordering::Relaxed);
-                        break;
+                        break Err(SafeError::ResponseTooLarge);
                     }
                     output.extend_from_slice(&buffer[..n]);
                 }
-                Err(_) => {
-                    let _ = sender.send(Err(SafeError::Storage));
-                    return;
-                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break Err(SafeError::Storage),
             }
-        }
-        let _ = sender.send(Ok(output));
+        };
+        let _ = sender.send(result);
     });
     receiver
 }
 
-/// Receives one bounded result; the reader always delivers before the deadline
-/// or closes the pipe read end, so this never blocks a surviving writer.
+/// Preserve collection failure instead of accepting missing or partial output.
 fn receive(
     receiver: mpsc::Receiver<Result<Vec<u8>, SafeError>>,
     deadline: Instant,
-) -> Option<Result<Vec<u8>, SafeError>> {
-    let remaining = deadline.checked_duration_since(Instant::now())?;
-    receiver.recv_timeout(remaining).ok()
+) -> Result<Vec<u8>, SafeError> {
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .ok_or(SafeError::Timeout)?;
+    receiver
+        .recv_timeout(remaining)
+        .map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => SafeError::Timeout,
+            mpsc::RecvTimeoutError::Disconnected => SafeError::Storage,
+        })?
 }
 pub(crate) fn run(
     executable: &Path,
@@ -165,16 +176,14 @@ pub(crate) fn run(
     };
     drop(group);
     let _ = child.wait();
-    let exit_code = match result {
-        Ok(code) => code,
-        Err(error) => {
-            // A writer may survive outside the killed group and keep the pipes
-            // open, so never block here; collection threads end by the deadline.
-            return Err(error);
-        }
-    };
-    let output = receive(stdout, deadline).unwrap_or(Ok(Vec::new()));
-    let errors = receive(stderr, deadline).unwrap_or(Ok(Vec::new()));
+    // A writer may survive outside the killed group. Process failure must not
+    // wait for its pipes; collection threads still honor cancellation/deadline.
+    let exit_code = result?;
+    let output = receive(stdout, deadline);
+    let errors = receive(stderr, deadline);
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(SafeError::StaleContext);
+    }
     if exceeded.load(Ordering::Relaxed) {
         return Err(SafeError::ResponseTooLarge);
     }
@@ -244,6 +253,67 @@ mod tests {
             "bounded shutdown blocked {elapsed:?} behind a writer that escaped the killed group"
         );
     }
+    #[test]
+    fn exited_launcher_with_open_pipe_preserves_timeout_and_cancellation() {
+        for cancel in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let escaped_pid = directory.path().join("escaped.pid");
+            let leader_pid = directory.path().join("leader.pid");
+            let script = format!(
+                "echo $$ > '{leader}'; perl -e 'use POSIX; POSIX::setsid(); open(my $fh, q(>), $ARGV[0]) or die; print $fh $$; close($fh); sleep 300' '{escaped}' & while [ ! -s '{escaped}' ]; do sleep 0.01; done; printf synthetic",
+                leader = leader_pid.display(),
+                escaped = escaped_pid.display()
+            );
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let flag = cancelled.clone();
+            let invocation =
+                std::thread::spawn(move || shell(&script, Duration::from_secs(3), flag));
+            let ready_deadline = Instant::now() + Duration::from_secs(2);
+            let pid = loop {
+                if let Ok(text) = std::fs::read_to_string(&escaped_pid)
+                    && let Ok(pid) = text.trim().parse::<i32>()
+                {
+                    break pid;
+                }
+                assert!(
+                    Instant::now() < ready_deadline,
+                    "escaped writer did not start"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            let _escaped = Group(pid);
+            let leader = std::fs::read_to_string(&leader_pid).unwrap();
+            // The launcher must be reaped before cancellation, so run() is
+            // collecting pipes rather than supervising a live launcher.
+            loop {
+                let status = Command::new("/bin/ps")
+                    .args(["-o", "stat=", "-p", leader.trim()])
+                    .output()
+                    .unwrap();
+                if status.stdout.is_empty() {
+                    break;
+                }
+                assert!(Instant::now() < ready_deadline, "launcher was not reaped");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let started = Instant::now();
+            if cancel {
+                cancelled.store(true, Ordering::Relaxed);
+            }
+            assert_eq!(
+                invocation.join().unwrap().err(),
+                Some(if cancel {
+                    SafeError::StaleContext
+                } else {
+                    SafeError::Timeout
+                })
+            );
+            if cancel {
+                assert!(started.elapsed() < Duration::from_secs(1));
+            }
+        }
+    }
+
     #[test]
     fn timeout_and_live_cancellation_terminate_spawned_descendants() {
         for cancel in [false, true] {
