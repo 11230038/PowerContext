@@ -102,8 +102,8 @@ def test_release_updates_installation_references_and_preserves_history(release_r
         assert f"To install {version} in a separate environment" in english
         assert f"Python 包版本为 `{version}`" in chinese
         assert f"安装 {version} 到独立环境" in chinese
-        assert "upgrades of existing Server databases are not supported" in english
-        assert "尚不支持已有 Server 数据库升级" in chinese
+        assert "Upgrades from 1.3.0 require passing full Server acceptance" in english
+        assert "1.3.0 升级必须通过 SQLite、seekDB 和 OceanBase 的完整 Server 验收" in chinese
         dsh = (release_repo / "integrations/dsh/plugins/powercontext/README.md").read_text(encoding="utf-8")
         assert "Release 1.1.0 includes direct-operation Scope failure handling" in dsh
         for relative, original in preserved.items():

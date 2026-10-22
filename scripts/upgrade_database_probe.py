@@ -39,8 +39,18 @@ async def inspect(backend: str, database: Path, *, add_revision: bool) -> dict[s
         with sqlite3.connect(database) as connection:
             if add_revision:
                 connection.execute(REVISION_DDL)
-            rows = connection.execute("SELECT name, sql FROM sqlite_schema WHERE type='table' ORDER BY name").fetchall()
-        return {"engine_version": sqlite3.sqlite_version, "driver_version": version("aiosqlite"), "tables": dict(rows)}
+            objects = {
+                plural: dict(
+                    connection.execute("SELECT name, sql FROM sqlite_schema WHERE type=? ORDER BY name", (kind,))
+                )
+                for kind, plural in (
+                    ("table", "tables"),
+                    ("index", "indexes"),
+                    ("view", "views"),
+                    ("trigger", "triggers"),
+                )
+            }
+        return {"engine_version": sqlite3.sqlite_version, "driver_version": version("aiosqlite"), **objects}
 
     # Use the driver's public API, not a current-checkout Profile that could run
     # startup guards or mutate an old schema before the target CLI is tested.
@@ -79,11 +89,17 @@ async def inspect(backend: str, database: Path, *, add_revision: bool) -> dict[s
             for name in names:
                 cursor.execute("SHOW CREATE TABLE `" + name.replace("`", "``") + "`")
                 tables[name] = cursor.fetchone()[1]
+            cursor.execute("SHOW FULL TABLES WHERE Table_type = 'VIEW'")
+            views = {}
+            for name in sorted(row[0] for row in cursor.fetchall()):
+                cursor.execute("SHOW CREATE VIEW `" + name.replace("`", "``") + "`")
+                views[name] = cursor.fetchone()[1]
         return {
             "engine_version": engine,
             "driver_version": version("pymysql"),
             **details,
             "tables": tables,
+            "views": views,
         }
     finally:
         if instance is not None:

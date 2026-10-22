@@ -1,8 +1,9 @@
 # Installed-release upgrade acceptance
 
-`release/upgrade-support.json` is the explicit upgrade support policy. Currently it declares
-`fresh-install-only`: **no production database upgrade combination is supported**. Discovered candidates in this mode
-are not accepted upgrades. Full migration integration is tracked in #2154.
+`release/upgrade-support.json` requires **positive** 1.3.0 upgrades on SQLite, embedded seekDB, and OceanBase.
+The current `upgrade-required` mode keeps the upgrade support declaration unverified while requiring every case
+to run and pass. Missing full migration integration (#2154) fails the gate. `supported-upgrades` runs the same
+matrix and enables publication after the reviewed support declaration is updated. `fresh-install-only` is rejected.
 
 ## Fixed source and current target
 
@@ -18,11 +19,12 @@ source wheels, invalid artifact metadata, catalog outages, and a target at or be
 Evidence records the catalog digest, exact source artifact, target artifact digest, and expanded matrix. The resolver
 requires universal `py3-none-any` wheels; a distribution format change must extend it explicitly.
 
-Currently the three profiles have `suite: null` and the mode remains `fresh-install-only`. Resolving candidates
-executes and accepts **zero** positive upgrades. To activate supported upgrades, implement the complete suite
-contract below for each backend, replace the null paths, set `mode` to `supported-upgrades`, and regenerate the
-installation notices. A missing suite fails supported mode. Tests must fail when migration support is missing;
-the runner never changes expected success into a rejection automatically.
+All three profiles use `test_full_server.py`. It starts the installed 1.3.0 Server, writes data through HTTP,
+stops it, seeds a pending processing intent using the installed SDK, and runs the target wheel's public
+`server db-migrate status/plan/apply/verify` commands. Verification must report `state=ready` and `server_ready=true`.
+The target Server must then start, preserve data and permissions, accept new writes, and support retrieval.
+Partial migration success, missing framework/baseline support, and startup rejection all fail. These disposable
+fixtures explicitly accept no backup; this is not a production upgrade procedure.
 
 `cases` remains available for additional exact source versions/configurations. Each case needs `source_version`,
 `backend`, `configuration`, and `suite`; overlapping cases fail. Optional features that create persistent objects
@@ -45,6 +47,7 @@ The suite receives:
 - `PC_UPGRADE_BACKEND`, `PC_UPGRADE_CONFIGURATION`: the declared case.
 - `PC_UPGRADE_WORK`: disposable workspace for both databases, controlled inference fixtures, and environment files.
 - `PC_UPGRADE_EVIDENCE`: destination for backend evidence JSON.
+- `PC_UPGRADE_REPORT_DIR`: persistent per-case command logs, fixture snapshots and schema inventories.
 - `PC_UPGRADE_OCEANBASE_URL`, `PC_UPGRADE_OCEANBASE_FRESH_URL`: dedicated disposable MySQL-tenant databases for
   the upgraded and fresh-install comparisons. CI supplies both; local positive OceanBase suites must supply their
   own isolated databases. Each suite must isolate/reset its own fixtures when multiple configurations run.
@@ -58,9 +61,9 @@ Provide these behavioral tests (additional tests are allowed):
 | `test_target_startup` | Start the target Server against the migrated database and verify readiness. |
 | `test_read_write_and_retrieval` | Read the old records, write new ones, and retrieve both through public interfaces. |
 | `test_authorization` | Verify permitted and denied access and preservation of relevant grants. |
-| `test_candidates_and_processing` | Verify retained Candidates and task consumption, including idempotency. |
+| `test_candidates_and_processing` | Verify retained Candidates and CAS approval; load and acknowledge the old pending intent using the target installed SDK, including idempotency. This does not execute a model-driven Worker. |
 | `test_preserved_history_and_cursors` | Verify exact history/references and unchanged or declared-transformed cursor and receipt semantics. |
-| `test_fresh_upgrade_equivalence` | Initialize a fresh target database; compare schema/backend objects and behavior with the upgraded database, explicitly allowing only registered retained/archive objects. |
+| `test_fresh_upgrade_equivalence` | Initialize a fresh target database; compare schema/backend objects and behavior with the upgraded database. The current suite has no retained/archive object exclusions. |
 
 Use a session fixture for the shared lifecycle; do not depend on pytest's test execution order. All collected tests
 must execute and pass. Empty collection, missing phases, skips (including missing backends), xfail, failure, command
@@ -75,24 +78,14 @@ records installed Python/package versions, target wheel SHA-256, policy SHA-256,
 
 Evidence is created during the gate run in a new directory. There is no option to import old successful reports.
 Test names and metadata do not themselves prove correctness: reviewers must inspect the assertions and confirm
-they follow the public operations and compare actual persisted data. This contract is intended to host the real
-upgrade acceptance added with #2154, without claiming that it already exists.
+they follow actual installed operations and compare persisted data. The profile exercises explicit writes and FTS,
+not vector storage or model-generated content. The processing fixture tests persisted intent compatibility and
+acknowledgment, not Worker execution. Add separately reviewed profiles before claiming those optional paths.
+SQLite inventories include indexes, views and triggers; MySQL-family table DDL includes indexes and constraints,
+and views are collected separately. Comparison normalizes whitespace, identifier quoting and auto-increment
+counters only; structural differences fail rather than being silently excluded.
 
-For example, after implementing and reviewing actual suites, automatic selection would have this shape:
-
-```json
-{
-  "strategy": "fixed-version",
-  "source_version": "1.3.0",
-  "profiles": [
-    {"backend": "sqlite", "configuration": "full-server-no-vector", "suite": "tests/release_upgrades/test_sqlite.py"},
-    {"backend": "seekdb", "configuration": "full-server-no-vector", "suite": "tests/release_upgrades/test_seekdb.py"},
-    {"backend": "oceanbase", "configuration": "full-server-no-vector", "suite": "tests/release_upgrades/test_oceanbase.py"}
-  ]
-}
-```
-
-These suite paths illustrate the contract; they do not exist yet. Regenerate installation support regions with
+Regenerate installation support regions with
 `uv run python scripts/upgrade_release_gate.py --write-docs` and run `make upgrade-policy-check`. When persistence
 inputs change, calculate `managed_digest(ROOT)` from `upgrade_release_gate`, review the compatibility impact, and
 update both the digest and rationale in `schema_review`. The inputs include persistence, optional code storage,
@@ -109,23 +102,9 @@ Repository administrators must require **Upgrade release gate** in branch protec
 that setting. Because the release workflow starts on `release.published`, it can block package/asset publication,
 not the earlier manual creation of a GitHub Release; run the prepublication command before publishing that page.
 
-## Actual historical rejection regressions
+## Historical rejection regressions
 
-The PR/master and publication jobs run `ci_legacy_upgrade_rejection.py` for **SQLite, embedded seekDB, and OceanBase**
-against a database created and populated by installed PowerContext 1.3.0. It uses separate source/target environments, one disposable
-database per backend, sequential process ownership, and public HTTP writes/readback before testing target CLI behavior.
-The installed drivers inventory the actual tables and record each environment's engine, driver, and binding versions.
-OceanBase uses the container's dedicated `pc_upgrade_test` database and records its MySQL tenant mode and direct
-connection. Its public migration status command supplies `--evidence-dir` and `--lock-coordination single-host`,
-as required by OceanBase maintenance. The negative runner only accepts the local test database and verifies it is empty before starting the
-old Server; it refuses to overwrite existing data. No external service or credentials are needed. A missing embedded
-binding or unavailable OceanBase instance fails the job; neither backend is skipped.
-
-The regressions require historical startup rejection, full-baseline migration rejection, and rejection after adding
-only the prototype revision table to the disposable fixture. The last operation is deliberately **not a migration**.
-SeekDB and OceanBase permit either the known CHECK-reflection rejection or unknown-baseline rejection, so fixing #2160 does not
-require retaining the parser defect. These tests do not certify that an upgrade succeeds.
-
-CI invokes them with `--respect-policy` after the main gate. Once supported-path acceptance is activated, these
-historical rejection assertions are recorded as `not-applicable` instead of failing because migration was fixed.
-The preceding positive gate must still execute all required version/backend cases and accept no skips.
+`scripts/ci_legacy_upgrade_rejection.py` remains a diagnostic tool for historical rejection behavior. PR and release
+workflows do not invoke it as upgrade acceptance. An expected rejection or its `--respect-policy` result can never
+replace a successful positive upgrade. The gate attempts every required backend even after an earlier case fails,
+then fails overall and archives each case's logs and result. Empty matrices and missing suites are errors.

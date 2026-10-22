@@ -53,8 +53,8 @@ PHASES = frozenset({
 })
 VERSION = r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?"
 NOTICE = {
-    "en": "This release supports fresh installations only; upgrades of existing Server databases are not supported.",
-    "zh": "此版本仅支持新建部署，尚不支持已有 Server 数据库升级。",  # noqa: RUF001 -- Chinese prose
+    "en": "Upgrades from 1.3.0 require passing full Server acceptance on SQLite, seekDB and OceanBase. This migration path is not yet verified; do not upgrade existing databases.",
+    "zh": "1.3.0 升级必须通过 SQLite、seekDB 和 OceanBase 的完整 Server 验收。当前迁移路径尚未验证，请勿升级已有数据库。",  # noqa: RUF001 -- Chinese prose
 }
 
 
@@ -100,7 +100,7 @@ def load_policy(root: Path) -> dict[str, Any]:
     require(
         match is not None and match[1] == policy["target_version"], "Upgrade policy target differs from API release"
     )
-    require(policy["mode"] in {"fresh-install-only", "supported-upgrades"}, "Unknown upgrade policy mode")
+    require(policy["mode"] in {"upgrade-required", "supported-upgrades"}, "Unknown upgrade policy mode")
     review = policy["schema_review"]
     require(set(review) == {"persistence_sha256", "rationale"}, "Invalid schema review fields")
     require(
@@ -124,8 +124,12 @@ def load_policy(root: Path) -> dict[str, Any]:
         require(isinstance(profiles, list) and profiles, "Automatic sources require backend profiles")
         for profile in profiles:
             require(set(profile) == {"backend", "configuration", "suite"}, "Invalid automatic backend profile")
-    supported = policy["mode"] == "supported-upgrades"
-    require(bool(cases or profiles) if supported else not cases, "Upgrade mode and support matrix disagree")
+    require(bool(cases or profiles), "Upgrade acceptance requires a nonempty matrix")
+    required_backends = {"sqlite", "seekdb", "oceanbase"}
+    covered = {case["backend"] for case in cases if case.get("source_version") == "1.3.0"} | (
+        {profile["backend"] for profile in profiles} if automatic and automatic["source_version"] == "1.3.0" else set()
+    )
+    require(covered >= required_backends, "The 1.3.0 upgrade baseline requires SQLite, seekDB and OceanBase")
     identities: set[tuple[str, str, str]] = set()
     for case in cases:
         require(set(case) == {"source_version", "backend", "configuration", "suite"}, "Invalid upgrade case fields")
@@ -139,9 +143,10 @@ def load_policy(root: Path) -> dict[str, Any]:
         identity = (case.get("source_version", "automatic"), case["backend"], case["configuration"])
         require(identity not in identities, "Duplicate upgrade combination")
         identities.add(identity)
-        if case["suite"] is None:
-            require(not supported, "Supported upgrades require a real acceptance suite for every backend profile")
-            continue
+        require(
+            isinstance(case["suite"], str) and case["suite"],
+            "A real acceptance suite is required for every backend profile",
+        )
         suite = (root / case["suite"]).resolve()
         require(
             suite.is_relative_to((root / "tests/release_upgrades").resolve()),
@@ -154,7 +159,7 @@ def load_policy(root: Path) -> dict[str, Any]:
 
 
 def support_text(policy: dict[str, Any], language: str) -> str:
-    if policy["mode"] == "fresh-install-only":
+    if policy["mode"] == "upgrade-required":
         return NOTICE[language]
     title = (
         "Supported database upgrades (other combinations are unsupported):"
@@ -256,7 +261,7 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
         for key, value in os.environ.items()
         if not key.startswith(("POWERCONTEXT_", "PYTEST_")) and key not in {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"}
     }
-    with tempfile.TemporaryDirectory(prefix="pc-upgrade-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="pc-up-", dir="/tmp" if os.name != "nt" else None) as temporary:  # noqa: S108 -- private mkdtemp directory; short embedded socket path
         directory = Path(temporary)
         extras = "cli,server,seekdb" if case["backend"] == "seekdb" else "cli,server"
         interpreters = {}
@@ -284,7 +289,9 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
         metadata = {role: installed(python, environment, directory) for role, python in interpreters.items()}
         require(metadata["source"]["powercontext"] == case["source_version"], "Source release mismatch")
         require(metadata["target"]["powercontext"] == wheel_version(wheel), "Target wheel version mismatch")
+        (output / "installed.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
         environment.update({
+            "PC_UPGRADE_REPORT_DIR": str(output),
             "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
             "PC_UPGRADE_SOURCE_PYTHON": str(interpreters["source"]),
             "PC_UPGRADE_SOURCE_VERSION": case["source_version"],
@@ -344,8 +351,22 @@ def gate(root: Path, wheel: Path, output: Path, *, release: bool = False, releas
     try:
         matrix = resolve_matrix(policy, actual_version)
         evidence["resolved_matrix"] = matrix
+        require(matrix["required_cases"], "No required upgrade acceptance cases")
+        failures = []
         for index, case in enumerate(matrix["required_cases"]):
-            evidence["cases"].append(run_case(root, wheel, case, output / f"case-{index}"))
+            try:
+                evidence["cases"].append(run_case(root, wheel, case, output / f"case-{index}"))
+            except (GateError, OSError, ValueError, subprocess.SubprocessError, ElementTree.ParseError) as error:
+                # A broken backend must not prevent the other required backends
+                # from running and producing their own failure evidence.
+                failures.append(case["backend"])
+                evidence["cases"].append({"case": case, "status": "failed", "error": str(error)})
+        require(not failures, f"Required upgrade acceptance failed: {', '.join(failures)}")
+        if release:
+            require(
+                policy["mode"] == "supported-upgrades",
+                "Upgrade acceptance passed; update the reviewed support declaration before publication",
+            )
         evidence["status"] = "passed"
     finally:
         (output / "result.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

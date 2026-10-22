@@ -63,7 +63,7 @@ def resolve_matrix(policy: dict[str, Any], target: str) -> dict[str, Any]:
     automatic = policy["automatic_sources"]
     explicit = policy["cases"]
     if automatic is None and not explicit:
-        return {"candidate_cases": [], "required_cases": []}
+        raise ValueError("Upgrade acceptance requires a nonempty matrix")  # noqa: TRY003
     catalog = fetch_catalog()
     if not isinstance(catalog.get("releases"), dict) or not catalog["releases"]:
         raise ValueError("Empty or malformed PyPI release catalog")  # noqa: TRY003
@@ -84,7 +84,5 @@ def resolve_matrix(policy: dict[str, Any], target: str) -> dict[str, Any]:
         "catalog_url": CATALOG_URL,
         "catalog_sha256": hashlib.sha256(json.dumps(catalog, sort_keys=True).encode()).hexdigest(),
         "candidate_cases": cases,
-        # Fresh-install-only records discovery, never reports unexecuted upgrades
-        # as accepted. Switching mode requires real suites for every profile.
-        "required_cases": cases if policy["mode"] == "supported-upgrades" else [],
+        "required_cases": cases,
     }

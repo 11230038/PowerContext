@@ -135,9 +135,11 @@ across SQLite, embedded seekDB, and OceanBase. The target is the actual wheel bu
 1.4.1 and 1.5.0 continue testing from 1.3.0 automatically; intermediate releases are not added as sources. Source
 wheel URLs and SHA-256s are resolved from public PyPI and recorded with the target artifact. This fixed baseline
 alone does not certify databases created/populated by other releases; use explicit cases for additional claims.
-The current policy is `fresh-install-only`; existing Server database upgrades are unsupported. Its null suite paths
-record candidates only, not accepted upgrades. Supported mode requires implemented suites for every backend profile.
-Do not advertise a supported upgrade until its installed-release acceptance suite is implemented and passes.
+The current `upgrade-required` policy mandates positive acceptance on all three backends while keeping upgrade
+support unverified. Every profile points to `tests/release_upgrades/test_full_server.py`; missing migration support
+must fail. Neither a fresh-install-only declaration nor correct rejection of an old database satisfies this gate.
+After the full migration implementation and acceptance pass, review the declaration, set `supported-upgrades`, and
+regenerate the installation notices before publication. Both modes run the same mandatory acceptance matrix.
 The suite contract and evidence requirements are in `tests/release_upgrades/README.md` in the repository.
 
 `make check` and `make release-check` validate this policy and the bilingual installation notices. Changes to
@@ -154,15 +156,17 @@ uv run python scripts/run_upgrade_release_gate.py --release --release-notes /pat
 
 The release check requires the actual wheel version to match the policy and the release notes to include the exact
 English support declaration from the installation guide. It installs each exact source release and the target wheel
-in separate environments. Missing tests, skipped backends, failures, and missing evidence block the check. A passing
-`fresh-install-only` policy check does not establish an upgrade path. Ordinary PR builds may have a development
+in separate environments. Missing tests, skipped backends, failures, and missing evidence block the check. Static
+policy validation alone does not establish an upgrade path. Ordinary PR builds may have a development
 version; the `--release` check must run against the final tagged wheel without overriding its version.
 
-The **Upgrade release gate** CI job also reproduces the known unsupported upgrade rejections using real 1.3.0
-SQLite, embedded seekDB, and OceanBase Server databases. seekDB runs in a temporary runner directory. Both PR
-and publication jobs start a disposable OceanBase CE container, wait for its MySQL tenant, archive diagnostics, and
-remove it even on failure. No external database credentials are needed. Once supported mode is activated, these negative assertions retire and
-the fixed-source three-backend upgrade matrix must pass. Repository administrators must make this job required in branch protection.
+The **Upgrade release gate** CI job requires successful public migration commands, full Server readiness, target
+startup, preserved records and new writes on real 1.3.0 databases. Limited bundle verification with
+`server_ready=false` fails. Every backend runs even if another backend fails, with separate logs and results.
+seekDB runs embedded in a temporary runner directory. PR and publication jobs start a disposable OceanBase CE
+container, wait for its MySQL tenant, archive diagnostics, and remove it even on failure. No external database
+credentials are needed. Unavailable backends fail instead of being skipped. Historical rejection regressions are
+not part of the positive acceptance gate. Administrators must make this job required in branch protection.
 The release workflow gates distribution upload, PyPI publication, and release assets on the acceptance result and
 archives its evidence. It runs after `release.published`, so it cannot prevent the earlier manual publication of
 the GitHub Release page: run the command above before that action. `make publish` requires

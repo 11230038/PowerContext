@@ -86,14 +86,6 @@ jobs:
           --release --release-event "$GITHUB_EVENT_PATH"
           --output "$RUNNER_TEMP/upgrade-release-evidence"
 
-      - name: Reproduce unsupported upgrades on all three backends
-        run: |
-          wheel=$(find dist -name '*.whl' -print -quit)
-          for backend in sqlite seekdb oceanbase; do
-            uv run python scripts/ci_legacy_upgrade_rejection.py \
-              --backend "$backend" --respect-policy --wheel "$wheel" \
-              --output "$RUNNER_TEMP/upgrade-release-evidence/legacy-$backend"
-          done
       - name: Preserve OceanBase diagnostics
         if: always()
         run: |

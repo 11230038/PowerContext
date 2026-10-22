@@ -41,11 +41,16 @@ def release(tmp_path, monkeypatch):
     policy = {
         "format": 2,
         "target_version": "2.0.0",
-        "mode": "fresh-install-only",
+        "mode": "upgrade-required",
         "schema_review": {"persistence_sha256": gate.managed_digest(tmp_path), "rationale": "No upgrades supported"},
         "cases": [],
         "automatic_sources": None,
     }
+    suite = tmp_path / "tests/release_upgrades/test_example.py"
+    suite.parent.mkdir(parents=True)
+    suite.write_text("# Gate orchestration fixture; not real upgrade acceptance.\n")
+    automatic_policy(policy)
+    monkeypatch.setattr(gate, "run_case", lambda _root, _wheel, case, _output: {"case": case, "status": "passed"})
     (tmp_path / gate.MANIFEST).write_text(json.dumps(policy))
     monkeypatch.setattr(
         matrix,
@@ -74,11 +79,14 @@ def release(tmp_path, monkeypatch):
     return tmp_path, wheel, policy
 
 
-def test_fresh_install_policy_does_not_claim_upgrade_acceptance(release):
+def test_required_mode_executes_three_cases_but_cannot_publish_as_supported(release):
     root, wheel, policy = release
-    gate.gate(root, wheel, root / "evidence", release=True, release_notes=gate.support_text(policy, "en"))
+    with pytest.raises(gate.GateError, match="support declaration"):
+        gate.gate(root, wheel, root / "evidence", release=True, release_notes=gate.support_text(policy, "en"))
     result = json.loads((root / "evidence/result.json").read_text())
-    assert result["mode"] == "fresh-install-only" and result["cases"] == []
+    assert result["status"] == "failed"
+    assert len(result["cases"]) == 3
+    assert all(case["status"] == "passed" for case in result["cases"])
     assert result["target_wheel_sha256"] == gate.sha256(wheel)
 
 
@@ -106,8 +114,9 @@ def test_schema_change_needs_a_new_compatibility_review(release):
 def test_supported_mode_cannot_succeed_with_an_empty_matrix(release):
     root, _, policy = release
     policy["mode"] = "supported-upgrades"
+    policy["automatic_sources"] = None
     (root / gate.MANIFEST).write_text(json.dumps(policy))
-    with pytest.raises(gate.GateError, match="matrix disagree"):
+    with pytest.raises(gate.GateError, match="nonempty matrix"):
         gate.load_policy(root)
 
 
@@ -130,17 +139,16 @@ def test_schema_owners_outside_persistence_need_compatibility_review(release, re
 
 
 def supported_case(root, policy):
-    suite = root / "tests/release_upgrades/test_example.py"
-    suite.parent.mkdir(parents=True)
-    suite.write_text("# This fixture is only used to exercise gate failures.\n")
     policy["mode"] = "supported-upgrades"
+    policy["automatic_sources"] = None
     policy["cases"] = [
         {
             "source_version": "1.3.0",
-            "backend": "sqlite",
+            "backend": backend,
             "configuration": "full-server",
-            "suite": suite.relative_to(root).as_posix(),
+            "suite": "tests/release_upgrades/test_example.py",
         }
+        for backend in ("sqlite", "seekdb", "oceanbase")
     ]
     (root / gate.MANIFEST).write_text(json.dumps(policy))
     gate.check_docs(root, policy, write=True)
@@ -157,9 +165,12 @@ def test_any_upgrade_stage_failure_blocks_release_and_records_failure(release, m
         raise gate.GateError(blocker)
 
     monkeypatch.setattr(gate, "run_case", fail)
-    with pytest.raises(gate.GateError, match=blocker):
+    with pytest.raises(gate.GateError, match="Required upgrade acceptance failed"):
         gate.gate(root, wheel, root / "evidence")
-    assert json.loads((root / "evidence/result.json").read_text())["status"] == "failed"
+    evidence = json.loads((root / "evidence/result.json").read_text())
+    assert evidence["status"] == "failed"
+    assert len(evidence["cases"]) == 3
+    assert all(case["status"] == "failed" and blocker in case["error"] for case in evidence["cases"])
 
 
 def test_missing_suite_cannot_be_advertised(release):
@@ -240,7 +251,11 @@ def automatic_policy(policy):
         "strategy": "fixed-version",
         "source_version": "1.3.0",
         "profiles": [
-            {"backend": backend, "configuration": "full-server-no-vector", "suite": None}
+            {
+                "backend": backend,
+                "configuration": "full-server-no-vector",
+                "suite": "tests/release_upgrades/test_example.py",
+            }
             for backend in ("sqlite", "seekdb", "oceanbase")
         ],
     }
@@ -257,7 +272,7 @@ def test_fixed_source_tracks_each_target_on_all_three_backends(release, monkeypa
     assert [(case["source_version"], case["backend"]) for case in resolved["candidate_cases"]] == [
         ("1.3.0", backend) for backend in ("sqlite", "seekdb", "oceanbase")
     ]
-    assert resolved["required_cases"] == []  # Candidate selection does not establish upgrade support.
+    assert resolved["required_cases"] == resolved["candidate_cases"]
     assert all(case["source_artifact"]["sha256"] == "a" * 64 for case in resolved["candidate_cases"])
 
 
@@ -321,7 +336,7 @@ def test_catalog_outage_records_a_failed_gate(release, monkeypatch):
 def test_switching_to_supported_upgrades_requires_all_backend_suites(release):
     root, _, policy = release
     automatic_policy(policy)
-    policy["mode"] = "supported-upgrades"
+    policy["automatic_sources"]["profiles"][0]["suite"] = None
     (root / gate.MANIFEST).write_text(json.dumps(policy))
     with pytest.raises(gate.GateError, match="every backend profile"):
         gate.load_policy(root)
@@ -383,14 +398,10 @@ def test_upgrade_jobs_require_real_backends_and_always_clean_up(workflow_name, j
         i for i, step in enumerate(steps) if step.get("uses") == "./.github/actions/setup-upgrade-oceanbase"
     )
     gate_index = next(i for i, step in enumerate(steps) if "run_upgrade_release_gate.py" in step.get("run", ""))
-    regression_index = next(
-        i for i, step in enumerate(steps) if "ci_legacy_upgrade_rejection.py" in step.get("run", "")
-    )
-    assert setup_index < gate_index < regression_index
-    for index in (setup_index, gate_index, regression_index):
+    assert setup_index < gate_index
+    for index in (setup_index, gate_index):
         assert "if" not in steps[index] and not steps[index].get("continue-on-error")
-    assert "for backend in sqlite seekdb oceanbase; do" in steps[regression_index]["run"]
-    assert "--respect-policy" in steps[regression_index]["run"]
+    assert not any("ci_legacy_upgrade_rejection.py" in step.get("run", "") for step in steps)
     assert "/pc_upgrade_test?" in job["env"]["PC_UPGRADE_OCEANBASE_URL"]
     assert "/pc_upgrade_fresh?" in job["env"]["PC_UPGRADE_OCEANBASE_FRESH_URL"]
     cleanup = next(step for step in steps if "docker rm --force upgrade-oceanbase" in step.get("run", ""))
@@ -407,3 +418,40 @@ def test_oceanbase_fixture_selects_the_oceanbase_server_profile(tmp_path, monkey
     settings = ServerSettings()
     assert settings.database.kind == "oceanbase"
     assert settings.database.url.get_secret_value() == url
+
+
+@pytest.mark.parametrize("mode", ["fresh-install-only", "upgrade-required", "supported-upgrades"])
+def test_declarations_cannot_bypass_missing_backend_or_suite(release, mode):
+    root, _, policy = release
+    policy["mode"] = mode
+    policy["automatic_sources"]["profiles"] = policy["automatic_sources"]["profiles"][:2]
+    (root / gate.MANIFEST).write_text(json.dumps(policy))
+    with pytest.raises(gate.GateError):
+        gate.load_policy(root)
+
+
+def test_fresh_install_only_is_not_an_upgrade_escape_hatch(release):
+    root, _, policy = release
+    policy["mode"] = "fresh-install-only"
+    (root / gate.MANIFEST).write_text(json.dumps(policy))
+    with pytest.raises(gate.GateError, match="mode"):
+        gate.load_policy(root)
+
+
+def test_failed_backend_does_not_skip_other_required_backends(release, monkeypatch):
+    root, wheel, _ = release
+    executed = []
+
+    def execute(_root, _wheel, case, _output):
+        executed.append(case["backend"])
+        if case["backend"] == "sqlite":
+            raise gate.GateError("migration_required")
+        return {"case": case, "status": "passed"}
+
+    monkeypatch.setattr(gate, "run_case", execute)
+    with pytest.raises(gate.GateError, match="failed: sqlite"):
+        gate.gate(root, wheel, root / "evidence")
+    assert executed == ["sqlite", "seekdb", "oceanbase"]
+    result = json.loads((root / "evidence/result.json").read_text())
+    assert result["status"] == "failed"
+    assert [case["status"] for case in result["cases"]] == ["failed", "passed", "passed"]
