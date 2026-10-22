@@ -14,6 +14,7 @@
 
 """Registered Server 1.3 maintenance and live readiness requirements."""
 
+import hashlib
 import json
 import runpy
 from pathlib import Path
@@ -54,6 +55,7 @@ def preflight(connection, *, configuration):
     # collection data needs its separately declared conversion, never a stamp.
     finish(assert_atomic_memory_migration_ready(pinned(connection)))
     if "pc_artifact_candidate_versions" in names:
+        _validate_intent_bindings(connection)
         module = dream()
         try:
             module["validate_dream_tasks"](connection)
@@ -138,11 +140,9 @@ def validate(connection, *, configuration):
     )
     if actual != expected:
         raise MigrationError("projection_migration_required", "The registered search projections are not current.")
-    manifest = json.loads(
-        connection.exec_driver_sql(
-            "SELECT config_manifest FROM pc_artifact_processing_schema WHERE singleton=1"
-        ).scalar_one()
-    )
+    frozen = dream()
+    manifest = frozen["_processing_manifest"](connection, frozen["_schema"](), upgraded=True)
+    _validate_intent_bindings(connection)
     target = configuration.get("processing_manifest")
     if target and any(manifest[key] != target[key] for key in ("bindings", "mode", "capabilities")):
         raise MigrationError(
@@ -150,8 +150,18 @@ def validate(connection, *, configuration):
         )
     from powercontext.builtin.persistence.dream import DreamRepository
 
-    for scope, run in connection.exec_driver_sql("SELECT scope_id,run_id FROM pc_dream_runs"):
-        finish(DreamRepository().get(pinned(connection), scope, run))
+    for row in connection.exec_driver_sql(
+        "SELECT scope_id,run_id,status,operation,generation,request_generation,principal_key,idempotency_key FROM pc_dream_runs"
+    ).mappings():
+        record = finish(DreamRepository().get(pinned(connection), row["scope_id"], row["run_id"]))
+        if (
+            any(getattr(record.run, key) != row[key] for key in ("scope_id", "run_id", "status", "operation"))
+            or record.generation != row["generation"]
+            or record.request_generation != row["request_generation"]
+            or hashlib.sha256(record.principal_id.encode()).hexdigest() != row["principal_key"]
+            or (record.request is not None and record.request.idempotency_key != row["idempotency_key"])
+        ):
+            raise MigrationError("unsupported_task_format", "A Dream payload disagrees with its durable task identity.")
     from powercontext.builtin.persistence.processing_intents import ArtifactProcessingIntentRepository
 
     for scope, binding in connection.exec_driver_sql(
@@ -217,3 +227,14 @@ def _validate_sqlite_fts(connection):
                 raise MigrationError(
                     "projection_verification_failed", "A full-text helper differs from its authoritative current rows."
                 )
+
+
+def _validate_intent_bindings(connection):
+    manifest = json.loads(
+        connection.exec_driver_sql(
+            "SELECT config_manifest FROM pc_artifact_processing_schema WHERE singleton=1"
+        ).scalar_one()
+    )
+    for (binding,) in connection.exec_driver_sql("SELECT DISTINCT binding_name FROM pc_artifact_processing_intents"):
+        if binding not in manifest["bindings"]:
+            raise MigrationError("unsupported_task_format", "A pending Processing intent has no registered binding.")

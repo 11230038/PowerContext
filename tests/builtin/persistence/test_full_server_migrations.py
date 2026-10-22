@@ -205,3 +205,15 @@ def test_captured_oceanbase_baseline_preserves_ordered_audit_cursor():
     changed["tables"]["pc_access_audit"]["auto_increment_mode"] = "noorder"
     with pytest.raises(MigrationError, match="incompatible_schema"):
         schema.identify(changed)
+
+
+def test_unregistered_processing_intent_blocks_before_any_upgrade(source):
+    with closing(sqlite3.connect(source.database)) as connection, connection:
+        connection.execute(
+            "INSERT INTO pc_artifact_processing_intents (binding_name,scope_id,pending_sequence,dirty_generation,clean_generation,requested_generation,handled_generation,last_auto_scan_generation) VALUES ('unknown-handler','scope',1,0,0,1,0,0)"
+        )
+    before = dump(source.database)
+    with pytest.raises(MigrationError, match="unsupported_task_format"):
+        source.plan()
+    assert dump(source.database) == before
+    assert not source.evidence_path.exists()

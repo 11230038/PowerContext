@@ -4,9 +4,9 @@
   "migration_rfc": 1771,
   "framework_implementation_pr": 1772,
   "registration": {
-    "state": "awaiting_full_database_bundle",
-    "revision": null,
-    "down_revision": null,
+    "state": "registered",
+    "revision": "s1400",
+    "down_revision": "s1300",
     "server_ready": false
   },
   "execution_mode": "maintenance",
@@ -55,8 +55,8 @@
     ],
     "deprecation_policy": "Explicit direct-removal exception in RFC 1715; coordinated client upgrade",
     "aliases": false,
-    "removal_release": null,
-    "minimum_client_version": null
+    "removal_release": "1.4.0",
+    "minimum_client_version": "1.4.0"
   },
   "task_formats": {
     "dream_runs": {
@@ -78,7 +78,7 @@
       "frozen_execution": "Never rewrite prompt/model identity, started_at, deadline_at, retry counters or failure outcomes"
     },
     "processing_intents": "Preserve all fields; initialize consecutive_dream_attempts to zero",
-    "other_queues_and_leases": "Full framework inventory must validate, convert or drain before registration",
+    "other_queues_and_leases": "Full Server preflight validates registered Processing bindings and counters; the revision fences the shared processing lease. Other historical schemas and optional feature queues are not adopted.",
     "processing_manifest": "Require the target deployment manifest; preserve explicit capabilities, ownership mode and historical automatic bindings; add canonical Handoff/Prompt bindings; allow only declared Handoff/Prompt capability additions and reject incompatible targets before writes"
   },
   "framework_requirements": [

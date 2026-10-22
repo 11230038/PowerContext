@@ -18,7 +18,7 @@ description: 了解数据库迁移命令、备份策略、服务启停及当前�
 
 升级前必须停止所有写入者并排空 1.3.0 中 queued/running Dream 任务；新版不能执行旧提示词契约。终态任务保留原始 payload，待处理 Processing intent 的计数保留，旧 worker lease 被 fencing。迁移按登记规则扩展处理能力，保留原有自动处理选择，不根据当前配置覆盖旧所有权。
 
-Candidate 旧表保留为 `pc_legacy_artifact_candidate_heads` 和 `pc_legacy_artifact_candidate_versions`，用于迁移当次的复制验证。它们与迁移备份都不是线上写入目标；升级后的正常修改不再与旧快照比较。历史 Artifact 新增的来源时间/操作者字段保持未知，Source evidence 不凭历史引用虚构声明。投影重建和数据校验会扫描相关表；请为停机时间、备份与保留副本安排容量。
+Candidate 旧表保留为 `pc_retained_dream_candidate_heads` 和 `pc_retained_dream_candidate_versions`，用于迁移当次的复制验证。它们与迁移备份都不是线上写入目标；升级后的正常修改不再与旧快照比较。历史 Artifact 新增的来源时间/操作者字段保持未知，Source evidence 不凭历史引用虚构声明。投影重建和数据校验会扫描相关表；请为停机时间、备份与保留副本安排容量。
 
 普通 Server 启动先做只读就绪检查，不修补已有库。空的本地持久 SQLite/seekDB 可通过同一版本链初始化；OceanBase 必须先执行显式维护命令初始化。内存 SQLite 仍为临时运行时存储。迁移后发现结构或投影被篡改，必须停写维护，不能靠重启修复。
 
