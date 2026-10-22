@@ -3,7 +3,7 @@
   "target_version": "1.4.0",
   "mode": "upgrade-required",
   "schema_review": {
-    "persistence_sha256": "ffb5fbbc6940414a73fc30309b076dd338858a9cae0484ec5cb2c43799b58b61",
+    "persistence_sha256": "6f40d86cb0d3897271ddf0d37a45a2f6079b7a20dd94be9dcc8a444ec3bde667",
     "rationale": "Register the complete 1.3.0 no-vector, Code-disabled Server chain on all three backends, preserving history, existing Source references and pending intents with projection rebuilds and read-only startup admission. Publication requires installed-release upgrade, repeat-apply, old-startup rejection, background Worker execution and fresh-schema equivalence. Optional vector/Code and older Memory layouts need separately registered profiles."
   },
   "cases": [],
