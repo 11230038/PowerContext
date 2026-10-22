@@ -67,6 +67,14 @@ class MigrationBundle:
         self.revisions = tuple(item.revision for item in revisions)
         self.head = self.revisions[-1]
         manifest = json.loads(resources["manifest.json"])
+        mysql_layouts = manifest.get("mysql_layouts", [])
+        if (
+            not isinstance(mysql_layouts, list)
+            or any(not isinstance(name, str) or name not in resources for name in mysql_layouts)
+            or len(set(mysql_layouts)) != len(mysql_layouts)
+        ):
+            raise MigrationError("invalid_bundle", "MySQL layout registration is outside the frozen bundle.")
+        self.mysql_layouts: tuple[str, ...] = tuple(mysql_layouts)
         self.affected_objects = tuple(manifest.get("affected_objects", ()))
         self.retained_objects = tuple(manifest.get("retained_objects", ()))
         self.retained_fingerprints = manifest.get("retained_fingerprints", {})

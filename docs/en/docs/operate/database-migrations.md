@@ -19,6 +19,11 @@ The default `--bundle artifacts` ships frozen resources for Phase A acceptance o
 `pc_artifact_candidate_versions`, and `pc_artifact_tags`. Only empty targets and registered historical layouts are accepted.
 A complete Server database containing unmanaged objects is rejected.
 
+The complete SQLite schema captured from the installed public 1.3.0 wheel is recognized separately, including its FTS
+shadow tables, indexes, and triggers. Maintenance reports `server_migration_unavailable` for this source because a complete
+Server upgrade path is not registered. Recognition does not stamp a revision, validate domain data, or authorize writes.
+Other complete schemas remain unknown unless their exact shape is registered.
+
 `ready` means this migration bundle passed its schema and data checks. Output explicitly includes
 `readiness_scope=registered_bundle` and `server_ready=false`: it does not establish complete Server, index, legacy-task, or
 cluster readiness. Do not substitute it for a production upgrade or initialization of the complete business database.
@@ -344,9 +349,23 @@ weaken coordination and continue. These locks do not stop business writers.
 seekdb/OceanBase DDL may commit implicitly, so one Python transaction cannot make the entire upgrade atomic. Recovery
 recognizes only the registered sequence: `p0001` creates the four frozen tables and two indexes; `p0002` adds the two
 nullable `MEDIUMBLOB` citation columns; `p0003` removes the tag-family CHECK. Actual schema, data checks, and persisted
-maintenance evidence must establish the known completed prefix before continuing. Alembic advances the version only
+maintenance evidence must establish the known completed prefix before continuing. `p0004` adds exact-revision Artifact
+handles; `p0005` adds Source evidence storage without attesting historical content. Alembic advances the version only
 after the revision's postconditions pass. Unknown objects, layouts, or partial transitions block execution instead of
 being optimistically stamped.
+
+MySQL schema steps are registered in frozen layout fragments selected by the `mysql_layouts` list in `manifest.json`.
+The fragments together must cover exactly the Alembic chain, without duplicate declarations. New revisions append
+immutable fragments and declare their files in `revision_resources`; they do not edit previously released fragments.
+Optional checkpoints compare the accumulated steps with independently
+frozen complete layouts. Reflection, next-revision prefix recovery, and version-table validation use that same registered
+chain; adding a revision does not require changing a second version list in the recognizer. These schema registrations
+do not replace domain conversions, compatibility checks, or full Server readiness.
+
+The reviewed plan binds the registration through the complete bundle checksum. Active maintenance requires the same
+bundle for retry. Released revision resources and their recorded checksums remain immutable.
+Parameter-free DDL uses statement-scoped driver execution options so CHECK remainder operators and percent-containing
+SQL literals reach the backend unchanged.
 
 Repositories run after schema checks. Versioned resources and controlled rebuilds for complete business full-text/vector
 indexes, plus legacy-task readiness, remain outside this acceptance bundle.

@@ -416,7 +416,7 @@ class MySQLMigrationRunner:
                 raise MigrationError("recovery_required", "The stored intent does not match the schema transition.")
             for statement in recovery.pending_statements:
                 guard()
-                connection.exec_driver_sql(statement)
+                connection.exec_driver_sql(statement, execution_options={"no_parameters": True})
                 # DDL may already have committed; rollback cannot undo it.
                 guard()
                 self.schema.recovery(mysql_inventory(connection), source)
@@ -456,7 +456,11 @@ class MySQLMigrationRunner:
         inventory = (
             mysql_inventory(connection) if connection is not None else {"tables": {}, "views": [], "triggers": []}
         )
-        initialized, current = read_revision(connection, inventory) if connection is not None else (False, None)
+        initialized, current = (
+            read_revision(connection, inventory, revisions=self.bundle.revisions)
+            if connection is not None
+            else (False, None)
+        )
         self._validate_evidence(evidence)
         current, adopt = self._recognize_source(inventory, initialized, current, evidence)
         if initialized and self.bundle.pending(current) and evidence is None:

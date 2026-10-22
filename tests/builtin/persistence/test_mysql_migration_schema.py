@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -26,9 +27,10 @@ from typing import Any, cast
 import pytest
 from sqlalchemy import Connection, create_engine
 
-from powercontext.builtin.persistence.migrations.bundle import MigrationBundle
+from powercontext.builtin.persistence.migrations import SQLiteMigrationRunner
+from powercontext.builtin.persistence.migrations.bundle import MigrationBundle, sqlite_inventory
 from powercontext.builtin.persistence.migrations.connections import MaintenanceConnections
-from powercontext.builtin.persistence.migrations.models import MigrationError
+from powercontext.builtin.persistence.migrations.models import MigrationError, digest
 from powercontext.builtin.persistence.migrations.mysql_schema import MySQLSchema, mysql_inventory, read_revision
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
 
@@ -85,6 +87,108 @@ class _ReflectedDatabase:
 @pytest.fixture
 def schema() -> MySQLSchema:
     return MySQLSchema(MigrationBundle(_RESOURCES))
+
+
+_NEXT_TABLE = "CREATE TABLE pc_extension_marker (id INTEGER NOT NULL, PRIMARY KEY (id))"
+
+
+@pytest.fixture
+def extended_bundle(tmp_path: Path) -> MigrationBundle:
+    directory = tmp_path / "bundle"
+    shutil.copytree(_RESOURCES, directory)
+    database = tmp_path / "fingerprint.db"
+    runner = SQLiteMigrationRunner(database, MigrationBundle(_RESOURCES))
+    runner.apply(plan_id=runner.plan().plan_id, accepted=True, maintenance_confirmed=True)
+    engine = create_engine("sqlite:///" + str(database))
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(_NEXT_TABLE)
+            fingerprint = digest(
+                sqlite_inventory(connection, exclude=frozenset({"pc_schema_revision", *runner.bundle.retained_objects}))
+            )
+    finally:
+        engine.dispose()
+    manifest_path = directory / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["revision_resources"]["fixture_next"] = ["mysql_fixture_next.json"]
+    manifest["sqlite_fingerprints"]["fixture_next"] = [fingerprint]
+    manifest["mysql_layouts"].append("mysql_fixture_next.json")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    (directory / "mysql_fixture_next.json").write_text(
+        json.dumps({
+            "format": "powercontext.mysql-layouts.v1",
+            "revisions": {"fixture_next": [_NEXT_TABLE]},
+            "checkpoints": {},
+        }),
+        encoding="utf-8",
+    )
+    (directory / "versions/fixture_next.py").write_text(
+        "from alembic import op\n"
+        "revision = 'fixture_next'\n"
+        "down_revision = 'p0005'\n"
+        f"def upgrade():\n    op.execute({_NEXT_TABLE!r})\n",
+        encoding="utf-8",
+    )
+    return MigrationBundle(directory)
+
+
+def test_registered_next_revision_uses_the_same_recognition_and_sqlite_executor(
+    tmp_path: Path, extended_bundle: MigrationBundle
+) -> None:
+    schema = MySQLSchema(extended_bundle)
+    layouts = json.loads((extended_bundle.snapshot_directory / "mysql_layouts.json").read_text())
+    tables = _show_tables(citations=2, drop_family_check=True)
+    for revision in ("p0004", "p0005"):
+        for statement in layouts["revisions"][revision]:
+            tables[statement.split()[2]] = statement
+    source = _ReflectedDatabase(tables)
+    inventory = _inventory(source)
+    assert schema.identify(inventory) == "p0005"
+    recovery = schema.recovery(inventory, "p0005")
+    assert recovery.revision == "fixture_next"
+    assert recovery.pending_statements == (_NEXT_TABLE,)
+    source.tables["pc_extension_marker"] = _NEXT_TABLE
+    inventory = _inventory(source)
+    assert schema.identify(inventory) == "fixture_next"
+    schema.verify(inventory, "fixture_next")
+    assert schema.recovery(inventory, "p0005").completed_revision == "fixture_next"
+    assert extended_bundle.pending("p0003") == ("p0004", "p0005", "fixture_next")
+    source.tables["pc_schema_revision"] = (
+        "CREATE TABLE pc_schema_revision (version_num VARCHAR(32) NOT NULL, PRIMARY KEY (version_num))"
+    )
+    source.heads = ["fixture_next"]
+    assert read_revision(cast(Connection, source), _inventory(source), revisions=extended_bundle.revisions) == (
+        True,
+        "fixture_next",
+    )
+
+    runner = SQLiteMigrationRunner(tmp_path / "adjacent.db", MigrationBundle(_RESOURCES))
+    runner.apply(plan_id=runner.plan().plan_id, accepted=True, maintenance_confirmed=True)
+    adjacent = SQLiteMigrationRunner(runner.database, extended_bundle)
+    plan = adjacent.plan()
+    assert plan.revisions == ("fixture_next",)
+    adjacent.apply(plan_id=plan.plan_id, accepted=True, maintenance_confirmed=True)
+    direct = SQLiteMigrationRunner(tmp_path / "direct.db", extended_bundle)
+    direct.apply(plan_id=direct.plan().plan_id, accepted=True, maintenance_confirmed=True)
+    assert adjacent.verify().revision == direct.verify().revision == "fixture_next"
+    assert adjacent.plan().schema_fingerprint == direct.plan().schema_fingerprint
+
+
+@pytest.mark.parametrize("change", ["missing", "unregistered", "duplicate"])
+def test_mysql_layout_registration_must_cover_exactly_the_revision_chain(
+    extended_bundle: MigrationBundle, change: str
+) -> None:
+    path = extended_bundle.directory / "mysql_fixture_next.json"
+    layouts = json.loads(path.read_text())
+    if change == "missing":
+        del layouts["revisions"]["fixture_next"]
+    elif change == "unregistered":
+        layouts["revisions"]["unregistered"] = []
+    else:
+        layouts["revisions"]["p0001"] = []
+    path.write_text(json.dumps(layouts), encoding="utf-8")
+    with pytest.raises(MigrationError, match="invalid_bundle"):
+        MySQLSchema(MigrationBundle(extended_bundle.directory))
 
 
 def _append_clause(statement: str, clause: str) -> str:
@@ -268,28 +372,34 @@ def test_unknown_objects_or_changed_integrity_constraints_cannot_be_adopted(sche
 
 def test_version_table_is_validated_before_reading_and_is_not_a_business_table(schema: MySQLSchema) -> None:
     database = _ReflectedDatabase(_show_tables())
-    assert read_revision(cast(Connection, database), _inventory(database)) == (False, None)
+    assert read_revision(cast(Connection, database), _inventory(database), revisions=schema.bundle.revisions) == (
+        False,
+        None,
+    )
     database.tables["pc_schema_revision"] = (
         "CREATE TABLE pc_schema_revision (version_num VARCHAR(32) NOT NULL, "
         "CONSTRAINT pc_schema_revision_pkc PRIMARY KEY (version_num)\n)"
     )
-    assert read_revision(cast(Connection, database), _inventory(database)) == (True, None)
+    assert read_revision(cast(Connection, database), _inventory(database), revisions=schema.bundle.revisions) == (
+        True,
+        None,
+    )
     database.heads = ["p0001"]
     inventory = _inventory(database)
-    assert read_revision(cast(Connection, database), inventory) == (True, "p0001")
+    assert read_revision(cast(Connection, database), inventory, revisions=schema.bundle.revisions) == (True, "p0001")
     assert schema.identify(inventory) == "p0001"
     schema.verify(inventory, "p0001")
     database.heads = ["p0001", "p0002"]
     with pytest.raises(MigrationError, match="multiple or unknown"):
-        read_revision(cast(Connection, database), inventory)
+        read_revision(cast(Connection, database), inventory, revisions=schema.bundle.revisions)
     database.heads = ["unknown"]
     with pytest.raises(MigrationError, match="multiple or unknown"):
-        read_revision(cast(Connection, database), inventory)
+        read_revision(cast(Connection, database), inventory, revisions=schema.bundle.revisions)
     database.tables["pc_schema_revision"] = _append_clause(
         database.tables["pc_schema_revision"], "KEY unexpected (version_num)"
     )
     with pytest.raises(MigrationError, match="version table"):
-        read_revision(cast(Connection, database), _inventory(database))
+        read_revision(cast(Connection, database), _inventory(database), revisions=schema.bundle.revisions)
 
 
 @pytest.mark.parametrize("violation", ["foreign_key", "check"])
@@ -317,13 +427,16 @@ def test_real_seekdb_frozen_schema_reflection_and_revision_recovery(short_tmp_pa
 
     def migrate(connection, _identity, guard) -> None:
         assert connection is not None
-        assert read_revision(connection, mysql_inventory(connection)) == (False, None)
+        assert read_revision(connection, mysql_inventory(connection), revisions=schema.bundle.revisions) == (
+            False,
+            None,
+        )
         connection.exec_driver_sql(
             "CREATE TABLE pc_schema_revision (version_num VARCHAR(32) NOT NULL, "
             "CONSTRAINT pc_schema_revision_pkc PRIMARY KEY (version_num))"
         )
         connection.commit()
-        assert read_revision(connection, mysql_inventory(connection)) == (True, None)
+        assert read_revision(connection, mysql_inventory(connection), revisions=schema.bundle.revisions) == (True, None)
         source = None
         for target in ("p0001", "p0002", "p0003"):
             while True:

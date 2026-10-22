@@ -12,6 +12,8 @@ description: 了解数据库迁移命令、备份策略、服务启停及当前�
 
 `powercontext server db-migrate status/plan/apply/verify` 使用部署配置中的持久 SQLite、嵌入式 seekdb 或 OceanBase MySQL 模式数据库，不接受任意测试 bundle 路径。维护命令以显式环境文件为准，应使用部署的环境文件，不依赖临时 shell 环境覆盖。随 wheel 发布的冻结资源用于阶段 A 的 Artifact 四表迁移：`pc_artifacts`、`pc_artifact_heads`、`pc_artifact_candidate_versions`、`pc_artifact_tags`。仅接受空目标和已登记的历史结构；完整 Server 数据库含有尚未纳管的对象时拒绝执行。
 
+维护入口可以单独识别由公开 1.3.0 wheel 实际初始化的完整 SQLite 结构，包括 FTS 影子表、索引和触发器。由于完整 Server 升级路径尚未注册，该来源返回 `server_migration_unavailable`。识别不会登记 revision、验证领域数据或允许写入；其他完整结构仍需登记精确形状。
+
 输出中的 `ready` 仅表示当前迁移 bundle 已通过结构和数据验证；`readiness_scope=registered_bundle`、`server_ready=false` 明确区分它与完整 Server、索引、旧任务及集群可用。不要以此替代生产升级或完整业务库初始化。普通业务启动的全面版本门禁和完整历史基线尚未纳管。已通过 OceanBase AI 4.6.3 的 ODP 入口完成隔离四表验收，覆盖固定维护主机互斥、DDL 提交后中断的显式确认恢复、数据保留与重复执行。这不代表完整 Server 升级、崩溃后远端 DDL 自动判定或完整 Fork 恢复已通过验收。
 
 MySQL 兼容后端的结构反射支持 CHECK 表达式中的二元 `+`、`-`、`*`、`/`、`%`、一元正负号及嵌套括号，并保留算术、比较和布尔运算的优先级。未支持的 CHECK 运算符或函数仍被拒绝，错误会标明反射的表名、约束名及未支持的语法，避免将合法分组误报为括号不匹配。表达式解析成功不代表历史结构已登记，也不会绕过迁移或数据完整性检查。
@@ -216,7 +218,12 @@ powercontext server run --env-file deployment.env --role all
 
 维护执行器复用配置，使用专用连接承载 Alembic；冻结历史 SQL 不依赖当前 Repository 或应用 metadata。seekdb 从启动引擎前到关闭引擎后持有规范化目录的锁。OceanBase 在每条 DDL 前后验证操作系统锁、主机绑定、持久运行记录及维护连接。正常结束时先关闭迁移主连接，才清理运行记录并释放文件锁；引擎随后关闭。执行中断或关闭连接失败均保留记录；后续执行需要准确的旧运行 token，以及 DBA 确认远端执行已结束的人工声明。PC 不从本机进程退出或本地锁可获取推断远端执行结束。锁文件被替换、连接丢失或旧运行未确认时阻止继续。平台不支持原生文件锁时拒绝执行，包括运行时降级为软锁的情况，不重连或静默弱化互斥继续迁移。这些锁不阻止业务写入者。
 
-seekdb／OceanBase DDL 可能隐式提交，不能用 Python 事务承诺整个迁移原子化。恢复只识别已登记顺序：`p0001` 创建冻结四表及两个索引；`p0002` 添加两个可空的 `MEDIUMBLOB` 引用列；`p0003` 删除标签 family 的 CHECK。继续执行前须用实际结构、数据检查和持久维护证据证明已完成的已知前缀；revision 的后置条件通过后才推进 Alembic 版本。未知对象、结构或中间状态拒绝执行，不乐观 stamp。
+seekdb／OceanBase DDL 可能隐式提交，不能用 Python 事务承诺整个迁移原子化。恢复只识别已登记顺序：`p0001` 创建冻结四表及两个索引；`p0002` 添加两个可空的 `MEDIUMBLOB` 引用列；`p0003` 删除标签 family 的 CHECK；`p0004` 添加指向精确 revision 的 Artifact handle；`p0005` 添加 Source 证据存储，不追认历史内容的可信度。继续执行前须用实际结构、数据检查和持久维护证据证明已完成的已知前缀；revision 的后置条件通过后才推进 Alembic 版本。未知对象、结构或中间状态拒绝执行，不乐观 stamp。
+
+MySQL 结构步骤通过冻结的布局片段注册，由 `manifest.json` 的 `mysql_layouts` 列表选择，合起来必须恰好覆盖 Alembic 版本链，且不能重复声明。新增 revision 追加不可改写的片段，并在 `revision_resources` 中声明其文件，不修改已发布片段。可选 checkpoint 将累积步骤与独立冻结的完整结构对照。反射、下一 revision 的已知前缀恢复和版本表校验使用同一注册链；新增 revision 无需修改识别器中的另一份版本列表。这些结构注册不能代替领域转换、兼容性检查或完整 Server readiness。
+
+计划通过完整 bundle 摘要绑定注册资源，未完成维护的重试要求使用同一 bundle。已发布 revision 资源及其记录摘要保持不可改写。
+无参数 DDL 使用单语句驱动选项，确保 CHECK 的取余运算符和 SQL 字面量中的百分号原样到达后端。
 
 Repository 仅在结构满足后运行。完整业务的全文／向量索引版本管理及受控重建、旧任务 readiness 尚未包含在本验收 bundle 中。
 

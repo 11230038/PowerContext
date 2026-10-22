@@ -14,7 +14,7 @@
 
 """Recognize the frozen MySQL layouts without importing application metadata.
 
-Only the reviewed linear p0001--p0005 history is supported. DDL recovery accepts
+Registered resources describe the complete linear history. DDL recovery accepts
 an exact prefix of the next revision, never an arbitrary collection of objects.
 The caller owns maintenance evidence, backup, the pinned database lock and the
 version row; this module never writes or stamps a revision.
@@ -37,20 +37,7 @@ from .models import MigrationError, digest
 _LEXEME = re.compile(
     r"\s+|`(?:``|[^`])*`|'(?:''|\\.|[^'\\])*'|[A-Za-z_][A-Za-z_0-9$]*|[0-9]+|>=|<=|<>|!=|[(),.=<>+*/%\^&|~!?:@-]"
 )
-_REVISIONS = ("p0001", "p0002", "p0003", "p0004", "p0005")
-_CITATION_TABLES = ("pc_artifacts", "pc_artifact_candidate_versions")
-_FAMILY_CHECK = "ck_pc_artifact_tags_family"
 _CONTROL_TABLE = "pc_schema_revision"
-_ARTIFACT_HANDLES_DDL = """CREATE TABLE pc_artifact_handles (
-	scope_id VARCHAR(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
-	family VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
-	handle_key VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
-	artifact_id VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
-	revision INTEGER NOT NULL,
-	PRIMARY KEY (scope_id, family, handle_key),
-	FOREIGN KEY(scope_id, family, artifact_id, revision) REFERENCES pc_artifacts (scope_id, family, artifact_id, revision) ON DELETE RESTRICT,
-	CONSTRAINT ck_pc_artifact_handles_revision_positive CHECK (revision > 0)
-)"""
 _PHYSICAL_VALUES = frozenset({
     "row_format",
     "compression",
@@ -137,13 +124,15 @@ def _reflect_tables(connection: Connection, database: str, exclude: frozenset[st
             inventory["tables"][name] = table
 
 
-def read_revision(connection: Connection, inventory: dict[str, Any]) -> tuple[bool, str | None]:
+def read_revision(
+    connection: Connection, inventory: dict[str, Any], *, revisions: tuple[str, ...]
+) -> tuple[bool, str | None]:
     """Validate Alembic's only control table before reading its zero/one head."""
     _business_inventory(inventory)
     if _CONTROL_TABLE not in inventory["tables"]:
         return False, None
     rows = connection.exec_driver_sql("SELECT version_num FROM pc_schema_revision LIMIT 2").all()
-    if len(rows) > 1 or (rows and rows[0][0] not in _REVISIONS):
+    if len(rows) > 1 or (rows and rows[0][0] not in revisions):
         raise MigrationError("incompatible_schema", "The database has multiple or unknown migration heads.")
     return True, rows[0][0] if rows else None
 
@@ -152,36 +141,52 @@ class MySQLSchema:
     """Validate source, intermediate and post-DDL shapes from frozen resources."""
 
     def __init__(self, bundle: MigrationBundle) -> None:
-        if bundle.revisions != _REVISIONS:
-            raise MigrationError("invalid_bundle", "MySQL schema recognition does not cover this revision chain.")
         self.bundle = bundle
-        baseline = json.loads((bundle.snapshot_directory / "schemas/pre_dream.json").read_text())["mysql"]
-        current = json.loads((bundle.snapshot_directory / "schemas/v1_1_0.json").read_text())["mysql"]
-        evidence = json.loads((bundle.snapshot_directory / "schemas/atomic_memory_evidence_v1.json").read_text())[
-            "mysql"
-        ]
-        self._statements = {
-            "p0001": tuple(baseline),
-            "p0002": tuple(f"ALTER TABLE {table} ADD COLUMN memory_citations MEDIUMBLOB" for table in _CITATION_TABLES),
-            "p0003": (f"ALTER TABLE pc_artifact_tags DROP CHECK {_FAMILY_CHECK}",),
-            "p0004": (_ARTIFACT_HANDLES_DDL,),
-            "p0005": tuple(evidence[:-1]),
-        }
+        if not bundle.mysql_layouts:
+            raise MigrationError("invalid_bundle", "MySQL layout steps are not registered in this bundle.")
+        self._statements: dict[str, tuple[str, ...]] = {}
+        checkpoints: dict[str, str] = {}
+        for resource in bundle.mysql_layouts:
+            layouts = json.loads((bundle.snapshot_directory / resource).read_text(encoding="utf-8"))
+            if (
+                not isinstance(layouts, dict)
+                or layouts.get("format") != "powercontext.mysql-layouts.v1"
+                or not isinstance(layouts.get("revisions"), dict)
+                or not isinstance(layouts.get("checkpoints"), dict)
+                or set(layouts["revisions"]) & self._statements.keys()
+                or set(layouts["checkpoints"]) & checkpoints.keys()
+                or any(
+                    not isinstance(steps, list) or any(not isinstance(step, str) or not step.strip() for step in steps)
+                    for steps in layouts["revisions"].values()
+                )
+                or any(
+                    not isinstance(name, str) or name not in bundle.resources
+                    for name in layouts["checkpoints"].values()
+                )
+            ):
+                raise MigrationError("invalid_bundle", "MySQL layout registration is invalid or duplicated.")
+            self._statements.update({revision: tuple(steps) for revision, steps in layouts["revisions"].items()})
+            checkpoints.update(layouts["checkpoints"])
+        if set(self._statements) != set(bundle.revisions) or not set(checkpoints) <= set(bundle.revisions):
+            raise MigrationError("invalid_bundle", "MySQL layout registration does not cover the revision chain.")
         inventory = _empty_inventory()
         self._prefixes: dict[str, list[dict[str, Any]]] = {}
         self._schemas: dict[str, dict[str, Any]] = {}
-        for revision in _REVISIONS:
+        for revision in bundle.revisions:
             prefixes = [copy.deepcopy(inventory)]
             for statement in self._statements[revision]:
                 _apply_statement(inventory, statement)
                 prefixes.append(copy.deepcopy(inventory))
             self._prefixes[revision] = prefixes
             self._schemas[revision] = copy.deepcopy(inventory)
-        frozen_current = _empty_inventory()
-        for statement in current:
-            _apply_statement(frozen_current, statement)
-        if frozen_current != self._schemas["p0004"]:
-            raise MigrationError("invalid_bundle", "Frozen MySQL layouts disagree with the registered revision steps.")
+        for revision, resource in checkpoints.items():
+            frozen = _empty_inventory()
+            for statement in json.loads((bundle.snapshot_directory / resource).read_text(encoding="utf-8"))["mysql"]:
+                _apply_statement(frozen, statement)
+            if frozen != self._schemas[revision]:
+                raise MigrationError(
+                    "invalid_bundle", "Frozen MySQL layouts disagree with the registered revision steps."
+                )
 
     @staticmethod
     def fingerprint(inventory: dict[str, Any]) -> str:
@@ -211,12 +216,10 @@ class MySQLSchema:
         for advancing the version row, and is not itself recovery authorization.
         """
         inventory = _business_inventory(inventory)
-        if revision is None:
-            target = _REVISIONS[0]
-        elif revision not in _REVISIONS or revision == _REVISIONS[-1]:
+        pending = self.bundle.pending(revision)
+        if not pending:
             raise MigrationError("incompatible_schema", "There is no registered next MySQL revision to recover.")
-        else:
-            target = _REVISIONS[_REVISIONS.index(revision) + 1]
+        target = pending[0]
         for position, expected in enumerate(self._prefixes[target]):
             if _matches(inventory, expected):
                 return MySQLRecovery(target, self._statements[target][position:])
