@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import sqlite3
 from pathlib import Path
@@ -25,7 +26,10 @@ from sqlalchemy import create_engine
 
 from powercontext.builtin.persistence.migrations import MigrationError, SQLiteMigrationRunner
 from powercontext.builtin.persistence.migrations.deployment import production_bundle
-from powercontext.builtin.persistence.migrations.server_baselines import recognize_sqlite_server_baseline
+from powercontext.builtin.persistence.migrations.server_baselines import (
+    recognize_mysql_server_baseline,
+    recognize_sqlite_server_baseline,
+)
 
 RESOURCE = (
     Path(__file__).resolve().parents[3]
@@ -124,3 +128,48 @@ def test_weakened_constraint_with_identical_columns_is_not_recognized(released_d
     before = released_database.read_bytes()
     assert recognize(released_database) is None
     assert released_database.read_bytes() == before
+
+
+def test_complete_seekdb_release_inventory_is_recognized_only_for_its_captured_backend() -> None:
+    resource = json.loads(RESOURCE.with_name("seekdb.json").read_text(encoding="utf-8"))
+    inventory = resource["inventory"]
+    before = copy.deepcopy(inventory)
+    baseline = recognize_mysql_server_baseline(inventory, backend="seekdb")
+    assert baseline is not None
+    assert baseline.release == "1.3.0"
+    assert baseline.schema_fingerprint == resource["schema_fingerprint"]
+    assert recognize_mysql_server_baseline(inventory, backend="oceanbase") is None
+    assert inventory == before
+
+
+@pytest.mark.parametrize(
+    "change", ["table", "control", "column", "constraint", "index", "parser", "properties", "view", "trigger", "subset"]
+)
+def test_incomplete_or_altered_seekdb_inventories_are_not_released_baselines(change: str) -> None:
+    inventory = json.loads(RESOURCE.with_name("seekdb.json").read_text(encoding="utf-8"))["inventory"]
+    table = inventory["tables"]["pc_artifact_heads"]
+    if change == "table":
+        del inventory["tables"]["pc_sources"]
+    elif change == "control":
+        inventory["tables"]["pc_schema_revision"] = {}
+    elif change == "column":
+        table["columns"]["revision"]["nullable"] = True
+    elif change == "constraint":
+        table["checks"]["ck_pc_artifact_heads_revision_positive"]["enforced"] = False
+    elif change == "index":
+        del table["indexes"]["ix_pc_artifact_heads_fts"]
+    elif change == "parser":
+        table["indexes"]["ix_pc_artifact_heads_fts"]["parser"] = "ngram"
+    elif change == "properties":
+        table["indexes"]["ix_pc_artifact_heads_fts"]["parser_properties"]["min_token_size"] = 4
+    elif change == "view":
+        inventory["views"] = ["unknown_view"]
+    elif change == "trigger":
+        inventory["triggers"] = [{"Trigger": "unknown_trigger", "Table": "pc_artifacts"}]
+    else:
+        inventory["tables"] = {
+            name: shape for name, shape in inventory["tables"].items() if name.startswith("pc_artifact")
+        }
+    before = copy.deepcopy(inventory)
+    assert recognize_mysql_server_baseline(inventory, backend="seekdb") is None
+    assert inventory == before

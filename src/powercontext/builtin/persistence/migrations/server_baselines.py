@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Literal
 
 from sqlalchemy import Connection
 
@@ -42,13 +43,27 @@ def recognize_sqlite_server_baseline(connection: Connection) -> ServerBaseline |
     No objects are excluded: in particular, an existing control table cannot be
     ignored to stamp a partially migrated database as a released source.
     """
-    fingerprint = digest(sqlite_inventory(connection))
+    return _recognize(digest(sqlite_inventory(connection)), backend="sqlite")
+
+
+def recognize_mysql_server_baseline(
+    inventory: dict[str, Any], *, backend: Literal["seekdb", "oceanbase"]
+) -> ServerBaseline | None:
+    """Match a complete native inventory against captures of the same backend.
+
+    FULLTEXT parser configuration participates in the fingerprint. A capture
+    from embedded seekDB does not establish an OceanBase source baseline.
+    """
+    return _recognize(digest(inventory), backend=backend)
+
+
+def _recognize(fingerprint: str, *, backend: Literal["sqlite", "seekdb", "oceanbase"]) -> ServerBaseline | None:
     matches: list[ServerBaseline] = []
-    for path in sorted(_BASELINES.glob("*/sqlite.json")):
+    for path in sorted(_BASELINES.glob(f"*/{backend}.json")):
         source = json.loads(path.read_text(encoding="utf-8"))
         if (
             source["format"] != "powercontext.server-baseline.v1"
-            or source["backend"] != "sqlite"
+            or source["backend"] != backend
             or source["release"] != path.parent.name
             or digest(source["inventory"]) != source["schema_fingerprint"]
         ):

@@ -226,6 +226,69 @@ def _inventory(database: _ReflectedDatabase) -> dict[str, Any]:
     return mysql_inventory(cast(Connection, database))
 
 
+def _released_fulltext_tables() -> dict[str, str]:
+    path = Path(__file__).parents[2] / "fixtures/database_migrations/schemas/seekdb_v1_3_0_fulltext.json"
+    tables = json.loads(path.read_text(encoding="utf-8"))["tables"]
+    return {name: ddl.replace("`test`.", "`TestDB`.") for name, ddl in tables.items()}
+
+
+def test_released_fulltext_keys_preserve_search_semantics_in_the_inventory() -> None:
+    inventory = _inventory(_ReflectedDatabase(_released_fulltext_tables()))
+    for name, table in inventory["tables"].items():
+        assert "fulltext" not in table["columns"]
+        assert table["indexes"][f"ix_{name}_fts"] == {
+            "columns": [["searchable_text", None, "asc"]],
+            "unique": False,
+            "kind": "fulltext",
+            "parser": "space",
+            "parser_properties": {"min_token_size": 3, "max_token_size": 84},
+        }
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("WITH PARSER space", "WITH PARSER ngram"),
+        ("min_token_size=3", "min_token_size=4"),
+        ("max_token_size=84", "max_token_size=80"),
+        ("ix_pc_artifact_heads_fts", "ix_other_fts"),
+    ],
+)
+def test_fulltext_semantic_changes_have_distinct_fingerprints(old: str, new: str) -> None:
+    tables = _released_fulltext_tables()
+    original = digest(_inventory(_ReflectedDatabase(tables)))
+    tables["pc_artifact_heads"] = tables["pc_artifact_heads"].replace(old, new)
+    assert digest(_inventory(_ReflectedDatabase(tables))) != original
+
+
+@pytest.mark.parametrize(
+    "properties",
+    [
+        "unknown_option=3,max_token_size=84",
+        "min_token_size='3',max_token_size=84",
+        "min_token_size=3,min_token_size=4",
+        "min_token_size=3+1,max_token_size=84",
+    ],
+)
+def test_fulltext_unknown_parser_properties_are_rejected(properties: str) -> None:
+    tables = _released_fulltext_tables()
+    tables["pc_artifact_heads"] = tables["pc_artifact_heads"].replace("min_token_size=3,max_token_size=84", properties)
+    with pytest.raises(MigrationError, match="incompatible_schema"):
+        _inventory(_ReflectedDatabase(tables))
+
+
+def test_fulltext_key_cannot_be_hidden_as_an_automatic_foreign_key_index(schema: MySQLSchema) -> None:
+    tables = _show_tables()
+    tables["pc_artifact_heads"] = _append_clause(
+        tables["pc_artifact_heads"],
+        "FULLTEXT KEY extra_search (scope_id, family, artifact_id, revision)",
+    )
+    inventory = _inventory(_ReflectedDatabase(tables))
+    assert inventory["tables"]["pc_artifact_heads"]["indexes"]["extra_search"]["kind"] == "fulltext"
+    with pytest.raises(MigrationError, match="complete layout"):
+        schema.identify(inventory)
+
+
 @pytest.mark.parametrize(
     ("citations", "drop_family", "revision"), [(0, False, "p0001"), (2, False, "p0002"), (2, True, "p0003")]
 )

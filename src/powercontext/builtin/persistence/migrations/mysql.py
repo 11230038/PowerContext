@@ -35,6 +35,7 @@ from .bundle import ALEMBIC_CONTEXT_LOCK, MigrationBundle
 from .connections import BackendIdentity, MaintenanceConnections
 from .models import MigrationError, MigrationPlan, MigrationResult, digest
 from .mysql_schema import MySQLSchema, mysql_inventory, read_revision
+from .server_baselines import recognize_mysql_server_baseline
 
 BackupPolicy = Literal["auto", "manual", "skip"]
 BackupFactory = Callable[[Connection, BackendIdentity, Path], BackupProvider]
@@ -462,6 +463,14 @@ class MySQLMigrationRunner:
             else (False, None)
         )
         self._validate_evidence(evidence)
+        backend = identity.product
+        if not initialized and (backend == "seekdb" or backend == "oceanbase"):
+            source = recognize_mysql_server_baseline(inventory, backend=backend)
+            if source is not None:
+                raise MigrationError(
+                    "server_migration_unavailable",
+                    f"The complete {source.release} Server schema is recognized, but its full upgrade is unavailable.",
+                )
         current, adopt = self._recognize_source(inventory, initialized, current, evidence)
         if initialized and self.bundle.pending(current) and evidence is None:
             raise MigrationError("recovery_required", "The original external maintenance evidence is missing.")

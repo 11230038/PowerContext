@@ -1,8 +1,8 @@
 # Complete Server source baselines
 
-Each resource records the complete `sqlite_schema` inventory produced by a
+Each resource records the complete backend schema inventory produced by a
 specific installed public wheel. Inventories include indexes, constraints,
-triggers, virtual tables, and their SQLite shadow tables. They contain schema
+triggers, virtual tables, and SQLite shadow tables where applicable. They contain schema
 definitions and artifact provenance, with no business rows or deployment paths.
 
 Recognition identifies a source schema. It does not validate its business data,
@@ -34,3 +34,22 @@ feature, missing FTS helper, manually altered constraint, or extra persistent
 object may produce an unregistered shape. Such a shape remains unknown; a
 semantically similar subset is never sufficient for adoption. Additional source
 shapes require their own installed-release capture and review.
+
+## seekDB 1.3.0
+
+`1.3.0/seekdb.json` comes from the same public wheel with its `cli,server,seekdb`
+extras, `pylibseekdb==1.4.0.post1`, and engine
+`5.7.25-OceanBase seekdb-v1.4.0.0`. A real installed Server initialized the
+database with enforced Access, all Processing roles, and no model or embedding
+provider. The same public HTTP fixture populated historical records. After the
+Server exited, a maintenance connection captured all 56 tables. Their raw
+`SHOW CREATE TABLE` definitions and row counts remained unchanged during the
+corrected reflection.
+
+The normalized inventory includes all four FULLTEXT indexes, their `space`
+parser, and `min_token_size=3,max_token_size=84` properties. Its fingerprint is
+`041ee0d1cbf114ddafab1df096f9e7debbff1edf5d3a459cf7db847b640ff76c`.
+Generated foreign-key names and physical storage options are normalized by the
+MySQL reflector; index identity and search semantics are retained. Recognition
+requires the complete matching inventory. It does not cover optional embedding
+profiles or establish an OceanBase baseline.

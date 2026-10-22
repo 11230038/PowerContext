@@ -567,6 +567,42 @@ def _index_definition(part: list[str], constraint: str | None = None) -> tuple[s
     return index_name, {"columns": _key_columns(columns), "unique": unique}
 
 
+def _fulltext_definition(part: list[str]) -> tuple[str, dict[str, Any]]:
+    if part[1:2] not in (["key"], ["index"]):
+        raise MigrationError("incompatible_schema", "An unsupported FULLTEXT index definition was discovered.")
+    columns, end = _group(part, 3)
+    parser = None
+    properties: dict[str, int] = {}
+    if part[end : end + 2] == ["with", "parser"]:
+        end += 2
+        if end >= len(part) or not re.fullmatch(r"[a-z_][a-z_0-9$]*", part[end]):
+            raise MigrationError("incompatible_schema", "A FULLTEXT parser has no valid identity.")
+        parser = part[end]
+        end += 1
+        if part[end : end + 2] == ["parser_properties", "="]:
+            arguments, end = _group(part, end + 2)
+            for option in _parts(arguments):
+                if (
+                    len(option) != 3
+                    or option[0] not in {"min_token_size", "max_token_size"}
+                    or option[0] in properties
+                    or option[1] != "="
+                    or not option[2].isdigit()
+                ):
+                    raise MigrationError(
+                        "incompatible_schema", "An unsupported FULLTEXT parser property was discovered."
+                    )
+                properties[option[0]] = int(option[2])
+    _physical(part[end:])
+    return part[2], {
+        "columns": _key_columns(columns),
+        "unique": False,
+        "kind": "fulltext",
+        "parser": parser,
+        "parser_properties": properties,
+    }
+
+
 def _table_clause(
     table: dict[str, Any], part: list[str], defaults: dict[str, str | None], database: str | None
 ) -> None:
@@ -587,6 +623,9 @@ def _table_clause(
         _put_named(table["checks"], constraint, definition)
     elif part[0] in {"key", "index", "unique"}:
         index_name, definition = _index_definition(part, constraint)
+        _put_named(table["indexes"], index_name, definition)
+    elif part[0] == "fulltext":
+        index_name, definition = _fulltext_definition(part)
         _put_named(table["indexes"], index_name, definition)
     elif constraint is None:
         _put_named(table["columns"], part[0], _column(part, defaults))
@@ -634,7 +673,7 @@ def _matches(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
                     specification[option] = None
         automatic_keys: set[tuple[str, ...]] = set()
         for index_name, index in tuple(table["indexes"].items()):
-            if index_name in expected_table["indexes"] or index["unique"]:
+            if index_name in expected_table["indexes"] or index["unique"] or index.get("kind") is not None:
                 continue
             columns = tuple(key[0] for key in index["columns"])
             foreign_columns = {tuple(key["columns"]) for key in table["foreign_keys"]}
