@@ -196,12 +196,15 @@ def serve(config_path: Path) -> None:
         if not config.get("provider"):
             await server.serve()
             return
+        from powercontext.builtin.persistence.migrations.server_readiness import prepare_server_storage
         from powercontext.server.authz import PrincipalRef
         from powercontext.server.authz.composition import open_builtin_access_control
         from powercontext.server.settings import AccessControlConfig
 
         admin = PrincipalRef(type="service", id="desktop-fixture-admin")
 
+        # Bootstrap the complete Server before the separate Access context opens it.
+        await asyncio.to_thread(prepare_server_storage, settings)
         async with open_builtin_access_control(
             settings.database, bootstrap_administrators=(admin,), deployment_id="desktop-fixture"
         ) as access:

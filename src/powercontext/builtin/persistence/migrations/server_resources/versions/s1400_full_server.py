@@ -67,7 +67,8 @@ def upgrade():
     for kind, _name, owner, ddl in target:
         if kind == "index" and owner in rebuild | added:
             connection.exec_driver_sql(ddl)
-    # A stopped worker's old fence must not be valid in the target protocol.
+    # Revoke the old fence and leave an expired term for timed-lease takeover.
+    # NULL denotes a non-expiring single-process term and blocks OceanBase.
     connection.exec_driver_sql(
-        "UPDATE pc_artifact_processing_leases SET supervisor_generation=supervisor_generation+1, holder_id='migration-s1400', lease_expires_at=NULL"
+        "UPDATE pc_artifact_processing_leases SET supervisor_generation=supervisor_generation+1, holder_id='migration-s1400', lease_expires_at='1970-01-01 00:00:00.000000'"
     )

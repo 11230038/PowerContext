@@ -14,6 +14,7 @@
 
 """Complete frozen Server upgrades, rollback, recovery and admission behavior."""
 
+import asyncio
 import hashlib
 import json
 import sqlite3
@@ -28,6 +29,8 @@ from powercontext.builtin.persistence.dream_schema import check_dream_schema
 from powercontext.builtin.persistence.migrations.deployment import server_bundle
 from powercontext.builtin.persistence.migrations.models import MigrationError
 from powercontext.builtin.persistence.migrations.sqlite import SQLiteMigrationRunner
+from powercontext.builtin.persistence.sqlite import SQLiteConfig, SQLiteProfile
+from powercontext.builtin.persistence.supervision import ArtifactProcessingLeaseRepository
 from powercontext.builtin.runtime.config import BuiltinConfig
 from powercontext.builtin.runtime.processing_registry import canonical_processing_manifest
 
@@ -84,6 +87,26 @@ def test_complete_upgrade_preserves_history_backup_and_repeated_apply(source):
     assert not apply(source).changed
     assert source.verify().readiness_scope == "server"
     assert dump(source.database) == after
+
+
+def test_migration_revokes_old_fence_and_allows_expiring_worker_lease(source):
+    with closing(sqlite3.connect(source.database)) as connection, connection:
+        connection.execute(
+            "INSERT INTO pc_artifact_processing_leases (supervisor_group,holder_id,supervisor_generation,lease_expires_at) VALUES ('global','old-worker',7,NULL)"
+        )
+    apply(source)
+
+    async def scenario():
+        repository = ArtifactProcessingLeaseRepository()
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{source.database}")
+        async with SQLiteProfile.open(config, tables=()) as profile:
+            async with profile.database.transaction() as connection:
+                acquired = await repository.try_acquire(connection, "new-worker", 15)
+            assert acquired is not None, "The migration fence must allow an OceanBase-style lease takeover"
+            assert acquired.supervisor_generation > 7
+            assert acquired.lease_expires_at is not None
+
+    asyncio.run(scenario())
 
 
 def test_domain_failure_rolls_back_and_reuses_original_recovery_point(source, monkeypatch):
