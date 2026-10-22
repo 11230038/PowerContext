@@ -103,6 +103,10 @@ Plans bind target identity, source/target revisions, actual schema, frozen resou
 service scope, and migration coordination. Diagnostics do not print configuration or credential values. Expected failures return stable JSON
 categories and a nonzero exit status.
 
+Configuration binding includes the target's canonical Processing ownership mode, capabilities and declared automatic
+bindings. Changing those declarations requires a new plan; an accepted plan cannot be applied under a different
+Processing declaration. This binding does not validate or migrate the historical Processing state.
+
 Within the supported acceptance scope, interactive users can invoke `apply` directly. PC-managed backup is the default.
 The command displays the plan, backup method, maintenance impact, and stopped-write responsibility, then asks for one
 confirmation before execution. It does not ask about each SQL statement:
@@ -357,6 +361,14 @@ Optional checkpoints compare the accumulated steps with independently
 frozen complete layouts. Reflection, next-revision prefix recovery, and version-table validation use that same registered
 chain; adding a revision does not require changing a second version list in the recognizer. These schema registrations
 do not replace domain conversions, compatibility checks, or full Server readiness.
+
+New MySQL execution wrappers are also registered in `manifest.json`, using a `mysql_wrappers` object that maps a
+revision to its frozen Python resource. List that resource in the revision's `revision_resources` dependencies.
+The wrapper declares the same `revision` and `down_revision` as the common chain and calls
+`context.config.attributes["execute_revision"](revision)`. Historical execution wrappers cannot be overridden.
+The executor validates complete, linear wrapper coverage before opening a maintenance target; missing or divergent
+execution history is an invalid bundle rather than a failure discovered after earlier revisions have committed.
+Wrapper bytes participate in both the reviewed bundle and the revision's execution checksum.
 
 The reviewed plan binds the registration through the complete bundle checksum. Active maintenance requires the same
 bundle for retry. Released revision resources and their recorded checksums remain immutable.

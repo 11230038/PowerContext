@@ -53,3 +53,24 @@ Generated foreign-key names and physical storage options are normalized by the
 MySQL reflector; index identity and search semantics are retained. Recognition
 requires the complete matching inventory. It does not cover optional embedding
 profiles or establish an OceanBase baseline.
+
+## OceanBase 1.3.0
+
+`1.3.0/oceanbase.json` was captured independently from an installed public
+1.3.0 Server using a direct MySQL tenant connection to
+`5.7.25-OceanBase_CE-v4.3.5.6`. The container image digest is
+`sha256:31086a6900c21c479c2bcd942b6a28c53b17a51f4e9b9eb8eafcc596adfcd2e3`.
+The source wheel, enforced Access, all Processing roles, disabled model and
+embedding providers, and public HTTP fixture match the other source captures.
+
+All 56 tables and four FULLTEXT indexes participate in its fingerprint
+`049414cd6208742a92fdbc1a2965bf37c397ce7e7f1823e7d89ab6445040fedb`.
+The native audit table's `AUTO_INCREMENT_MODE='ORDER'` is retained as a schema
+property, distinct from the changing auto-increment counter. Unknown or
+duplicate mode declarations reject. This source differs from the seekDB
+inventory and is registered only for OceanBase.
+
+The stopped Server's table definitions, counts and data hashes were unchanged
+after reflection and `plan/verify/apply` rejection. This is complete source
+recognition with `server_migration_unavailable`, not a successful upgrade,
+runtime-readiness check, ODP test or multi-node acceptance.

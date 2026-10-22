@@ -18,13 +18,15 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy.engine import make_url
 
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
+from powercontext.builtin.runtime.config import BuiltinConfig
+from powercontext.builtin.runtime.processing_registry import canonical_processing_manifest
 
 from .bundle import MigrationBundle
 from .connections import MaintenanceConnections
@@ -50,7 +52,22 @@ def production_bundle() -> MigrationBundle:
 MigrationRunner = SQLiteMigrationRunner | MySQLMigrationRunner | TopicMemoryRecoveryMigrationRunner
 
 
-def deployment_runner(  # noqa: C901 -- Keep ordered admission checks with their operation.
+def _migration_configuration(settings: ServerSettings) -> dict[str, Any]:
+    config = BuiltinConfig(
+        code=settings.code,
+        runtime=settings.runtime,
+        database=settings.database,
+        handoff_report=settings.handoff_report,
+        inference=settings.inference,
+        external_skills=settings.external_skills,
+    )
+    return {
+        "database": settings.database.model_dump(mode="json", exclude={"url", "echo"}),
+        "processing_manifest": canonical_processing_manifest(config),
+    }
+
+
+def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
     settings: ServerSettings,
     *,
     evidence_dir: Path | None = None,
@@ -60,28 +77,14 @@ def deployment_runner(  # noqa: C901 -- Keep ordered admission checks with their
 ) -> MigrationRunner:
     """Use the real configured identity without opening a business profile."""
     database = settings.database
-    from powercontext.builtin.runtime.config import BuiltinConfig
-    from powercontext.builtin.runtime.processing_registry import canonical_processing_manifest
-
-    configuration = database.model_dump(mode="json", exclude={"url", "echo"})
+    configuration = _migration_configuration(settings)
     if bundle == "server":
         if settings.inference.embedding_model is not None or settings.code.enabled:
             raise MigrationError(
                 "unsupported_upgrade_configuration",
                 "The registered 1.3.0 Server path covers the no-vector, Code-disabled configuration.",
             )
-        config = BuiltinConfig(
-            code=settings.code,
-            runtime=settings.runtime,
-            database=database,
-            inference=settings.inference,
-            handoff_report=settings.handoff_report,
-            external_skills=settings.external_skills,
-        )
-        configuration.update(
-            processing_manifest=canonical_processing_manifest(config),
-            embedding_enabled=settings.inference.embedding_model is not None,
-        )
+        configuration["embedding_enabled"] = False
     selected = server_bundle() if bundle == "server" else production_bundle()
     if bundle == "topic-memory-recovery":
         if not isinstance(database, (SQLiteConfig, SeekDBConfig, OceanBaseConfig)):

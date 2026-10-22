@@ -144,6 +144,7 @@ class MySQLSchema:
         self.bundle = bundle
         self.revisions = bundle.revisions
         manifest = json.loads((bundle.snapshot_directory / "manifest.json").read_text())
+        self.optional_table_options = {}
         if "mysql_state_layouts" in manifest:
             self._load_state_layouts(manifest["mysql_state_layouts"])
             return
@@ -205,6 +206,10 @@ class MySQLSchema:
                 or set(fragment["revisions"]) & registered["revisions"].keys()
             ):
                 raise MigrationError("invalid_bundle", "A MySQL state layout is invalid or duplicated.")
+            options = fragment.get("optional_table_options", {})
+            if self.optional_table_options.keys() & options.keys():
+                raise MigrationError("invalid_bundle", "A MySQL layout overrides an earlier option registration.")
+            self.optional_table_options.update(options)
             registered["revisions"].update(fragment["revisions"])
         if set(registered["revisions"]) != set(self.bundle.revisions):
             raise MigrationError("invalid_bundle", "MySQL state layouts must cover exactly the shared revision chain.")
@@ -251,20 +256,34 @@ class MySQLSchema:
     def fingerprint(inventory: dict[str, Any]) -> str:
         return digest(inventory)
 
+    def _matches(self, inventory: dict[str, Any], expected: dict[str, Any]) -> bool:
+        # Captured backends may expose an explicit default that another backend
+        # omits. Only registered values may be absent; retain it in fingerprints.
+        actual = copy.deepcopy(inventory)
+        for name, options in self.optional_table_options.items():
+            table = actual["tables"].get(name)
+            target = expected["tables"].get(name)
+            if table is None or target is None:
+                continue
+            for option, allowed in options.items():
+                if option not in target and table.get(option) in allowed:
+                    del table[option]
+        return _matches(actual, expected)
+
     def identify(self, inventory: dict[str, Any]) -> str | None:
         """Only complete known shapes may be adopted as an unversioned source."""
         inventory = _business_inventory(inventory)
         if inventory == _empty_inventory():
             return None
         for revision, expected in self._schemas.items():
-            if _matches(inventory, expected):
+            if self._matches(inventory, expected):
                 return revision
         raise MigrationError("incompatible_schema", "Actual MySQL schema is not a registered complete layout.")
 
     def verify(self, inventory: dict[str, Any], revision: str | None) -> None:
         inventory = _business_inventory(inventory)
         expected = _empty_inventory() if revision is None else self._schemas.get(revision)
-        if expected is None or not _matches(inventory, expected):
+        if expected is None or not self._matches(inventory, expected):
             raise MigrationError("incompatible_schema", "Actual MySQL schema does not match its recorded revision.")
 
     def recovery(self, inventory: dict[str, Any], revision: str | None) -> MySQLRecovery:
@@ -280,7 +299,7 @@ class MySQLSchema:
             raise MigrationError("incompatible_schema", "There is no registered next MySQL revision to recover.")
         target = pending[0]
         for position, expected in enumerate(self._prefixes[target]):
-            if _matches(inventory, expected):
+            if self._matches(inventory, expected):
                 return MySQLRecovery(target, self._statements[target][position:])
         raise MigrationError("incompatible_schema", "Actual MySQL schema is not a controlled next-revision DDL state.")
 
@@ -432,6 +451,25 @@ def _validate_physical_value(option: str, value: str) -> None:
     supported = {"engine": {"innodb"}, "using": {"btree"}, "organization": {"index", "heap"}}
     if option in supported and value not in supported[option]:
         raise MigrationError("incompatible_schema", "An unsupported table engine or index organization was discovered.")
+
+
+def _table_options(tokens: list[str]) -> tuple[dict[str, str | None], str | None]:
+    positions = [position for position, option in enumerate(tokens) if option == "auto_increment_mode"]
+    if not positions:
+        return _physical(tokens), None
+    if len(positions) != 1:
+        raise MigrationError("incompatible_schema", "Duplicate AUTO_INCREMENT_MODE declarations were discovered.")
+    start = positions[0]
+    position = start + 1
+    if tokens[position : position + 1] == ["="]:
+        position += 1
+    if position >= len(tokens):
+        raise MigrationError("incompatible_schema", "AUTO_INCREMENT_MODE has no value.")
+    value = tokens[position]
+    mode = (_literal(value) if value.startswith("'") else value).lower()
+    if mode not in {"order", "noorder"}:
+        raise MigrationError("incompatible_schema", "An unsupported AUTO_INCREMENT_MODE was discovered.")
+    return _physical(tokens[:start] + tokens[position + 1 :]), mode
 
 
 def _column(tokens: list[str], defaults: dict[str, str | None]) -> dict[str, Any]:
@@ -587,8 +625,10 @@ def _parse_table(statement: str, *, database: str | None = None) -> tuple[str, d
     if schema is not None:
         raise MigrationError("incompatible_schema", "A table belongs to an unexpected database.")
     body, position = _group(tokens, position)
-    defaults = _physical(tokens[position:])
+    defaults, auto_increment_mode = _table_options(tokens[position:])
     table: dict[str, Any] = {"columns": {}, "primary_key": [], "foreign_keys": [], "checks": {}, "indexes": {}}
+    if auto_increment_mode is not None:
+        table["auto_increment_mode"] = auto_increment_mode
     for part in _parts(body):
         _table_clause(table, part, defaults, database)
     table["foreign_keys"].sort(key=digest)

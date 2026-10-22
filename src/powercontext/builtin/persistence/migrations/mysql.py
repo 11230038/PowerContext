@@ -28,6 +28,9 @@ from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
+from alembic.script.revision import RevisionError
+from alembic.util.exc import CommandError
 from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy import Connection
 
@@ -181,12 +184,19 @@ class MySQLMigrationRunner:
             path.relative_to(self._history_directory).as_posix(): path.read_bytes()
             for path in sorted(self._history_directory.rglob("*.py"))
         }
-        self._history_bytes = resources
+        self._history_bytes = resources.copy()
+        for revision, resource in bundle.mysql_wrappers.items():
+            if any(name.startswith(f"versions/{revision}_") for name in resources):
+                raise MigrationError("invalid_bundle", "A registered MySQL wrapper overrides historical execution.")
+            # Prefix the filename with its revision to keep the existing
+            # per-revision checksum contract, including contributed wrappers.
+            resources[f"versions/{revision}_registered.py"] = (bundle.snapshot_directory / resource).read_bytes()
         self._snapshot = TemporaryDirectory(prefix="pc-mysql-migrations-")
         for name, content in resources.items():
             target = Path(self._snapshot.name) / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
+        self._validate_history()
         hashes = {name: hashlib.sha256(content).hexdigest() for name, content in resources.items()}
         self.checksum = digest({"bundle": bundle.checksum, "mysql_history": hashes})
         self.checksums = {
@@ -201,6 +211,19 @@ class MySQLMigrationRunner:
             })
             for revision, checksum in bundle.checksums.items()
         }
+
+    def _validate_history(self) -> None:
+        try:
+            history = list(reversed(list(ScriptDirectory(self._snapshot.name).walk_revisions())))
+        except (CommandError, RevisionError, KeyError) as error:
+            raise MigrationError("invalid_bundle", "MySQL execution history is incomplete or ambiguous.") from error
+        previous = None
+        if tuple(item.revision for item in history) != self.bundle.revisions:
+            raise MigrationError("invalid_bundle", "MySQL execution history does not cover the registered chain.")
+        for item in history:
+            if item.down_revision != previous or item.dependencies:
+                raise MigrationError("invalid_bundle", "MySQL execution history differs from the registered chain.")
+            previous = item.revision
 
     def _assert_unchanged(self) -> None:
         self.bundle.assert_unchanged()

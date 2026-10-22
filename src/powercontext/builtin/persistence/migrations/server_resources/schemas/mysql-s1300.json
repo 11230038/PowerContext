@@ -11293,5 +11293,12 @@
         {}
       ]
     }
+  },
+  "optional_table_options": {
+    "pc_access_audit": {
+      "auto_increment_mode": [
+        "order"
+      ]
+    }
   }
 }

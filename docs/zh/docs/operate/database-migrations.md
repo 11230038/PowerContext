@@ -82,6 +82,8 @@ powercontext server db-migrate verify --env-file deployment.env
 
 计划绑定目标身份、源／目标 revision、实际结构摘要、冻结脚本摘要、配置摘要、备份策略、服务范围和迁移协调范围。配置与凭据值不输出到诊断中；预期错误返回稳定 JSON 类别和非零退出码。
 
+配置绑定包含目标部署的规范 Processing 归属模式、能力和自动绑定声明。改变这些声明后必须重新生成计划，不能使用旧计划执行。此绑定本身不验证或迁移历史 Processing 状态。
+
 在支持范围内，终端用户可直接执行 `apply`，默认 PC 自动备份。命令展示计划、备份方法、维护影响及停写责任，确认一次后执行，不逐条 SQL 询问：
 
 ```bash
@@ -231,6 +233,8 @@ powercontext server run --env-file deployment.env --role all
 seekdb／OceanBase DDL 可能隐式提交，不能用 Python 事务承诺整个迁移原子化。局部 Artifact 原型只识别已登记顺序：`p0001` 创建冻结四表及两个索引；`p0002` 添加两个可空的 `MEDIUMBLOB` 引用列；`p0003` 删除标签 family 的 CHECK；`p0004` 添加指向精确 revision 的 Artifact handle；`p0005` 添加 Source 证据存储，不追认历史内容的可信度。继续执行前须用实际结构、数据检查和持久维护证据证明已完成的已知前缀；revision 的后置条件通过后才推进 Alembic 版本。未知对象、结构或中间状态拒绝执行，不乐观 stamp。
 
 MySQL 结构步骤通过冻结的布局片段注册，由 `manifest.json` 的 `mysql_layouts` 列表选择，合起来必须恰好覆盖 Alembic 版本链，且不能重复声明。新增 revision 追加不可改写的片段，并在 `revision_resources` 中声明其文件，不修改已发布片段。可选 checkpoint 将累积步骤与独立冻结的完整结构对照。反射、下一 revision 的已知前缀恢复和版本表校验使用同一注册链；新增 revision 无需修改识别器中的另一份版本列表。这些结构注册不能代替领域转换、兼容性检查或完整 Server readiness。
+
+新增 MySQL 执行入口也在 `manifest.json` 中登记：`mysql_wrappers` 对象将 revision 映射到冻结的 Python 资源，并将该文件列入对应 revision 的 `revision_resources` 依赖。入口声明与公共链一致的 `revision` 和 `down_revision`，调用 `context.config.attributes["execute_revision"](revision)`，不能覆盖历史执行入口。执行器在打开维护目标前验证完整、线性的入口覆盖；缺失或分叉的执行历史直接判为无效 bundle，不等到前序 revision 提交后才发现。入口字节同时纳入计划的 bundle 摘要和该 revision 的执行摘要。
 
 计划通过完整 bundle 摘要绑定注册资源，未完成维护的重试要求使用同一 bundle。已发布 revision 资源及其记录摘要保持不可改写。
 无参数 DDL 使用单语句驱动选项，确保 CHECK 的取余运算符和 SQL 字面量中的百分号原样到达后端。

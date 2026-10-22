@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -77,6 +78,7 @@ class MigrationBundle:
             raise MigrationError("invalid_bundle", "MySQL layout registration is outside the frozen bundle.")
         self.mysql_layouts: tuple[str, ...] = tuple(mysql_layouts)
         self.readiness_scope = manifest.get("readiness_scope", "registered_bundle")
+        self.mysql_wrappers = self._mysql_wrappers(manifest, resources)
         self.affected_objects = tuple(manifest.get("affected_objects", ()))
         self.retained_objects = tuple(manifest.get("retained_objects", ()))
         self.retained_fingerprints = manifest.get("retained_fingerprints", {})
@@ -105,6 +107,20 @@ class MigrationBundle:
                 inputs["domain_contract"] = digest(domain_inputs)
             self.checksums[item.revision] = digest(inputs)
         self.checksum = digest(self.resources)
+
+    def _mysql_wrappers(self, manifest: dict[str, Any], resources: dict[str, bytes]) -> dict[str, str]:
+        wrappers = manifest.get("mysql_wrappers", {})
+        if not isinstance(wrappers, dict) or any(
+            revision not in self.revisions
+            or re.fullmatch(r"[A-Za-z0-9_-]+", revision) is None
+            or not isinstance(name, str)
+            or name not in resources
+            or not name.endswith(".py")
+            or name not in manifest["revision_resources"][revision]
+            for revision, name in wrappers.items()
+        ):
+            raise MigrationError("invalid_bundle", "MySQL execution registration is outside its frozen revision.")
+        return dict(wrappers)
 
     def assert_unchanged(self) -> None:
         resources = {

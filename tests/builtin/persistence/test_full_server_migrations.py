@@ -186,3 +186,22 @@ def test_optional_configuration_cannot_silently_extend_managed_database(source):
     with pytest.raises(MigrationError, match="unsupported_upgrade_configuration"):
         prepare_server_storage(settings, injected_embedding=True)
     assert dump(source.database) == before
+
+
+def test_captured_oceanbase_baseline_preserves_ordered_audit_cursor():
+    import copy
+
+    from powercontext.builtin.persistence.migrations.mysql_schema import MySQLSchema
+
+    root = Path(__file__).parents[3]
+    inventory = json.loads(
+        (
+            root / "src/powercontext/builtin/persistence/migration_resources/server_baselines/1.3.0/oceanbase.json"
+        ).read_text()
+    )["inventory"]
+    schema = MySQLSchema(server_bundle())
+    assert schema.identify(inventory) == "s1300"
+    changed = copy.deepcopy(inventory)
+    changed["tables"]["pc_access_audit"]["auto_increment_mode"] = "noorder"
+    with pytest.raises(MigrationError, match="incompatible_schema"):
+        schema.identify(changed)
