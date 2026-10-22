@@ -26,7 +26,7 @@ import tempfile
 import time
 import zipfile
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -105,6 +105,7 @@ def isolated_server(
             "prefix": "",
             "port": port,
             "tls": False,
+            "uvicorn_log_level": "warning",
             "response_gate_path": str(response_gate) if response_gate else None,
             "response_loss_path": str(response_loss_counter) if response_loss_counter else None,
         }
@@ -126,6 +127,13 @@ def isolated_server(
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             control = control_pipe(process)
+            report = {
+                "pid": process.pid,
+                "port": port,
+                "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+                "outcome": "failed",
+                "forced_kill": False,
+            }
             try:
                 with httpx.Client(base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=10) as client:
                     wait_ready(client, process)
@@ -138,14 +146,41 @@ def isolated_server(
                         },
                     )
                     response.raise_for_status()
-                    yield client, response.json()["scope_id"], hashlib.sha256(wheel.read_bytes()).hexdigest()
+                    yield client, response.json()["scope_id"], report["wheel_sha256"]
+                report["outcome"] = "passed"
+            except BaseException as error:
+                report["exception_type"] = type(error).__name__
+                error.add_note(f"Installed fixture Server pid={process.pid}, port={port}")
+                raise
             finally:
-                if process.poll() is None:
-                    control.write(b"stop\n")
-                    control.flush()
+                report["before_cleanup_returncode"] = process.poll()
+                try:
+                    if process.poll() is None:
+                        with suppress(BrokenPipeError):
+                            control.write(b"stop\n")
+                            control.flush()
+                        try:
+                            process.wait(timeout=30)
+                        except subprocess.TimeoutExpired:
+                            report["forced_kill"] = True
+                            process.kill()
+                            process.wait(timeout=10)
+                finally:
+                    report["after_cleanup_returncode"] = process.poll()
+                    with suppress(BrokenPipeError):
+                        control.close()
+                    # Only the synthetic fixture's bounded logs survive temporary
+                    # storage cleanup; database files and configuration do not.
                     try:
-                        process.wait(timeout=30)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=10)
-                control.close()
+                        log.flush()
+                        with (temp / "server.log").open("rb") as source:
+                            size = source.seek(0, os.SEEK_END)
+                            source.seek(max(0, size - 256 * 1024))
+                            tail = source.read(256 * 1024)
+                        report["log_bytes"] = size
+                        report["log_truncated"] = size > len(tail)
+                        retained = Path(tempfile.mkdtemp(prefix="installed-ui-server-", dir=desktop / ".artifacts"))
+                        (retained / "server.log").write_bytes(tail)
+                        (retained / "process.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                    except OSError:
+                        print("Installed fixture Server diagnostics could not be retained.", file=sys.stderr)

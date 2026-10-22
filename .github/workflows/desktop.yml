@@ -139,6 +139,7 @@ jobs:
             desktop/.artifacts/installed-ui-app.log
             desktop/.artifacts/installed-ui-processes.json
             desktop/.artifacts/installed-ui-window.png
+            desktop/.artifacts/installed-ui-server-*/
           # Early validation failures can leave no installer or acceptance evidence.
           # Still reject missing artifacts when every preceding step succeeded.
           if-no-files-found: ${{ job.status == 'success' && 'error' || 'warn' }}

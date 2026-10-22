@@ -178,7 +178,7 @@ def serve(config_path: Path) -> None:
             proxy,
             host="127.0.0.1",
             port=config["port"],
-            log_level="critical",
+            log_level=config.get("uvicorn_log_level", "critical"),
             access_log=False,
             ssl_keyfile=config["key"] if config["tls"] else None,
             ssl_certfile=config["certificate"] if config["tls"] else None,
