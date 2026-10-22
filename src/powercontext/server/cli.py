@@ -185,7 +185,9 @@ def processing_migrate(
         raise typer.Exit(code=1)
 
 
-def _managed_storage(database: SQLiteConfig | SeekDBConfig | OceanBaseConfig) -> bool:
+def _managed_storage(
+    database: SQLiteConfig | SeekDBConfig | OceanBaseConfig, *, allow_historical: bool = False
+) -> bool:
     """Inspect ownership before a compatibility command may open a writable profile."""
     from powercontext.builtin.persistence.migrations.connections import MaintenanceConnections
     from powercontext.builtin.persistence.migrations.mysql_schema import mysql_inventory
@@ -204,12 +206,12 @@ def _managed_storage(database: SQLiteConfig | SeekDBConfig | OceanBaseConfig) ->
             if backend == "sqlite"
             else recognize_mysql_server_baseline(mysql_inventory(connection), backend=backend)
         )
-        if source is not None:
+        if source is not None and not allow_historical:
             raise database_migration.MigrationError(
                 "migration_required",
                 "Complete the registered full Server upgrade before Processing configuration maintenance.",
             )
-        return False
+        return source is not None
 
     if isinstance(database, SQLiteConfig) and not database.is_persistent:
         return False
@@ -336,6 +338,19 @@ def atomic_memory_migrate(
         Path | None,
         typer.Option(help="JSON attestations establishing Owners for ownerless legacy Memory entries."),
     ] = None,
+    evidence_dir: database_migration.EvidenceDir = None,
+    lock_coordination: database_migration.LockCoordination = None,
+    backup: Annotated[
+        database_migration.BackupPolicy | None, typer.Option(help="Managed storage backup policy.")
+    ] = None,
+    plan_id: Annotated[str | None, typer.Option(help="Exact managed Server plan to accept.")] = None,
+    yes: Annotated[bool, typer.Option("--yes", help="Accept the managed Server plan.")] = False,
+    backup_confirmed: Annotated[bool, typer.Option(help="Declare a manual backup exists.")] = False,
+    accept_no_backup: Annotated[bool, typer.Option(help="Accept the no-backup risk.")] = False,
+    backup_ref: Annotated[str | None, typer.Option(help="Operator manual backup reference.")] = None,
+    acknowledge_previous_run: Annotated[
+        str | None, typer.Option(help="OceanBase token confirming the previous remote maintenance ended.")
+    ] = None,
 ) -> None:
     """Archive Memory v1, convert its history and references to Atomic Memory, and remove it from public tables."""
 
@@ -353,6 +368,45 @@ def atomic_memory_migrate(
         )
     except (OSError, ValueError, TypeError, KeyError) as error:
         raise typer.BadParameter(f"invalid decision file: {error}") from error  # noqa: TRY003
+    env_file = resolve_server_environment_file(env_file, discover=True)
+    with database_migration._operator_errors(), server_settings_context(env_file=env_file) as settings:
+        managed = _managed_storage(settings.database, allow_historical=True)
+    if managed:
+        if decisions is not None or owner_decisions is not None:
+            raise typer.BadParameter(  # noqa: TRY003
+                "decision files apply only to the unmanaged legacy Memory conversion, not the registered Server chain"
+            )
+        if action == "plan":
+            database_migration.plan(
+                env_file=env_file,
+                evidence_dir=evidence_dir,
+                lock_coordination=lock_coordination,
+                backup=backup or "auto",
+                bundle="server",
+            )
+        elif action == "verify":
+            database_migration.verify(
+                env_file=env_file,
+                evidence_dir=evidence_dir,
+                lock_coordination=lock_coordination,
+                bundle="server",
+            )
+        else:
+            database_migration.apply(
+                env_file=env_file,
+                evidence_dir=evidence_dir,
+                lock_coordination=lock_coordination,
+                bundle="server",
+                backup=backup,
+                plan_id=plan_id,
+                yes=yes,
+                maintenance_confirmed=maintenance_confirmed,
+                backup_confirmed=backup_confirmed,
+                accept_no_backup=accept_no_backup,
+                backup_ref=backup_ref,
+                acknowledge_previous_run=acknowledge_previous_run,
+            )
+        return
     with server_settings_context(env_file=env_file) as settings:
         try:
             ready = asyncio.run(

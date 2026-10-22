@@ -34,6 +34,7 @@ from sqlalchemy import Connection, Engine, event, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
+from typer.testing import CliRunner
 
 from powercontext.builtin.persistence.migrations import mysql as mysql_migrations
 from powercontext.builtin.persistence.migrations.backup import BackupCapabilities, BackupProvider
@@ -47,6 +48,8 @@ from powercontext.builtin.persistence.oceanbase import profile as oceanbase_prof
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
 from powercontext.builtin.runtime.config import BuiltinConfig, RuntimeConfig
 from powercontext.builtin.runtime.processing_registry import canonical_processing_manifest
+from powercontext.cli.app import create_cli
+from powercontext.server.cli import app
 from powercontext.server.settings import ServerSettings
 
 
@@ -432,6 +435,63 @@ def test_mysql_registered_processing_mode_switch_preserves_revision_and_history(
         )
 
     assert backend.connections().run(inspect_history) == ("s1401", "dedicated", b'{"history":"unchanged"}')
+
+
+def test_mysql_atomic_compatibility_command_uses_shared_server_upgrade(backend: _BackendTarget, monkeypatch) -> None:
+    _load_full_server_baseline(backend)
+    monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_KIND", backend.config.kind)
+    if isinstance(backend.config, SeekDBConfig):
+        monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_PATH", str(backend.config.path))
+    else:
+        monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_URL", backend.config.url.get_secret_value())
+    cli = create_cli([app])
+    arguments = [
+        "server",
+        "atomic-memory-migrate",
+        "--evidence-dir",
+        str(backend.evidence_directory),
+        "--lock-coordination",
+        "single-host",
+    ]
+    inspected = CliRunner().invoke(cli, [*arguments, "--action", "plan", "--backup", "manual"])
+    assert inspected.exit_code == 0, inspected.output
+    plan = json.loads(inspected.output)
+    assert plan["source_revision"] == "s1300" and plan["readiness_scope"] == "server"
+    applied = CliRunner().invoke(
+        cli,
+        [
+            *arguments,
+            "--action",
+            "apply",
+            "--plan-id",
+            plan["plan_id"],
+            "--backup",
+            "manual",
+            "--backup-confirmed",
+            "--backup-ref",
+            "operator://native-atomic-backup",
+            "--maintenance-confirmed",
+            "--yes",
+        ],
+    )
+    assert applied.exit_code == 0, applied.output
+    assert json.loads(applied.output)["backup_ref"] == "operator://native-atomic-backup"
+    verified = CliRunner().invoke(cli, [*arguments, "--action", "verify"])
+    assert verified.exit_code == 0, verified.output
+    assert json.loads(verified.output)["readiness_scope"] == "server"
+    repeated = CliRunner().invoke(cli, [*arguments, "--action", "apply", "--maintenance-confirmed"])
+    assert repeated.exit_code == 0, repeated.output
+    assert json.loads(repeated.output)["changed"] is False
+
+    def inspect_history(connection, identity, guard):
+        return (
+            connection.exec_driver_sql("SELECT version_num FROM pc_schema_revision").scalar_one(),
+            connection.exec_driver_sql(
+                "SELECT content FROM pc_artifacts WHERE scope_id='historical' AND artifact_id='preserved'"
+            ).scalar_one(),
+        )
+
+    assert backend.connections().run(inspect_history) == ("s1401", b'{"history":"unchanged"}')
 
 
 def _load_full_server_baseline(backend: _BackendTarget) -> None:

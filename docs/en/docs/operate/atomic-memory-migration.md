@@ -14,6 +14,16 @@ legacy entry tables; complete per-entry verification is the job of `verify`.
 
 ## Run the maintenance task
 
+On a database with `pc_schema_revision`, or a recognized complete 1.3.0 Server baseline, this compatibility command
+delegates `plan`, `apply` and `verify` to `server db-migrate --bundle server`. It returns the shared plan/result format
+and uses the same maintenance lock, backup policy and recovery evidence. Review the plan, then pass its `--plan-id`,
+an explicit `--backup` policy, `--yes` and `--maintenance-confirmed` when changes are required. OceanBase also requires
+the fixed-host coordination/evidence options described in [Database migrations](./database-migrations.md).
+Already-ready storage is a read-only no-op. Candidate and Owner decision files apply only to the unmanaged legacy
+conversion and are rejected on this registered Server path. This does not register pre-1.3.0 Memory layouts.
+
+The remaining instructions describe domain-only conversion for unmanaged databases:
+
 Inspect the read-only plan with the new deployment's configuration:
 
 ```shell

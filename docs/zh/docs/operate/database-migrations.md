@@ -32,6 +32,11 @@ MySQL 兼容后端的结构反射支持 CHECK 表达式中的二元 `+`、`-`、
 
 原有 `server processing-migrate` 在受管数据库上转发到 `db-migrate --bundle processing`；未登记 revision 的数据库仍保留领域独立迁移。具体步骤见[迁移 Artifact 处理状态](artifact-processing-migration.md)。服务部署参考[部署 Server](deploy-server.md)。
 
+`server atomic-memory-migrate` 在受管数据库或匹配完整 1.3.0 Server 基线的数据库上转发到
+`db-migrate --bundle server`，包括计划确认、备份和恢复要求；未受管的旧 Memory 布局继续使用领域独立转换。
+该转换的决策文件不能修改已登记的 Server 版本链。兼容命令在受管库上返回共享 Server 计划或结果，
+已就绪时 apply 保持只读，不重复迁移。参见[迁移到 Atomic Memory](atomic-memory-migration.md)。
+
 ## Processing 配置维护
 
 `--bundle processing` 在结构完整、已到当前 revision 的 Server 数据库上登记离线所有权配置操作。

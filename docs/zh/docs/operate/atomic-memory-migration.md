@@ -11,6 +11,15 @@ title: 迁移到 Atomic Memory
 
 ## 执行顺序
 
+数据库已有 `pc_schema_revision`，或匹配完整的 1.3.0 Server 基线时，这个兼容命令将 `plan`、`apply`、`verify`
+转发到 `server db-migrate --bundle server`，返回共享计划和结果格式，并使用相同的维护锁、备份策略及恢复证据。
+需要变更时，先审阅计划，再提供对应的 `--plan-id`、显式 `--backup` 策略、`--yes` 和 `--maintenance-confirmed`。
+OceanBase 还要求[数据库迁移](./database-migrations.md)中说明的固定维护主机和证据目录选项。
+已就绪的数据库保持只读，不重复迁移。Candidate 和 Owner 决策文件只适用于未受管的旧 Memory 转换，
+在已登记的 Server 路径上会被拒绝；该路径不因此增加对 1.3.0 之前 Memory 布局的支持。
+
+下文描述未受管数据库的领域独立转换：
+
 先使用新版部署的配置查看只读计划：
 
 ```shell

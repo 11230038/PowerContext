@@ -41,6 +41,12 @@ Databases without a registered revision retain their domain-only migration comma
 Follow [Migrate Artifact processing state](artifact-processing-migration.md).
 See [Deploy the Server](deploy-server.md) for service deployment.
 
+`server atomic-memory-migrate` delegates managed databases and recognized complete 1.3.0 Server baselines to
+`db-migrate --bundle server`, including its reviewed-plan, backup and recovery requirements. It preserves domain-only
+conversion for unmanaged legacy Memory layouts. Decision files for that conversion cannot modify the registered Server
+chain. The compatibility command returns the shared Server plan/result for managed storage; an already-ready apply is a
+read-only no-op. See [Migrate to Atomic Memory](atomic-memory-migration.md).
+
 ## Processing configuration maintenance
 
 `--bundle processing` registers an offline ownership-configuration operation on a complete, current Server database.
