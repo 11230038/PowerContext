@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -26,8 +27,10 @@ from sqlalchemy import create_engine
 from powercontext.builtin.persistence.migrations.bundle import MigrationBundle
 from powercontext.builtin.persistence.migrations.connections import MaintenanceConnections
 from powercontext.builtin.persistence.migrations.models import MigrationError
+from powercontext.builtin.persistence.migrations.mysql import MySQLMigrationRunner
 from powercontext.builtin.persistence.migrations.mysql_schema import MySQLSchema, _expression_sql, mysql_inventory
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
+from tests.builtin.persistence.test_mysql_migration_runner import _seekdb_scenario_lifetime
 from tests.builtin.persistence.test_mysql_migration_schema import _inventory, _ReflectedDatabase
 
 _FIXTURE = Path(__file__).parents[2] / "fixtures/database_migrations/schemas/seekdb_v1_3_0_checks.json"
@@ -168,3 +171,56 @@ def test_real_seekdb_historical_check_reflection_and_rendering(short_tmp_path):
             MySQLSchema(MigrationBundle(_RESOURCES)).identify(inventory)
 
     MaintenanceConnections(SeekDBConfig(path=short_tmp_path / "seekdb")).run(reflect, writable=True)
+
+
+@pytest.mark.skipif(os.environ.get("POWERCONTEXT_TEST_MIGRATION_SEEKDB") != "1", reason="real seekdb probe not enabled")
+@pytest.mark.parametrize(
+    ("expression", "column_type", "valid", "invalid"),
+    [("a % 2 = 0", "INTEGER", 2, 3), ("a = '100%s%%'", "VARCHAR(32)", "100%s%%", "different")],
+    ids=["remainder", "percent_literal"],
+)
+def test_real_seekdb_percent_checks_validate_data_and_plan(
+    short_tmp_path, monkeypatch, expression, column_type, valid, invalid
+):
+    pytest.importorskip("pylibseekdb")
+    # Extend an isolated bundle, preserving the shipped layouts and their eligibility.
+    directory = short_tmp_path / "bundle"
+    shutil.copytree(_RESOURCES, directory)
+    ddl = f"CREATE TABLE pc_check_fixture (a {column_type}, CONSTRAINT ck_percent CHECK ({expression}) NOT ENFORCED)"
+    for name in ("pre_dream", "v1_1_0"):
+        path = directory / "schemas" / f"{name}.json"
+        layout = json.loads(path.read_text())
+        layout["mysql"].append(ddl)
+        path.write_text(json.dumps(layout, ensure_ascii=False))
+    bundle = MigrationBundle(directory)
+    schema = MySQLSchema(bundle)
+    connections = MaintenanceConnections(SeekDBConfig(path=short_tmp_path / "seekdb"))
+    runner = MySQLMigrationRunner(connections, bundle, evidence_directory=short_tmp_path / "evidence")
+
+    def prepare(connection, _identity, guard):
+        assert connection is not None
+        baseline = json.loads((directory / "schemas/pre_dream.json").read_text())["mysql"]
+        for statement in baseline:
+            guard()
+            connection.exec_driver_sql(statement, execution_options={"no_parameters": True})
+        connection.exec_driver_sql("INSERT INTO pc_check_fixture (a) VALUES (%s), (NULL)", (valid,))
+        connection.commit()
+        inventory = mysql_inventory(connection)
+        assert schema.identify(inventory) == "p0001"
+        schema.verify(inventory, "p0001")
+        schema.validate_data(connection, "p0001")
+
+    def invalidate(connection, _identity, guard):
+        assert connection is not None
+        guard()
+        connection.exec_driver_sql("UPDATE pc_check_fixture SET a = %s WHERE a IS NOT NULL", (invalid,))
+        connection.commit()
+        with pytest.raises(MigrationError, match=r"data_integrity_error.*CHECK"):
+            schema.validate_data(connection, "p0001")
+
+    with _seekdb_scenario_lifetime(monkeypatch):
+        connections.run(prepare, writable=True)
+        assert runner.plan().state == "migration_required"
+        connections.run(invalidate, writable=True)
+        with pytest.raises(MigrationError, match=r"data_integrity_error.*CHECK"):
+            runner.plan()

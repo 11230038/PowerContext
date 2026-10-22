@@ -49,6 +49,11 @@ the historical tables and executes the rendered drop-total CHECK against matchin
 POWERCONTEXT_TEST_MIGRATION_SEEKDB=1 uv run --locked --extra seekdb pytest -q tests/builtin/persistence/test_mysql_migration_checks.py
 ```
 
+The same test module extends a disposable bundle with remainder and percent-literal CHECKs and exercises
+`MySQLSchema.validate_data()` and `MySQLMigrationRunner.plan()` through the official aiomysql bridge.
+Valid and NULL rows pass; stored violations of the fixture's `NOT ENFORCED` constraints fail with
+`data_integrity_error`. These synthetic constraints are not added to the shipped migration layouts.
+
 ## Explicit maintenance
 
 Repository-only scratch commands:

@@ -231,8 +231,10 @@ class MySQLSchema:
         for name, table in expected["tables"].items():
             for check in table["checks"].values():
                 expression = _expression_sql(check["expression"])
+                # No bind parameters: keep literal percent signs out of DBAPI interpolation.
                 violation = connection.exec_driver_sql(
-                    f"SELECT 1 FROM {_quote(name)} WHERE NOT ({expression}) LIMIT 1"  # noqa: S608 -- frozen expressions
+                    f"SELECT 1 FROM {_quote(name)} WHERE NOT ({expression}) LIMIT 1",  # noqa: S608 -- frozen expressions
+                    execution_options={"no_parameters": True},
                 ).first()
                 if violation is not None:
                     raise MigrationError("data_integrity_error", "Existing rows violate a registered CHECK constraint.")
