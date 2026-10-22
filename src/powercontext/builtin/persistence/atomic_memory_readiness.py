@@ -25,12 +25,7 @@ from typing import Any
 from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from powercontext.builtin.persistence.atomic_memory_evidence_schema import ATOMIC_MEMORY_EVIDENCE_TABLES
 from powercontext.builtin.persistence.errors import PersistenceError
-from powercontext.builtin.persistence.migrations.atomic_memory_evidence import (
-    AtomicMemoryEvidenceSchemaError,
-    require_atomic_memory_evidence_schema,
-)
 
 LEGACY_CITATION_COLUMN = "memory_citations"
 _LEGACY_CITATION_TABLES = ("pc_artifacts", "pc_artifact_candidate_versions", "pc_candidate_versions")
@@ -95,16 +90,11 @@ async def legacy_foreign_keys(connection: AsyncConnection, tables: set[str]) -> 
 async def atomic_memory_readiness_issues(
     connection: AsyncConnection, tables: set[str] | None = None, *, collections_removed: bool = True
 ) -> list[str]:
-    """Check versioned schema and public migration completion without reading retained history."""
+    """Check public migration completion, allowing collections only during offline pre-removal acceptance."""
 
     if tables is None:
         tables = set(await connection.run_sync(lambda value: inspect(value).get_table_names()))
     issues: list[str] = []
-    if "pc_artifacts" in tables or any(table.name in tables for table in ATOMIC_MEMORY_EVIDENCE_TABLES):
-        try:
-            await require_atomic_memory_evidence_schema(connection, tables)
-        except AtomicMemoryEvidenceSchemaError as error:
-            issues.append(str(error))
     if (
         collections_removed
         and "pc_artifacts" in tables

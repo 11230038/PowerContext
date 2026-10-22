@@ -23,7 +23,6 @@ from typing import Literal, cast
 
 from powercontext.sources import (
     TEXT_EVIDENCE_PROJECTION_KEY,
-    MemoryEvidenceDeclaration,
     Source,
     SourceMaterialization,
     SourceProjection,
@@ -93,7 +92,6 @@ class TextFileSnapshotSourceDefinition:
     name = TEXT_FILE_SNAPSHOT_SOURCE_NAME
     version = "1"
     source_class = TextFileSnapshotSource
-    memory_evidence: MemoryEvidenceDeclaration | None = None
 
     def __init__(self) -> None:
         projection = cast(SourceProjection[TextFileSnapshotSource], TextFileEvidenceProjection())

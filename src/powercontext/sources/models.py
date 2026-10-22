@@ -60,8 +60,6 @@ class SourceProjectionKey(BaseModel):
 class Source(BaseModel):
     """Base value for an adapter-owned Source description."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
     name: str
     definition_version: str = "1"
     materialization: SourceMaterialization

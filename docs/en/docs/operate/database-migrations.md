@@ -14,13 +14,13 @@ The design follows [RFC #1771](https://github.com/oceanbase/powercontext/pull/17
 
 `powercontext server db-migrate status/plan/apply/verify` default to `--bundle server` and use the configured persistent SQLite, embedded seekDB, or OceanBase MySQL database. Explicit environment files are authoritative; arbitrary bundle paths are not accepted.
 
-The full Server path registers the actual 1.3.0 no-vector, Code-disabled configuration as `s1300 → s1400 → s1401`. It covers the complete schema, Candidate renaming and retained history, Dream task formats, Processing ownership, full-text projections, and Source evidence. Unknown layouts, extra objects, vector/Code configurations, and unregistered sources fail before writes. Older Memory collection conversion is outside this path.
+The full Server path registers the actual 1.3.0 no-vector, Code-disabled configuration as `s1300 → s1400`. It covers the complete schema, Candidate renaming and retained history, Dream task formats, Processing ownership, full-text projections, and existing Source references. Unknown layouts, extra objects, vector/Code configurations, and unregistered sources fail before writes. Older Memory collection conversion is outside this path.
 
 Only successful schema, domain, projection, and task validation returns `state=ready`, `readiness_scope=server`, and `server_ready=true`. Publication also requires installed-artifact acceptance on all three backends. An implemented path is not evidence that a release passed acceptance; consult the installation guide and release gate for support status.
 
 Stop all writers and drain queued/running 1.3.0 Dream tasks before upgrading: the target cannot execute the old prompt contract. Terminal task payloads and pending Processing counters are preserved; old worker leases are fenced. Registered capability additions retain the old automatic-processing choices instead of replacing ownership with the current configuration.
 
-Old Candidate tables are retained as `pc_retained_dream_candidate_heads` and `pc_retained_dream_candidate_versions` for migration-copy verification. They and the backup are not live write targets; subsequent business changes are not compared against old snapshots. New historical Artifact provenance fields remain unknown, and Source evidence is not inferred from old references. Projection rebuilds and verification scan their tables; budget downtime and capacity for backups and retained copies.
+Old Candidate tables are retained as `pc_retained_dream_candidate_heads` and `pc_retained_dream_candidate_versions` for migration-copy verification. They and the backup are not live write targets; subsequent business changes are not compared against old snapshots. New historical Artifact provenance fields remain unknown, and existing Source references are preserved. Projection rebuilds and verification scan their tables; budget downtime and capacity for backups and retained copies.
 
 Ordinary Server startup checks readiness without repairing an existing database. Empty local persistent SQLite/seekDB storage initializes through the same revision chain; OceanBase requires an explicit maintenance job first. In-memory SQLite remains transient runtime storage. A changed schema or inconsistent projection requires maintenance, not restart-based repair.
 
@@ -351,7 +351,7 @@ seekdb/OceanBase DDL may commit implicitly, so one Python transaction cannot mak
 recognizes only the registered sequence: `p0001` creates the four frozen tables and two indexes; `p0002` adds the two
 nullable `MEDIUMBLOB` citation columns; `p0003` removes the tag-family CHECK. Actual schema, data checks, and persisted
 maintenance evidence must establish the known completed prefix before continuing. `p0004` adds exact-revision Artifact
-handles; `p0005` adds Source evidence storage without attesting historical content. Alembic advances the version only
+handles. Alembic advances the version only
 after the revision's postconditions pass. Unknown objects, layouts, or partial transitions block execution instead of
 being optimistically stamped.
 
@@ -376,7 +376,7 @@ bundle for retry. Released revision resources and their recorded checksums remai
 Parameter-free DDL uses statement-scoped driver execution options so CHECK remainder operators and percent-containing
 SQL literals reach the backend unchanged.
 
-Repositories run after schema checks. The full Server `s1300 → s1400 → s1401` chain registers exact per-statement schema transitions and recovery prefixes through `mysql_state_layouts`. Domain steps attach to the shared revision and use its connection, lock, and recovery point; verification precedes version advancement. Read-only live checks are separate from migration-copy validation. Vector configurations still require separate registration.
+Repositories run after schema checks. The full Server `s1300 → s1400` chain registers exact per-statement schema transitions and recovery prefixes through `mysql_state_layouts`. Domain steps attach to the shared revision and use its connection, lock, and recovery point; verification precedes version advancement. Read-only live checks are separate from migration-copy validation. Vector configurations still require separate registration.
 
 One version table offers no generic run-ID resume. After interruption, inspect actual schema/data through read-only
 commands. Ambiguous state returns `recovery_required`; never blindly stamp or replace the original recovery point with a

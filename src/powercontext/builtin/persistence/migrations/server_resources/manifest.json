@@ -12,11 +12,6 @@
       "dream/manifest.json",
       "mysql_operations.py",
       "schemas/mysql-s1400.json"
-    ],
-    "s1401": [
-      "schemas/atomic_memory_evidence_v1.json",
-      "mysql_operations.py",
-      "schemas/mysql-s1401.json"
     ]
   },
   "sqlite_baselines": {
@@ -28,9 +23,6 @@
     ],
     "s1400": [
       "9064ecb0c6233884e64312a1a9a48a6c52b7c379724fa83f9b77b90ed1ee0381"
-    ],
-    "s1401": [
-      "c2684f7c7a3476ebefd9f0c7b837765299002379948f1a08f369943a0d461f09"
     ]
   },
   "affected_objects": [
@@ -122,10 +114,7 @@
     "pc_topic_memory_work_blocks",
     "pc_topic_memory_work_budgets",
     "pc_retained_dream_candidate_heads",
-    "pc_retained_dream_candidate_versions",
-    "pc_atomic_memory_evidence_schema",
-    "pc_atomic_memory_evidence_history",
-    "pc_source_evidence_bindings"
+    "pc_retained_dream_candidate_versions"
   ],
   "readiness_scope": "server",
   "retained_objects": [
@@ -152,29 +141,11 @@
         "seekdb",
         "oceanbase"
       ]
-    },
-    {
-      "id": "source_evidence",
-      "revision": "s1401",
-      "kind": "data",
-      "module": "evidence_domain.py",
-      "depends_on": [
-        "server_upgrade"
-      ],
-      "backends": [
-        "sqlite",
-        "seekdb",
-        "oceanbase"
-      ]
     }
   ],
   "domain_readiness": {
     "s1400": [
       "server_upgrade"
-    ],
-    "s1401": [
-      "server_upgrade",
-      "source_evidence"
     ]
   },
   "retained_fingerprints": {
@@ -187,8 +158,7 @@
   },
   "mysql_state_layouts": [
     "schemas/mysql-s1300.json",
-    "schemas/mysql-s1400.json",
-    "schemas/mysql-s1401.json"
+    "schemas/mysql-s1400.json"
   ],
   "mysql_history": "mysql"
 }

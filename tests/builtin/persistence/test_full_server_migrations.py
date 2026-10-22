@@ -70,7 +70,7 @@ def dump(path):
 def test_complete_upgrade_preserves_history_backup_and_repeated_apply(source):
     before = dump(source.database)
     plan = source.plan()
-    assert plan.source_revision == "s1300" and plan.target_revision == "s1401"
+    assert plan.source_revision == "s1300" and plan.target_revision == "s1400"
     assert dump(source.database) == before
     result = apply(source)
     assert result.readiness_scope == "server" and result.backup_state == "completed"
@@ -79,7 +79,6 @@ def test_complete_upgrade_preserves_history_backup_and_repeated_apply(source):
         assert connection.execute(
             "SELECT content,created_at,created_by,restored_from_revision,rollback_reason FROM pc_artifacts"
         ).fetchall() == [(b'{"history":"unchanged"}', None, None, None, None)]
-        assert connection.execute("SELECT COUNT(*) FROM pc_atomic_memory_evidence_history").fetchone() == (0,)
     after = dump(source.database)
     assert not apply(source).changed
     assert source.verify().readiness_scope == "server"
