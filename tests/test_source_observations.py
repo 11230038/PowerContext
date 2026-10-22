@@ -17,11 +17,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import urllib.request
+from decimal import Decimal
 from typing import Self
 
 import pytest
 import rfc8785
 from pydantic import ConfigDict, Field, ValidationError, field_serializer
+from pydantic.alias_generators import to_camel
 from referencing.exceptions import Unresolvable
 
 from powercontext.builtin.persistence.source_definitions import SourceDefinitionManifestRepository
@@ -222,6 +224,110 @@ def test_alias_serialization_remote_manifest_and_payload_remain_upgrade_stable(t
     asyncio.run(scenario())
 
 
+def test_optional_alias_keeps_the_preexisting_manifest_fingerprint(tmp_path) -> None:
+    class VersionedSource(Source):
+        model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+        body: str
+
+    class VersionedAdapter:
+        name = "versioned-source"
+        input_class = str
+        source_class = VersionedSource
+
+        async def resolve(self, value: str, /) -> VersionedSource:
+            return VersionedSource(
+                name="versioned",
+                definition_version="2",
+                materialization=SourceMaterialization.CAPTURED,
+                body=value,
+            )
+
+        async def read(self, source: VersionedSource, /) -> str:
+            return source.body
+
+    async def scenario() -> None:
+        definition = AdapterSourceDefinition(VersionedAdapter(), version="2")
+        registry = SourceDefinitionRegistry((definition,))
+        source = await registry.resolve("Retained.")
+        manifest = manifest_for_definition(definition)
+        observation = project_source_for_transport(registry, source)
+        baseline = {
+            "name": definition.name,
+            "version": definition.version,
+            "source_schema": VersionedSource.model_json_schema(),
+            "projections": [],
+        }
+        assert manifest.source_schema == VersionedSource.model_json_schema()
+        assert manifest.fingerprint == f"sha256:{hashlib.sha256(rfc8785.dumps(baseline)).hexdigest()}"
+        assert observation.payload["definition_version"] == "2"
+
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'optional-alias.db'}")
+        async with SQLiteProfile.open(config, tables=SHARED_TABLES) as profile:
+            contexts = RelationalContexts(database=profile.database, source_registry=SourceDefinitionRegistry(()))
+            assert await contexts.register_source_definition(manifest) == manifest
+        async with SQLiteProfile.open(config, tables=SHARED_TABLES) as profile:
+            contexts = RelationalContexts(database=profile.database, source_registry=SourceDefinitionRegistry(()))
+            assert await contexts.register_source_definition(manifest) == manifest
+            receipt = await contexts.submit_source_observation(
+                SubmitSourceObservation(scope_id="scope-a", observation=observation)
+            )
+            assert receipt.source_ref.source_id == "versioned"
+
+    asyncio.run(scenario())
+
+
+def test_decimal_source_manifest_fingerprint_survives_upgrade(tmp_path) -> None:
+    class AmountSource(Source):
+        amount: Decimal
+
+    class AmountAdapter:
+        name = "amount-source"
+        input_class = str
+        source_class = AmountSource
+
+        async def resolve(self, value: str, /) -> AmountSource:
+            return AmountSource(
+                name="amount",
+                definition_version="1",
+                materialization=SourceMaterialization.CAPTURED,
+                amount=Decimal(value),
+            )
+
+        async def read(self, source: AmountSource, /) -> str:
+            return str(source.amount)
+
+    async def scenario() -> None:
+        definition = AdapterSourceDefinition(AmountAdapter(), version="1")
+        registry = SourceDefinitionRegistry((definition,))
+        source = await registry.resolve("1.25")
+        manifest = manifest_for_definition(definition)
+        observation = project_source_for_transport(registry, source)
+        baseline = {
+            "name": definition.name,
+            "version": definition.version,
+            "source_schema": AmountSource.model_json_schema(),
+            "projections": [],
+        }
+        baseline_fingerprint = f"sha256:{hashlib.sha256(rfc8785.dumps(baseline)).hexdigest()}"
+        assert manifest.source_schema == AmountSource.model_json_schema()
+        assert manifest.fingerprint == baseline_fingerprint
+        assert observation.payload["amount"] == "1.25"
+
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'decimal-upgrade.db'}")
+        async with SQLiteProfile.open(config, tables=SHARED_TABLES) as profile:
+            contexts = RelationalContexts(database=profile.database, source_registry=SourceDefinitionRegistry(()))
+            assert await contexts.register_source_definition(manifest) == manifest
+        async with SQLiteProfile.open(config, tables=SHARED_TABLES) as profile:
+            contexts = RelationalContexts(database=profile.database, source_registry=SourceDefinitionRegistry(()))
+            assert await contexts.register_source_definition(manifest) == manifest
+            receipt = await contexts.submit_source_observation(
+                SubmitSourceObservation(scope_id="scope-a", observation=observation)
+            )
+            assert receipt.source_ref.source_id == "amount"
+
+    asyncio.run(scenario())
+
+
 def test_recursive_source_transport_preserves_canonical_nested_payload() -> None:
     class RecursiveSource(Source):
         name: str = Field(serialization_alias="source_name")
@@ -324,9 +430,7 @@ def test_remote_identity_exclusions_and_serializers_fail_observation_validation(
         for source_class in (ExcludedIdentitySource, TransformedIdentitySource):
             definition = AdapterSourceDefinition(Adapter(source_class), version="1")
             registry = SourceDefinitionRegistry((definition,))
-            assert manifest_for_definition(definition).source_schema == source_class.model_json_schema(
-                mode="serialization", by_alias=False
-            )
+            assert manifest_for_definition(definition).source_schema == source_class.model_json_schema()
             source = await registry.resolve("identity")
             with pytest.raises(ValidationError):
                 project_source_for_transport(registry, source)
