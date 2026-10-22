@@ -269,8 +269,9 @@ def test_native_public_migration_of_ready_storage_restores_a_running_service(
 
 
 @pytest.mark.parametrize("originally_running", [True, False], ids=["running", "stopped"])
+@pytest.mark.parametrize("backup_blocked", [False, True], ids=["healthy-backup", "backup-retry"])
 def test_native_public_migration_switches_an_installed_130_service(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, originally_running: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, originally_running: bool, backup_blocked: bool
 ) -> None:
     """Upgrade storage populated by the released service through its actual native manager."""
 
@@ -335,6 +336,43 @@ def test_native_public_migration_switches_an_installed_130_service(
             assert reviewed["service"]["originally_running"] is originally_running
             assert reviewed["service"]["definition"]["python_executable"] == definition.python_executable
             assert reviewed["service"]["target_definition"]["python_executable"] == service_python_executable()
+            if backup_blocked:
+                database = tmp_path / "data" / "powercontext.db"
+                blocked_directory = database.with_name(database.name + ".pc-migration-backups")
+                blocked_directory.write_text("Backup storage is unavailable.", encoding="utf-8")
+                failed = CliRunner().invoke(
+                    cli,
+                    [
+                        "server",
+                        "db-migrate",
+                        "apply",
+                        "--env-file",
+                        str(environment),
+                        "--manage-service",
+                        "--backup",
+                        "auto",
+                        "--plan-id",
+                        reviewed["plan_id"],
+                        "--yes",
+                        "--maintenance-confirmed",
+                    ],
+                )
+                assert failed.exit_code == 1, failed.output
+                assert json.loads(failed.output)["error"] == "backup_failed"
+                assert adapter.manager_state() in {ManagerState.INACTIVE, ManagerState.FAILED}
+                assert controller.maintenance_path.exists()
+                assert adapter.inspect().definition == definition
+                with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as unchanged:
+                    assert unchanged.execute(
+                        "SELECT title FROM pc_scopes WHERE scope_id=?", (scope_id,)
+                    ).fetchone() == ("Installed service upgrade",)
+                    assert (
+                        unchanged.execute("SELECT name FROM sqlite_master WHERE name='pc_schema_revision'").fetchall()
+                        == []
+                    )
+                blocked_directory.unlink()
+                reviewed = _native_migration_command(cli, environment, "plan")
+                assert reviewed["service"]["originally_running"] is originally_running
             result = _native_migration_command(
                 cli,
                 environment,
