@@ -37,6 +37,17 @@ def console(python: Path) -> Path:
     return python.with_name("powercontext.exe" if os.name == "nt" else "powercontext")
 
 
+def database_environment(backend: str, database: Path, environment: dict[str, str]) -> dict[str, str]:
+    if backend == "seekdb":
+        return {"POWERCONTEXT_SERVER_DATABASE_KIND": "seekdb", "POWERCONTEXT_SERVER_DATABASE_PATH": str(database)}
+    if backend == "oceanbase":
+        return {
+            "POWERCONTEXT_SERVER_DATABASE_KIND": "oceanbase",
+            "POWERCONTEXT_SERVER_DATABASE_URL": environment["PC_UPGRADE_OCEANBASE_URL"],
+        }
+    return {"POWERCONTEXT_SERVER_DATABASE_URL": f"sqlite+aiosqlite:///{database}"}
+
+
 def source_database(python: Path, directory: Path, environment: dict[str, str], log: Path) -> dict[str, str | bool]:
     port = _available_port()
     base_url = f"http://127.0.0.1:{port}"
@@ -173,18 +184,10 @@ def main() -> None:
         require(metadata["source"]["powercontext"] == "1.3.0", "Wrong source package")
         require(metadata["target"]["powercontext"] == wheel_version(wheel), "Wrong target package")
         database = directory / "database"
-        if args.backend == "seekdb":
-            database_environment = {
-                "POWERCONTEXT_SERVER_DATABASE_KIND": "seekdb",
-                "POWERCONTEXT_SERVER_DATABASE_PATH": str(database),
-            }
-        elif args.backend == "oceanbase":
-            database_environment = {"POWERCONTEXT_SERVER_DATABASE_URL": environment["PC_UPGRADE_OCEANBASE_URL"]}
-        else:
-            database_environment = {"POWERCONTEXT_SERVER_DATABASE_URL": f"sqlite+aiosqlite:///{database}"}
+        database_configuration = database_environment(args.backend, database, environment)
         environment.update({
             "POWERCONTEXT_HOME": str(directory / "home"),
-            **database_environment,
+            **database_configuration,
             "POWERCONTEXT_SERVER_ACCESS_MODE": "disabled",
         })
         probe = [
@@ -221,7 +224,7 @@ def main() -> None:
             "Source fixture lacks historical Server objects",
         )
         env_file = directory / "deployment.env"
-        env_file.write_text("".join(f"{key}={value}\n" for key, value in database_environment.items()))
+        env_file.write_text("".join(f"{key}={value}\n" for key, value in database_configuration.items()))
         target = str(console(interpreters["target"]))
         rejected(
             [target, "server", "db-migrate", "status", "--env-file", str(env_file)],

@@ -15,6 +15,7 @@
 """Release-blocking regressions, not evidence that any database upgrade works."""
 
 import json
+import os
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
@@ -23,6 +24,9 @@ import pytest
 import upgrade_release_gate as gate
 import upgrade_release_matrix as matrix
 import yaml
+from ci_legacy_upgrade_rejection import database_environment
+
+from powercontext.server.settings import ServerSettings
 
 
 @pytest.fixture
@@ -391,3 +395,15 @@ def test_upgrade_jobs_require_real_backends_and_always_clean_up(workflow_name, j
     assert "/pc_upgrade_fresh?" in job["env"]["PC_UPGRADE_OCEANBASE_FRESH_URL"]
     cleanup = next(step for step in steps if "docker rm --force upgrade-oceanbase" in step.get("run", ""))
     assert cleanup["if"] == "always()"
+
+
+def test_oceanbase_fixture_selects_the_oceanbase_server_profile(tmp_path, monkeypatch):
+    for key in os.environ:
+        if key.startswith("POWERCONTEXT_"):
+            monkeypatch.delenv(key)
+    url = "mysql+aoceanbase://root%40test:test@127.0.0.1:2881/pc_upgrade_test?charset=utf8mb4"
+    for key, value in database_environment("oceanbase", tmp_path / "unused", {"PC_UPGRADE_OCEANBASE_URL": url}).items():
+        monkeypatch.setenv(key, value)
+    settings = ServerSettings()
+    assert settings.database.kind == "oceanbase"
+    assert settings.database.url.get_secret_value() == url
