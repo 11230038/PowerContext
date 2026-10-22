@@ -24,11 +24,14 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import signal
 import socket
 import subprocess
+import threading
 import time
 from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -37,6 +40,99 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 TOKEN = "isolated-upgrade-acceptance-token"  # noqa: S105 -- disposable fixture, never a deployment credential
+AUTOMATIC_MEMORY = "Upgrade fixture background processing retains source evidence."
+
+
+def objects(value):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from objects(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from objects(child)
+    elif isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            try:
+                decoded, _ = json.JSONDecoder().raw_decode(value[value.index("{") :])
+            except ValueError:
+                return
+        if isinstance(decoded, (dict, list)):
+            yield from objects(decoded)
+
+
+@pytest.fixture(scope="session")
+def model_gateway():
+    stages = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):  # noqa: A002 -- stdlib signature
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            payload = next(obj for obj in objects(body["messages"]) if "evidence" in obj)
+            if "proposal" in payload:
+                stages.append("reconcile")
+                proposal = payload["proposal"]
+                duplicate = next((item for item in payload["related"] if item["text"] == proposal["text"]), None)
+                value = {
+                    "action": "noop" if duplicate else "create",
+                    "compared_ids": [item["item_id"] for item in payload["related"]],
+                    "target_ids": [duplicate["item_id"]] if duplicate else [],
+                    "content": None if duplicate else {"kind": proposal["kind"], "text": proposal["text"]},
+                    "evidence_ids": [] if duplicate else proposal["evidence_ids"],
+                    "reason": "Controlled upgrade acceptance",
+                }
+            else:
+                stages.append("extract")
+                value = {
+                    "candidates": [
+                        {"kind": "fact", "text": AUTOMATIC_MEMORY, "evidence_ids": [item["evidence_id"]]}
+                        for item in payload["evidence"]
+                        if AUTOMATIC_MEMORY in json.dumps(item["content"])
+                    ]
+                }
+            output = json.dumps(value)
+            tools = body.get("tools", [])
+            message = {"role": "assistant", "content": output}
+            if tools:
+                message = {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "upgrade-generation",
+                            "type": "function",
+                            "function": {"name": tools[0]["function"]["name"], "arguments": output},
+                        }
+                    ],
+                }
+            response = json.dumps({
+                "id": "upgrade-fixture",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "upgrade-fixture",
+                "choices": [{"index": 0, "message": message, "finish_reason": "tool_calls" if tools else "stop"}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+    gateway = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=gateway.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield {"url": f"http://127.0.0.1:{gateway.server_port}/v1", "stages": stages}
+    finally:
+        gateway.shutdown()
+        gateway.server_close()
+        thread.join(timeout=5)
 
 
 def digest(value):
@@ -124,6 +220,11 @@ def environment_for(case, *, fresh=False):
         "POWERCONTEXT_SERVER_ACCESS_MODE": "enforced",
         "POWERCONTEXT_SERVER_CURSOR_SIGNING_SECRET": "isolated-upgrade-cursor-signing-key-0001",
         "POWERCONTEXT_SERVER_RUNTIME_ARTIFACT_PROCESSING_ROLE": "all",
+        "POWERCONTEXT_SERVER_RUNTIME_ARTIFACT_PROCESSING_FAMILIES": '["memory"]',
+        "POWERCONTEXT_SERVER_RUNTIME_SCHEDULE_SECONDS": "3600",
+        "POWERCONTEXT_SERVER_INFERENCE_GENERATION_MODEL": "openai-chat:upgrade-fixture",
+        "POWERCONTEXT_SERVER_INFERENCE_GENERATION_BASE_URL": case["model"]["url"],
+        "OPENAI_API_KEY": "isolated-upgrade-fixture",
         "POWERCONTEXT_SERVER_MCP_ENABLED": "false",
         "NO_PROXY": "localhost,127.0.0.1",
         "no_proxy": "localhost,127.0.0.1",
@@ -270,7 +371,7 @@ def seed(client, *, candidate_prefix):
 
 
 @pytest.fixture(scope="session")
-def case():
+def case(model_gateway):
     # Missing gate inputs are errors, never skips or an implicit local database.
     assert os.environ["PC_UPGRADE_SOURCE_VERSION"] == "1.3.0", "Add a reviewed adapter for another source release"
     return {
@@ -279,6 +380,7 @@ def case():
         "backend": os.environ["PC_UPGRADE_BACKEND"],
         "work": Path(os.environ["PC_UPGRADE_WORK"]),
         "report": Path(os.environ["PC_UPGRADE_REPORT_DIR"]),
+        "model": model_gateway,
     }
 
 
@@ -319,7 +421,9 @@ def migrated(case, historical, rejected_legacy_startup):
     environment = environment_for(case)
     env_file = case["work"] / "deployment.env"
     env_file.write_text(
-        "".join(f"{key}={value}\n" for key, value in environment.items() if key.startswith("POWERCONTEXT_"))
+        "".join(
+            f"{key}={shlex.quote(value)}\n" for key, value in environment.items() if key.startswith("POWERCONTEXT_")
+        )
     )
     common = ["--env-file", str(env_file)]
     if case["backend"] == "oceanbase":
@@ -392,6 +496,56 @@ def target(case, migrated):
         yield client
 
 
+@pytest.fixture(scope="session")
+def processed_background(case, migrated):
+    historical = migrated["historical"]
+    environment = environment_for(case)
+    environment["POWERCONTEXT_SERVER_RUNTIME_SCHEDULE_SECONDS"] = "0.05"
+    source_id = "upgrade-background-worker"
+    stages = case["model"]["stages"]
+    start = len(stages)
+    with server(case["target"], environment, case["work"], case["report"] / "worker-server.log") as client:
+        post(
+            client,
+            "/v1/sources/content",
+            {"scope_id": historical["scope"], "source_id": source_id, "content": AUTOMATIC_MEMORY},
+        )
+        deadline = time.monotonic() + 90
+        while True:
+            entries = post(client, "/v1/memory/entries/list", {"scope_id": historical["scope"]})["entries"]
+            generated = next((item for item in entries if item["text"] == AUTOMATIC_MEMORY), None)
+            metrics = client.get("/metrics")
+            metrics.raise_for_status()
+            report = re.search(
+                r'^powercontext_server_model_usage_worker_reports_total\{outcome="received"\} (\S+)',
+                metrics.text,
+                re.MULTILINE,
+            )
+            if generated and report and float(report[1]) > 0:
+                break
+            assert time.monotonic() < deadline, "The installed target Worker did not publish and report completion"
+            time.sleep(0.2)
+        artifact = generated["artifact"]
+        revision = client.get(
+            f"/v1/scopes/{historical['scope']}/artifacts/{artifact['family']}/"
+            f"{artifact['artifact_id']}/revisions/{artifact['revision']}"
+        )
+        revision.raise_for_status()
+        assert source_id in {item["source_id"] for item in revision.json()["sources"]}
+        assert {"extract", "reconcile"} <= set(stages[start:])
+        found = post(
+            client,
+            "/v1/memory/search",
+            {"scope_id": historical["scope"], "query": "background processing", "mode": "fts"},
+        )["hits"]
+        assert AUTOMATIC_MEMORY in {item["memory"]["text"] for item in found}
+    return {
+        "model_stages": sorted(set(stages[start:])),
+        "worker_report_received": True,
+        "source_evidence_verified": True,
+    }
+
+
 def test_source_release_database(historical):
     assert historical["memory"] and historical["candidate"]["version"] == 2
     assert historical["task"]["requested_generation"] > historical["task"]["handled_generation"]
@@ -458,6 +612,10 @@ def test_candidates_and_processing(case, migrated):
         assert stale.status_code == 409, "A stale revision must not publish a duplicate Artifact"
 
 
+def test_background_processing(processed_background):
+    assert processed_background["worker_report_received"] and processed_background["source_evidence_verified"]
+
+
 def test_preserved_history_and_cursors(target, historical):
     expected = historical["continuation"]
     page = target.get("/v1/scopes", params={"limit": 1, "cursor": historical["cursor"]})
@@ -507,12 +665,14 @@ def canonical_schema(snapshot):
     }
 
 
-def test_fresh_upgrade_equivalence(case, migrated):
+def test_fresh_upgrade_equivalence(case, migrated, processed_background):
     if case["backend"] == "oceanbase":
         environment = environment_for(case, fresh=True)
         env_file = case["work"] / "fresh.env"
         env_file.write_text(
-            "".join(f"{key}={value}\n" for key, value in environment.items() if key.startswith("POWERCONTEXT_"))
+            "".join(
+                f"{key}={shlex.quote(value)}\n" for key, value in environment.items() if key.startswith("POWERCONTEXT_")
+            )
         )
         common = [
             "--env-file",
@@ -570,6 +730,7 @@ def test_fresh_upgrade_equivalence(case, migrated):
         "source_schema": digest(migrated["historical"]["schema"]),
         "target_schema": digest(actual),
         "fresh_schema": digest(expected),
+        "background_processing": processed_background,
     }
     if case["backend"] == "oceanbase":
         evidence.update(tenant_mode=inventory["tenant_mode"], proxy_version=inventory["proxy_version"])

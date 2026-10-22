@@ -50,6 +50,7 @@ PHASES = frozenset({
     "test_read_write_and_retrieval",
     "test_authorization",
     "test_candidates_and_processing",
+    "test_background_processing",
     "test_preserved_history_and_cursors",
     "test_fresh_upgrade_equivalence",
 })

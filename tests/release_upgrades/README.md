@@ -63,7 +63,8 @@ Provide these behavioral tests (additional tests are allowed):
 | `test_target_startup` | Start the target Server against the migrated database and verify readiness. |
 | `test_read_write_and_retrieval` | Read the old records, write new ones, and retrieve both through public interfaces. |
 | `test_authorization` | Verify permitted and denied access and preservation of relevant grants. |
-| `test_candidates_and_processing` | Verify retained Candidates and CAS approval; load and acknowledge the old pending intent using the target installed SDK, including idempotency. This does not execute a model-driven Worker. |
+| `test_candidates_and_processing` | Verify retained Candidates and CAS approval; load and acknowledge the old pending intent using the target installed SDK, including idempotency. |
+| `test_background_processing` | Run the installed target's actual Memory Worker against a local controlled inference endpoint; capture a new Source, verify the published Memory's exact Source reference and FTS retrieval, and require the child Worker's usage report. |
 | `test_preserved_history_and_cursors` | Verify exact history/references and unchanged or declared-transformed cursor and receipt semantics. |
 | `test_fresh_upgrade_equivalence` | Initialize a fresh target database; compare schema/backend objects and behavior with the upgraded database. The current suite has no retained/archive object exclusions. |
 
@@ -80,9 +81,11 @@ records installed Python/package versions, target wheel SHA-256, policy SHA-256,
 
 Evidence is created during the gate run in a new directory. There is no option to import old successful reports.
 Test names and metadata do not themselves prove correctness: reviewers must inspect the assertions and confirm
-they follow actual installed operations and compare persisted data. The profile exercises explicit writes and FTS,
-not vector storage or model-generated content. The processing fixture tests persisted intent compatibility and
-acknowledgment, not Worker execution. Add separately reviewed profiles before claiming those optional paths.
+they follow actual installed operations and compare persisted data. The profile exercises explicit writes, FTS and
+actual background Memory processing with controlled model responses. Both installed releases declare the Memory
+capability and use the same processing ownership; the Worker check changes only the execution interval after migration.
+The separate SDK fixture tests the old pending intent's format and acknowledgment. Controlled responses establish
+execution and evidence preservation, not real-model quality. Vector storage needs separately reviewed profiles.
 SQLite inventories include indexes, views and triggers; MySQL-family table DDL includes indexes and constraints,
 and views are collected separately. MySQL comparison parses columns, indexes (including parser properties), constraints, and CHECK expressions, ignoring only physical formatting and backend-generated constraint names. Views and triggers are collected independently. SQLite normalizes whitespace and identifier quoting. Structural differences fail rather than being silently excluded.
 
