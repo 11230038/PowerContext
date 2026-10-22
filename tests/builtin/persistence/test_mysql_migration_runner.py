@@ -38,12 +38,15 @@ from sqlalchemy.pool import NullPool
 from powercontext.builtin.persistence.migrations import mysql as mysql_migrations
 from powercontext.builtin.persistence.migrations.backup import BackupCapabilities, BackupProvider
 from powercontext.builtin.persistence.migrations.connections import BackendIdentity, MaintenanceConnections
-from powercontext.builtin.persistence.migrations.deployment import production_bundle
+from powercontext.builtin.persistence.migrations.deployment import production_bundle, server_bundle
 from powercontext.builtin.persistence.migrations.models import MigrationError, MigrationPlan
 from powercontext.builtin.persistence.migrations.mysql import MySQLMigrationRunner
+from powercontext.builtin.persistence.migrations.mysql_schema import mysql_inventory
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.oceanbase import profile as oceanbase_profile
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
+from powercontext.builtin.runtime.config import BuiltinConfig
+from powercontext.builtin.runtime.processing_registry import canonical_processing_manifest
 
 
 @dataclass(frozen=True)
@@ -370,6 +373,111 @@ def _interrupt_after_ddl(
             _apply(runner, policy=policy)
     finally:
         event.remove(Engine, "after_cursor_execute", interrupt)
+
+
+def _full_server_runner(
+    backend: _BackendTarget, *, acknowledge_previous_run: str | None = None
+) -> MySQLMigrationRunner:
+    return MySQLMigrationRunner(
+        backend.connections(acknowledge_previous_run=acknowledge_previous_run),
+        server_bundle(),
+        evidence_directory=backend.evidence_directory,
+        configuration={
+            "processing_manifest": canonical_processing_manifest(BuiltinConfig()),
+            "embedding_enabled": False,
+        },
+    )
+
+
+def _load_full_server_baseline(backend: _BackendTarget) -> None:
+    runner = _full_server_runner(backend)
+
+    def load(connection: Connection | None, _identity: BackendIdentity, _guard: Callable[[], None]) -> None:
+        assert connection is not None
+        source = runner.schema.recovery(mysql_inventory(connection), None)
+        assert source.revision == "s1300"
+        for statement in source.pending_statements:
+            runner.schema.execute(connection, statement, runner.configuration)
+        connection.exec_driver_sql(
+            "INSERT INTO pc_scopes (scope_id,title,summary,scope_id_search,title_search,summary_search,version) "
+            "VALUES ('historical','retained title','retained summary','historical','retained title','retained summary',1)"
+        )
+        connection.execute(
+            text(
+                "INSERT INTO pc_artifacts (scope_id,family,artifact_id,revision,content) "
+                "VALUES ('historical','custom-family','preserved',1,:content)"
+            ),
+            {"content": b'{"history":"unchanged"}'},
+        )
+        connection.commit()
+
+    backend.connections().run(load, writable=True)
+
+
+@pytest.mark.parametrize(
+    ("interruption", "recorded_revision"),
+    [
+        ("CREATE TABLE pc_retained_dream_candidate_versions", "s1300"),
+        ("ALTER TABLE pc_artifact_candidate_versions RENAME TO pc_candidate_versions", "s1300"),
+        ("UPDATE pc_artifact_processing_schema SET config_manifest", "s1300"),
+        ("CREATE TABLE pc_memory_artifact_archive", "s1400"),
+    ],
+    ids=("retained-copy", "candidate-rename", "domain-processing", "next-revision"),
+)
+def test_mysql_full_server_interruption_preserves_history_and_original_maintenance(
+    backend: _BackendTarget, interruption: str, recorded_revision: str
+) -> None:
+    """Native backend recovery covers the full Server chain, not just the Artifact prototype."""
+
+    _load_full_server_baseline(backend)
+    runner = _full_server_runner(backend)
+    original = runner.plan(backup_policy="manual")
+    assert original.source_revision == "s1300" and original.target_revision == "s1401"
+    _interrupt_after_ddl(runner, interruption)
+    journals = list(backend.evidence_directory.rglob("maintenance.json"))
+    assert len(journals) == 1
+    interrupted = json.loads(journals[0].read_text())
+    assert interrupted["state"] == "active"
+    assert interrupted["manual_ref"] == "operator://manual-backup"
+    recovery = _full_server_runner(backend).plan(backup_policy="manual")
+    assert recovery.state == "recovery_required"
+    assert recovery.source_revision == recorded_revision
+    token = (recovery.coordination or {}).get("pending_run_id")
+    if isinstance(backend.config, OceanBaseConfig):
+        assert token
+        with pytest.raises(MigrationError, match="recovery_required"):
+            _apply(_full_server_runner(backend), policy="manual")
+    # The injected exception happens after the backend returned from the
+    # statement and the owned connection closed. This known test interruption
+    # permits the required declaration; arbitrary remote interruptions do not.
+    resumed = _full_server_runner(backend, acknowledge_previous_run=token)
+
+    result = _apply(resumed, policy="manual")
+
+    assert result.readiness_scope == "server" and result.revision == "s1401"
+    assert result.backup_state == "user_confirmed"
+    assert result.backup_ref == interrupted["manual_ref"]
+    assert resumed.verify().state == "ready"
+    completed = json.loads(journals[0].read_text())
+    assert completed["maintenance_window_id"] == interrupted["maintenance_window_id"]
+    assert completed["source_fingerprint"] == interrupted["source_fingerprint"]
+    assert completed["manual_ref"] == interrupted["manual_ref"]
+    assert completed["state"] == "complete"
+
+    def inspect_history(connection: Connection | None, _identity: BackendIdentity, _guard: Callable[[], None]):
+        assert connection is not None
+        return (
+            connection.exec_driver_sql(
+                "SELECT content FROM pc_artifacts WHERE scope_id='historical' AND artifact_id='preserved'"
+            ).all(),
+            connection.exec_driver_sql("SELECT title,summary FROM pc_scopes WHERE scope_id='historical'").all(),
+        )
+
+    assert backend.connections().run(inspect_history) == (
+        [(b'{"history":"unchanged"}',)],
+        [("retained title", "retained summary")],
+    )
+    assert not _apply(_full_server_runner(backend), policy="manual").changed
 
 
 def _interrupt_after_committed_citation_ddl(backend: _BackendTarget) -> None:
