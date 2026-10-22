@@ -47,6 +47,7 @@ from powercontext.builtin.persistence.migrations.mysql_schema import mysql_inven
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.oceanbase import profile as oceanbase_profile
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
+from powercontext.builtin.persistence.topic_memory_recovery_schema import recovery_statements
 from powercontext.builtin.runtime.config import BuiltinConfig, RuntimeConfig
 from powercontext.builtin.runtime.processing_registry import canonical_processing_manifest
 from powercontext.cli.app import create_cli
@@ -261,6 +262,35 @@ def _read_state(backend: _BackendTarget):
         return {"tables": tables, "revision": revision, "columns": columns, "content": content, "tags": tags}
 
     return backend.connections().run(inspect)
+
+
+def test_mysql_topic_bundle_refuses_managed_server_storage(backend: _BackendTarget) -> None:
+    from powercontext.builtin.persistence.migrations.topic_memory_recovery import TopicMemoryRecoveryMigrationRunner
+
+    def seed(connection, _identity, _guard):
+        connection.exec_driver_sql("CREATE TABLE pc_schema_revision (version_num VARCHAR(32) PRIMARY KEY NOT NULL)")
+        connection.exec_driver_sql("INSERT INTO pc_schema_revision VALUES ('unknown-future')")
+        for statement in recovery_statements("budget_v0", "mysql"):
+            connection.exec_driver_sql(statement)
+        connection.commit()
+
+    backend.connections().run(seed, writable=True)
+
+    def snapshot(connection, _identity, _guard):
+        assert connection is not None
+        return mysql_inventory(connection)
+
+    before = backend.connections().run(snapshot)
+    runner = TopicMemoryRecoveryMigrationRunner(
+        backend.config,
+        evidence_directory=backend.evidence_directory,
+        lock_coordination="single-host" if isinstance(backend.config, OceanBaseConfig) else None,
+    )
+    with pytest.raises(MigrationError, match="unsupported_target"):
+        runner.plan()
+    after = backend.connections().run(snapshot)
+    assert after == before
+    assert not list(backend.evidence_directory.rglob("topic-memory-recovery.json"))
 
 
 def test_mysql_maintenance_commits_rolls_back_and_reopens_for_ddl(backend: _BackendTarget) -> None:

@@ -92,6 +92,9 @@ apply 只修复派生行，完整 Server 校验通过后才提交。权威数据
 登记的 Topic 对象和共享处理 lease 的 fencing，不改变其他业务表；输出仍报告 `server_ready=false`。
 默认 `--bundle server` 的完整升级路径见上文。
 
+此部分 bundle 仅适用于未纳入统一框架的存储。只要数据库包含 `pc_schema_revision`，即使 revision 未知，
+也会在备份和写入前拒绝。请使用 `--bundle server` 或已登记的受管维护操作。
+
 先停止全部 API、Worker、调度和 SDK 写入者，并暂停自动重启。审阅并执行一次计划：
 
 ```bash

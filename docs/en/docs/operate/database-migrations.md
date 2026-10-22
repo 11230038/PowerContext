@@ -106,6 +106,9 @@ the pre-recovery budget layout and the attempts-table layout from implementation
 and retains terminal blocks and accepted receipts. It verifies only its registered Topic objects in an existing Server
 database, including shared processing-lease fencing; other business tables remain untouched. Its output still reports `server_ready=false`.
 
+This partial bundle is restricted to unmanaged storage. Any database containing `pc_schema_revision` is rejected before
+backup or writes, including an unknown revision. Use `--bundle server` or a registered managed maintenance operation.
+
 Stop all APIs, Workers, schedulers and SDK writers first, and suspend automatic restarts. Review and apply one plan:
 
 ```bash
