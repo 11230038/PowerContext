@@ -20,6 +20,9 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
+import sys
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -718,6 +721,78 @@ def test_mysql_full_server_interruption_preserves_history_and_original_maintenan
         [(b'{"history":"unchanged"}',)],
         [("retained title", "retained summary")],
     )
+    assert not _apply(_full_server_runner(backend), policy="manual").changed
+
+
+@pytest.mark.parametrize("backend", ("oceanbase",), indirect=True)
+def test_oceanbase_full_server_client_exit_requires_acknowledgement_and_preserves_recovery(
+    backend: _BackendTarget,
+) -> None:
+    """A dead remote client requires acknowledgement; the database engine stays running."""
+    assert isinstance(backend.config, OceanBaseConfig)
+    _load_full_server_baseline(backend)
+    root = Path(__file__).resolve().parents[3]
+    environment = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(filter(None, (str(root), os.environ.get("PYTHONPATH")))),
+        "POWERCONTEXT_MIGRATION_CRASH_TARGET": backend.config.url.get_secret_value(),
+    }
+    with (backend.evidence_directory / "crashed-client.log").open("w", encoding="utf-8") as log:
+        crashed = subprocess.run(
+            [
+                sys.executable,
+                str(root / "tests/fixtures/database_migrations/crash_after_registered_ddl.py"),
+                str(backend.evidence_directory),
+            ],
+            env=environment,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            timeout=180,
+            check=False,
+        )
+    assert crashed.returncode == 73, "The migration client did not exit at the registered DDL boundary"
+    marker = json.loads((backend.evidence_directory / "client-exit.json").read_text(encoding="utf-8"))
+    journals = list(backend.evidence_directory.rglob("maintenance.json"))
+    assert len(journals) == 1
+    interrupted = json.loads(journals[0].read_text(encoding="utf-8"))
+    assert interrupted["state"] == "active" and interrupted["manual_ref"] == "operator://manual-backup"
+
+    def client_active(connection: Connection | None, _identity: BackendIdentity, _guard: Callable[[], None]):
+        assert connection is not None
+        return connection.execute(
+            text("SELECT ID FROM information_schema.PROCESSLIST WHERE ID=:connection_id"),
+            {"connection_id": marker["connection_id"]},
+        ).first()
+
+    deadline = time.monotonic() + 15
+    while backend.connections().run(client_active) is not None:
+        assert time.monotonic() < deadline, "The terminated client's remote session did not end"
+        time.sleep(0.2)
+    recovery = _full_server_runner(backend).plan(backup_policy="manual")
+    assert recovery.state == "recovery_required" and recovery.source_revision == "s1300"
+    token = (recovery.coordination or {}).get("pending_run_id")
+    assert token
+    with pytest.raises(MigrationError, match="recovery_required"):
+        _apply(_full_server_runner(backend), policy="manual")
+    # The completed DDL and vanished remote session establish this test's known
+    # interruption. An arbitrary remote failure cannot be acknowledged blindly.
+    resumed = _full_server_runner(backend, acknowledge_previous_run=token)
+    result = _apply(resumed, policy="manual")
+    assert result.state == "ready" and result.readiness_scope == "server" and result.revision == "s1401"
+    assert result.backup_state == "user_confirmed" and result.backup_ref == interrupted["manual_ref"]
+    assert resumed.verify().state == "ready"
+    completed = json.loads(journals[0].read_text(encoding="utf-8"))
+    assert completed["state"] == "complete"
+    for key in ("maintenance_window_id", "source_fingerprint", "manual_ref"):
+        assert completed[key] == interrupted[key]
+
+    def history(connection: Connection | None, _identity: BackendIdentity, _guard: Callable[[], None]):
+        assert connection is not None
+        return connection.exec_driver_sql(
+            "SELECT content FROM pc_artifacts WHERE scope_id='historical' AND artifact_id='preserved'"
+        ).scalar_one()
+
+    assert backend.connections().run(history) == b'{"history":"unchanged"}'
     assert not _apply(_full_server_runner(backend), policy="manual").changed
 
 
