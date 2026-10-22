@@ -453,6 +453,10 @@ def _native_upgrade_fault(
             def occupy_then_start(*, reload_definition: bool) -> None:
                 # Bind after migration and stopped checks, then let the actual
                 # native manager attempt to start the registered executable.
+                if sys.platform != "win32":
+                    # Reuse the stopped server's port even while its accepted
+                    # connections remain in TIME_WAIT.
+                    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 listener.bind(("127.0.0.1", port))
                 listener.listen(16)
                 native_start(reload_definition=reload_definition)
