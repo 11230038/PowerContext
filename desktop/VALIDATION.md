@@ -144,6 +144,18 @@ The native navigation policy permits the platform's local application origin and
 
 导航白名单按平台仅放行本地应用 origin，同时拒绝外部、其他平台、带用户信息或显式端口的打包地址。上述结果不代表签名／公证、Intel Mac、IME、VoiceOver、原生 200% 缩放、Keychain、本机 CLI 诊断或安装版 Server 工作流通过。
 
+## Installed confirmation automation
+
+On 2026-10-22, Windows x64 checks used the pinned Node 24.14.1, pnpm 11.13.1 and Rust 1.95.0 tools. The installed acceptance harness checks the exact accessible description of the application's `alertdialog`, clicks its localized cancel/confirm button through WebDriver and waits for that prompt to leave. A different prompt fails acceptance. Consecutive discard/removal prompts are handled independently. Single-instance acceptance also checks that cancelled navigation retains the connection draft and confirmed navigation reaches Overview. Lifecycle acceptance is included explicitly in the CI lint, formatting and Windows/Linux type checks.
+
+Edge and Edge WebDriver 155.0.4283.62 exercised these harness methods against the current Vite UI with synthetic IPC. Calling the native alert endpoint while the application dialog was open reproduced HTTP 404 with `no such alert`. Application-dialog checks passed for rejected prompt mismatches, draft navigation cancellation/confirmation, nested Scope selection, disconnect cancellation/confirmation, consecutive profile-removal prompts and unknown-write resubmission. Cancelling the latter dispatched zero writes; explicit confirmation dispatched one. Evidence is under ignored `.artifacts/desktop-shell/confirmation-webdriver-results.json`.
+
+All 37 focused confirmation/connection/Memory/Scope tests and all 82 frontend tests passed, together with typecheck, lint, generated-contract/icon checks and production build. The five installed-harness Python files passed Ruff lint/format and Windows/Linux `ty check`; all five fixture qualification regressions passed. Repository-wide `uv run --locked prek run -a` passed every hook except the existing Windows Python `ty check` failures in unchanged code (`os.O_NOFOLLOW`, `fcntl`, `resource` and `os.mkfifo`); its log is under `.artifacts/desktop-shell/confirmation-prek.log`. This browser execution uses synthetic IPC and does not qualify native single-instance launches, actual Server writes or the installed package. The complete `windows-smoke.ps1` installation workflow requires a fresh hosted CI run. Platform IME and screen-reader qualification remain pending.
+
+2026-10-22，Windows x64 使用项目固定工具版本验证安装验收脚本。脚本核对应用内确认框的完整无障碍描述，通过 WebDriver 点击“取消”或“确认”，并等待当前提示离开；提示不符时验收失败，连续的丢弃／移除确认分别处理。单实例场景继续验证取消导航后连接草稿保留、确认后进入总览；生命周期脚本已显式纳入 CI 静态检查。
+
+真实 Edge 与 Edge WebDriver 155.0.4283.62 操作当前 Vite 页面，IPC 使用合成数据。应用内确认框打开时，原生 alert 接口返回 `404 no such alert`。修正后的脚本通过提示不匹配拒绝、草稿导航、嵌套 Scope 确认、断开连接、连续移除确认及未知写入确认检查；未知写入取消时请求数为零，明确确认后为一。37 项专项测试、全量 82 项前端测试、typecheck、lint、生成检查和构建通过；五个验收 Python 文件的 Ruff 与双平台类型检查、五项 fixture 回归通过。仓库全量钩子仍有未修改 Python 代码的 Windows 类型检查错误，其余钩子通过。这些证据不代表原生单实例、真实 Server 或安装包验收通过；完整安装流程仍需托管 CI 重跑，IME 和屏幕阅读器保持待验收。
+
 ## Remaining release qualification
 
 - Clean standard-user Windows 11, including absent/present WebView2 and bootstrap recovery.
