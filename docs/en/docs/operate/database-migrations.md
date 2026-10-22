@@ -424,6 +424,10 @@ running state. The CI setup verifies the source wheel's SHA-256 and supplies
 cover SQLite service switching. Backend crash recovery and the full installed-release domain suite remain separate
 acceptance requirements.
 
+Failure cases cover unavailable backup storage, an actual port conflict when the target service starts, and injected
+`ENOSPC` when replacing its registration file. Startup/switch failures retain the stopped service and recovery record
+after database verification; an explicit service start completes recovery without another migration apply.
+
 For manual deployment, stop the old service first. After a supported complete migration succeeds, ensure the launch
 definition points to the new environment before starting it. For foreground deployment, exit the old process and use the
 existing command from the new environment:
@@ -464,6 +468,15 @@ PC does not infer completion from local process exit or lock availability. Repla
 or finding an unacknowledged previous run blocks continuation.
 Unavailable native file locking is rejected, including runtime fallback to a soft lock; it does not reconnect or silently
 weaken coordination and continue. These locks do not stop business writers.
+
+The separate Linux OceanBase engine-recovery test requires
+`POWERCONTEXT_TEST_MIGRATION_OCEANBASE_ENGINE_CRASH_ID` with the exact disposable container ID and
+`POWERCONTEXT_TEST_MIGRATION_OCEANBASE_URL` with its matching loopback port and dedicated `pc_migration_probe_*` database.
+It sends `SIGKILL` to observer after registered DDL, then restarts observer in the same directory and verifies the original
+recovery record, required acknowledgement, historical bytes, final revision and repeated apply. It does not restart the
+slim image's bootstrap script, which unfolds a snapshot and truncates logs. CI requires one executed test and zero skips.
+The test uses frozen historical resources and an operator backup declaration; it does not establish installed-release
+acceptance or verified backup restoration.
 
 seekdb/OceanBase DDL may commit implicitly, so one Python transaction cannot make the entire upgrade atomic. Recovery
 recognizes only the registered sequence: `p0001` creates the four frozen tables and two indexes; `p0002` adds the two
