@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from sqlalchemy import MetaData, Table
+from sqlalchemy import MetaData, Table, inspect
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from powercontext.builtin.persistence.atomic_memory_evidence_schema import ATOMIC_MEMORY_EVIDENCE_TABLES
@@ -28,6 +28,15 @@ from powercontext.builtin.persistence.migrations.atomic_memory_evidence import a
 async def create_tables(connection: AsyncConnection, tables: Sequence[Table], /) -> None:
     """Create selected tables, applying retained evidence through its frozen revision."""
 
+    names = await connection.run_sync(lambda sync: set(inspect(sync).get_table_names()))
+    if "pc_schema_revision" in names:
+        if not {table.name for table in tables} <= names:
+            from powercontext.builtin.persistence.migrations.models import MigrationError
+
+            raise MigrationError(
+                "unsupported_configuration", "The versioned database does not cover the requested feature tables."
+            )
+        return
     groups: dict[MetaData, list[Table]] = {}
     evidence_names = {table.name for table in ATOMIC_MEMORY_EVIDENCE_TABLES}
     if any(table.name in evidence_names or table.name == "pc_sources" for table in tables):

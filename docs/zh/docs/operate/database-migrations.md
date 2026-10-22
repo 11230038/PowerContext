@@ -10,11 +10,21 @@ description: 了解数据库迁移命令、备份策略、服务启停及当前�
 
 ## 当前可用范围
 
-`powercontext server db-migrate status/plan/apply/verify` 使用部署配置中的持久 SQLite、嵌入式 seekdb 或 OceanBase MySQL 模式数据库，不接受任意测试 bundle 路径。维护命令以显式环境文件为准，应使用部署的环境文件，不依赖临时 shell 环境覆盖。随 wheel 发布的冻结资源用于阶段 A 的 Artifact 四表迁移：`pc_artifacts`、`pc_artifact_heads`、`pc_artifact_candidate_versions`、`pc_artifact_tags`。仅接受空目标和已登记的历史结构；完整 Server 数据库含有尚未纳管的对象时拒绝执行。
+`powercontext server db-migrate status/plan/apply/verify` 默认选择 `--bundle server`，使用部署配置中的持久 SQLite、嵌入式 seekDB 或 OceanBase MySQL 模式数据库。维护命令以显式环境文件为准，不接受任意测试 bundle 路径。
 
-维护入口可以单独识别由公开 1.3.0 wheel 实际初始化的完整 SQLite 结构，包括 FTS 影子表、索引和触发器。由于完整 Server 升级路径尚未注册，该来源返回 `server_migration_unavailable`。识别不会登记 revision、验证领域数据或允许写入；其他完整结构仍需登记精确形状。
+完整 Server 路径登记了真实 1.3.0 的无向量、Code 关闭配置，版本链为 `s1300 → s1400 → s1401`。它覆盖完整数据库结构、Candidate 改名与历史保留、Dream 任务格式、Processing 所有权声明、全文检索投影和 Source evidence。未知结构、额外对象、不同向量/Code 配置及未登记来源均在写入前拒绝。更早的 Memory 集合转换不属于此路径。
 
-输出中的 `ready` 仅表示当前迁移 bundle 已通过结构和数据验证；`readiness_scope=registered_bundle`、`server_ready=false` 明确区分它与完整 Server、索引、旧任务及集群可用。不要以此替代生产升级或完整业务库初始化。普通业务启动的全面版本门禁和完整历史基线尚未纳管。已通过 OceanBase AI 4.6.3 的 ODP 入口完成隔离四表验收，覆盖固定维护主机互斥、DDL 提交后中断的显式确认恢复、数据保留与重复执行。这不代表完整 Server 升级、崩溃后远端 DDL 自动判定或完整 Fork 恢复已通过验收。
+只有结构、领域数据、搜索投影和任务校验全部通过，才返回 `state=ready`、`readiness_scope=server`、`server_ready=true`。发布还必须通过真实安装包在三个后端上的完整验收；实现路径存在不等于某次发布已通过验收，支持状态以安装指南和发布门禁为准。
+
+升级前必须停止所有写入者并排空 1.3.0 中 queued/running Dream 任务；新版不能执行旧提示词契约。终态任务保留原始 payload，待处理 Processing intent 的计数保留，旧 worker lease 被 fencing。迁移按登记规则扩展处理能力，保留原有自动处理选择，不根据当前配置覆盖旧所有权。
+
+Candidate 旧表保留为 `pc_legacy_artifact_candidate_heads` 和 `pc_legacy_artifact_candidate_versions`，用于迁移当次的复制验证。它们与迁移备份都不是线上写入目标；升级后的正常修改不再与旧快照比较。历史 Artifact 新增的来源时间/操作者字段保持未知，Source evidence 不凭历史引用虚构声明。投影重建和数据校验会扫描相关表；请为停机时间、备份与保留副本安排容量。
+
+普通 Server 启动先做只读就绪检查，不修补已有库。空的本地持久 SQLite/seekDB 可通过同一版本链初始化；OceanBase 必须先执行显式维护命令初始化。内存 SQLite 仍为临时运行时存储。迁移后发现结构或投影被篡改，必须停写维护，不能靠重启修复。
+
+无向量、Code 关闭之外的既有新建部署仍使用原领域初始化和启动检查，不会自动纳入此版本链；这些配置不属于已登记升级范围。受管数据库不能通过切换配置绕过检查或隐式增加向量/Code 表。
+
+`--bundle artifacts` 保留 `p0001` 开始的局部 Artifact 原型链；`--bundle topic-memory-recovery` 只处理登记的 Topic 恢复布局。两者均报告 `server_ready=false`，不得用于证明完整 Server 就绪，也不能把其版本号直接 stamp 为完整 Server 版本。
 
 MySQL 兼容后端的结构反射支持 CHECK 表达式中的二元 `+`、`-`、`*`、`/`、`%`、一元正负号及嵌套括号，并保留算术、比较和布尔运算的优先级。未支持的 CHECK 运算符或函数仍被拒绝，错误会标明反射的表名、约束名及未支持的语法，避免将合法分组误报为括号不匹配。表达式解析成功不代表历史结构已登记，也不会绕过迁移或数据完整性检查。
 
@@ -25,7 +35,7 @@ MySQL 兼容后端的结构反射支持 CHECK 表达式中的二元 `+`、`-`、
 选择 `--bundle topic-memory-recovery` 执行版本化的 `powercontext.topic-memory-recovery.v1` 转换。它识别恢复功能之前的
 预算布局和实现 #1966 的 attempts 表布局，保留已消费额度、终止阻塞和已接受回执。它仅验证已有 Server 数据库中
 登记的 Topic 对象和共享处理 lease 的 fencing，不改变其他业务表；输出仍报告 `server_ready=false`。
-默认 `--bundle artifacts` 仍为上面的局部验收范围。
+默认 `--bundle server` 的完整升级路径见上文。
 
 先停止全部 API、Worker、调度和 SDK 写入者，并暂停自动重启。审阅并执行一次计划：
 
@@ -212,20 +222,20 @@ powercontext server run --env-file deployment.env --role all
 
 发布作者应提供受影响对象、执行模式、程序／schema 兼容范围、API 变化和任务格式声明。公共 API 不兼容替换需标记弃用并说明替代入口和移除计划；同包内部入口可与调用方一起替换。保留的 API 可转换请求／响应后共用当前实现，不要求每个 handler 支持两套表结构。
 
-旧格式任务需要在只读计划、停写取锁后、迁移后及 Worker 启动前检查。未知格式或不可观察来源不能假报无任务；应按声明兼容消费、幂等转换或有界排空，并保留任务 ID、幂等键、Scope、重试和领域收据。这些完整业务检查尚未由阶段 A bundle 覆盖。
+旧格式任务需要在只读计划、停写取锁后、迁移后及 Worker 启动前检查。未知格式或不可观察来源不能假报无任务；应按声明兼容消费、幂等转换或有界排空，并保留任务 ID、幂等键、Scope、重试和领域收据。完整 Server bundle 对登记的 1.3.0 任务执行这些检查；局部阶段 A bundle 不作此声明。
 
 ## 存储层与恢复边界
 
 维护执行器复用配置，使用专用连接承载 Alembic；冻结历史 SQL 不依赖当前 Repository 或应用 metadata。seekdb 从启动引擎前到关闭引擎后持有规范化目录的锁。OceanBase 在每条 DDL 前后验证操作系统锁、主机绑定、持久运行记录及维护连接。正常结束时先关闭迁移主连接，才清理运行记录并释放文件锁；引擎随后关闭。执行中断或关闭连接失败均保留记录；后续执行需要准确的旧运行 token，以及 DBA 确认远端执行已结束的人工声明。PC 不从本机进程退出或本地锁可获取推断远端执行结束。锁文件被替换、连接丢失或旧运行未确认时阻止继续。平台不支持原生文件锁时拒绝执行，包括运行时降级为软锁的情况，不重连或静默弱化互斥继续迁移。这些锁不阻止业务写入者。
 
-seekdb／OceanBase DDL 可能隐式提交，不能用 Python 事务承诺整个迁移原子化。恢复只识别已登记顺序：`p0001` 创建冻结四表及两个索引；`p0002` 添加两个可空的 `MEDIUMBLOB` 引用列；`p0003` 删除标签 family 的 CHECK；`p0004` 添加指向精确 revision 的 Artifact handle；`p0005` 添加 Source 证据存储，不追认历史内容的可信度。继续执行前须用实际结构、数据检查和持久维护证据证明已完成的已知前缀；revision 的后置条件通过后才推进 Alembic 版本。未知对象、结构或中间状态拒绝执行，不乐观 stamp。
+seekdb／OceanBase DDL 可能隐式提交，不能用 Python 事务承诺整个迁移原子化。局部 Artifact 原型只识别已登记顺序：`p0001` 创建冻结四表及两个索引；`p0002` 添加两个可空的 `MEDIUMBLOB` 引用列；`p0003` 删除标签 family 的 CHECK；`p0004` 添加指向精确 revision 的 Artifact handle；`p0005` 添加 Source 证据存储，不追认历史内容的可信度。继续执行前须用实际结构、数据检查和持久维护证据证明已完成的已知前缀；revision 的后置条件通过后才推进 Alembic 版本。未知对象、结构或中间状态拒绝执行，不乐观 stamp。
 
 MySQL 结构步骤通过冻结的布局片段注册，由 `manifest.json` 的 `mysql_layouts` 列表选择，合起来必须恰好覆盖 Alembic 版本链，且不能重复声明。新增 revision 追加不可改写的片段，并在 `revision_resources` 中声明其文件，不修改已发布片段。可选 checkpoint 将累积步骤与独立冻结的完整结构对照。反射、下一 revision 的已知前缀恢复和版本表校验使用同一注册链；新增 revision 无需修改识别器中的另一份版本列表。这些结构注册不能代替领域转换、兼容性检查或完整 Server readiness。
 
 计划通过完整 bundle 摘要绑定注册资源，未完成维护的重试要求使用同一 bundle。已发布 revision 资源及其记录摘要保持不可改写。
 无参数 DDL 使用单语句驱动选项，确保 CHECK 的取余运算符和 SQL 字面量中的百分号原样到达后端。
 
-Repository 仅在结构满足后运行。完整业务的全文／向量索引版本管理及受控重建、旧任务 readiness 尚未包含在本验收 bundle 中。
+Repository 仅在结构满足后运行。完整 Server 的 `s1300 → s1400 → s1401` 链用 `mysql_state_layouts` 登记逐语句的精确结构变化和可恢复前缀。领域步骤附着在共享 revision 上，使用同一连接、锁和恢复点；校验成功后才推进版本。只读 live 校验与迁移当次的保留副本校验分离。向量配置仍需独立登记。
 
 单版本表不提供通用 run ID 续跑。中断后先用只读命令检查真实结构和数据；含混状态返回 `recovery_required`，不盲目 stamp、不用部分状态的备份替换原恢复点。库外摘要在 DDL 前记录执行及备份信息；重试保留原维护窗口和恢复点。在恢复条件允许时可显式重新确认 manual／skip 策略，但不绕过结构验证，也不替代必需的进度证据。
 

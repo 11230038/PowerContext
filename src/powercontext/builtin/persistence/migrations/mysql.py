@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import socket
 from collections.abc import Callable, Mapping
@@ -153,7 +154,8 @@ class MySQLMigrationRunner:
         self.bundle = bundle
         self.schema = MySQLSchema(bundle)
         self.evidence_directory = evidence_directory.expanduser().resolve()
-        self.configuration_digest = digest(configuration or {})
+        self.configuration = json.loads(json.dumps(configuration or {}))
+        self.configuration_digest = digest(self.configuration)
         if connections.config.kind == "oceanbase":
             if (
                 connections.lock_coordination != "single-host"
@@ -164,13 +166,17 @@ class MySQLMigrationRunner:
                     "Use single-host coordination and the same evidence directory for this runner.",
                 )
             self.configuration_digest = digest({
-                "configuration": configuration or {},
+                "configuration": self.configuration,
                 "coordination": "single-host",
                 "host": socket.gethostname(),
                 "evidence_directory": str(self.evidence_directory),
             })
         self.backup_factory = backup_factory or _fork_provider
-        self._history_directory = Path(__file__).parent / "mysql_resources"
+        self._history_directory = (
+            bundle.directory / "mysql"
+            if bundle.readiness_scope == "server"
+            else Path(__file__).parent / "mysql_resources"
+        )
         resources = {
             path.relative_to(self._history_directory).as_posix(): path.read_bytes()
             for path in sorted(self._history_directory.rglob("*.py"))
@@ -187,7 +193,11 @@ class MySQLMigrationRunner:
             revision: digest({
                 "revision": checksum,
                 "env": hashes["env.py"],
-                "wrapper": {name: value for name, value in hashes.items() if name.startswith(f"versions/{revision}_")},
+                "wrapper": {
+                    name: value
+                    for name, value in hashes.items()
+                    if name.startswith(f"versions/{revision}_") or name == f"versions/{revision}.py"
+                },
             })
             for revision, checksum in bundle.checksums.items()
         }
@@ -226,7 +236,9 @@ class MySQLMigrationRunner:
                 raise MigrationError(
                     plan.state, "Inspect and explicitly apply the registered bundle before verification."
                 )
-            return MigrationResult(revision=self.bundle.head, changed=False)
+            return MigrationResult(
+                revision=self.bundle.head, changed=False, readiness_scope=self.bundle.readiness_scope
+            )
 
         self._assert_unchanged()
         return self.connections.run(verify)
@@ -260,7 +272,9 @@ class MySQLMigrationRunner:
         if previous_run is None and acknowledgement is not None:
             raise MigrationError("stale_ack", "There is no pending run matching this acknowledgement.")
         if initial.state == "ready":
-            return MigrationResult(revision=self.bundle.head, changed=False)
+            return MigrationResult(
+                revision=self.bundle.head, changed=False, readiness_scope=self.bundle.readiness_scope
+            )
         self._check_consent(
             initial,
             plan_id=plan_id,
@@ -335,13 +349,18 @@ class MySQLMigrationRunner:
             # interrupted connection close. Acknowledgement still requires
             # the lock and full schema/data reinspection, but no new backup.
             guard()
-            return MigrationResult(revision=self.bundle.head, changed=False)
+            return MigrationResult(
+                revision=self.bundle.head, changed=False, readiness_scope=self.bundle.readiness_scope
+            )
         provider = self.backup_factory(connection, identity, journal.path.parent / "backups")
         evidence = self._prepare_evidence(initial, journal, provider, manual_ref=manual_ref)
         guard()
         self._assert_unchanged()
         if self.schema.fingerprint(mysql_inventory(connection)) != initial.schema_fingerprint:
             raise MigrationError("plan_changed", "The source schema changed during backup.")
+        self.bundle.domains.preflight(
+            connection, initial.source_revision, backend=identity.product, configuration=self.configuration
+        )
         config = self._config(connection)
         if initial.adopt_baseline:
             self._adopt(connection, config, journal, evidence, initial.source_revision, guard)
@@ -360,6 +379,9 @@ class MySQLMigrationRunner:
             current = target
         self.schema.verify(mysql_inventory(connection), self.bundle.head)
         self.schema.validate_data(connection, self.bundle.head)
+        self.bundle.domains.validate(
+            connection, self.bundle.head, backend=identity.product, configuration=self.configuration
+        )
         guard()
         evidence.state = "complete"
         evidence.last_revision = self.bundle.head
@@ -372,6 +394,7 @@ class MySQLMigrationRunner:
         return MigrationResult(
             revision=self.bundle.head,
             changed=True,
+            readiness_scope=self.bundle.readiness_scope,
             backup_state=evidence.backup_state,
             backup_ref=evidence.backup.location if evidence.backup else evidence.manual_ref,
         )
@@ -417,12 +440,22 @@ class MySQLMigrationRunner:
                 raise MigrationError("recovery_required", "The stored intent does not match the schema transition.")
             for statement in recovery.pending_statements:
                 guard()
-                connection.exec_driver_sql(statement, execution_options={"no_parameters": True})
+                self.schema.execute(connection, statement, self.configuration)
                 # DDL may already have committed; rollback cannot undo it.
                 guard()
                 self.schema.recovery(mysql_inventory(connection), source)
             self.schema.verify(mysql_inventory(connection), revision)
+            self.bundle.domains.apply(
+                connection,
+                revision,
+                backend=self.connections.config.kind,
+                configuration=self.configuration,
+                guard=guard,
+            )
             self.schema.validate_data(connection, revision)
+            self.bundle.domains.validate(
+                connection, revision, backend=self.connections.config.kind, configuration=self.configuration
+            )
             guard()
 
         config.attributes["execute_revision"] = upgrade
@@ -441,7 +474,7 @@ class MySQLMigrationRunner:
         config.attributes["connection"] = connection
         return config
 
-    def _inspect(
+    def _inspect(  # noqa: C901 -- Keep ordered admission checks with their operation.
         self,
         connection: Connection | None,
         identity: BackendIdentity,
@@ -464,7 +497,11 @@ class MySQLMigrationRunner:
         )
         self._validate_evidence(evidence)
         backend = identity.product
-        if not initialized and (backend == "seekdb" or backend == "oceanbase"):
+        if (
+            self.bundle.readiness_scope != "server"
+            and not initialized
+            and (backend == "seekdb" or backend == "oceanbase")
+        ):
             source = recognize_mysql_server_baseline(inventory, backend=backend)
             if source is not None:
                 raise MigrationError(
@@ -477,6 +514,15 @@ class MySQLMigrationRunner:
         self._validate_position(evidence, current)
         if connection is not None and current is not None:
             self.schema.validate_data(connection, current)
+            if evidence is None or evidence.pending_revision is None:
+                self.bundle.domains.validate(
+                    connection, current, backend=identity.product, configuration=self.configuration
+                )
+        domain_steps = self.bundle.domains.pending(current, identity.product)
+        if connection is not None:
+            self.bundle.domains.preflight(
+                connection, current, backend=identity.product, configuration=self.configuration
+            )
         fingerprint = self.schema.fingerprint(inventory)
         state = "migration_required" if self.bundle.pending(current) or adopt else "ready"
         if not initialized and current is None:
@@ -505,17 +551,20 @@ class MySQLMigrationRunner:
             "database_id": identity.database_id,
             "source_revision": current,
             "target_revision": self.bundle.head,
+            "readiness_scope": self.bundle.readiness_scope,
             "schema_fingerprint": fingerprint,
             "bundle_checksum": self.checksum,
             "configuration_digest": self.configuration_digest,
             "state": state,
             "revisions": self.bundle.pending(current),
+            "domain_steps": tuple(step.id for step in domain_steps),
+            "domain_validators": self.bundle.domains.readiness.get(self.bundle.head, ()),
             "adopt_baseline": adopt,
             "backup_policy": backup_policy,
             "backup_available": available,
             "backup_reason": reasons,
             "affected_objects": self.bundle.affected_objects,
-            "retained_objects": (),
+            "retained_objects": self.bundle.retained_objects,
             "service": service,
             "shared_database": shared_database,
             "coordination": coordination,

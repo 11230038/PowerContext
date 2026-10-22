@@ -27,6 +27,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import Connection
 
+from .domains import DomainRegistry
 from .models import MigrationError, digest
 
 ALEMBIC_CONTEXT_LOCK = threading.RLock()
@@ -40,7 +41,7 @@ class MigrationBundle:
     partially applied DDL cannot be mistaken for a supported baseline.
     """
 
-    def __init__(self, directory: Path) -> None:
+    def __init__(self, directory: Path) -> None:  # noqa: C901 -- Keep ordered admission checks with their operation.
         self.directory = directory.resolve()
         # Execute exactly the reviewed bytes, even if the installed resources
         # change during a long backup. Alembic reloads scripts on every command.
@@ -75,6 +76,7 @@ class MigrationBundle:
         ):
             raise MigrationError("invalid_bundle", "MySQL layout registration is outside the frozen bundle.")
         self.mysql_layouts: tuple[str, ...] = tuple(mysql_layouts)
+        self.readiness_scope = manifest.get("readiness_scope", "registered_bundle")
         self.affected_objects = tuple(manifest.get("affected_objects", ()))
         self.retained_objects = tuple(manifest.get("retained_objects", ()))
         self.retained_fingerprints = manifest.get("retained_fingerprints", {})
@@ -90,6 +92,7 @@ class MigrationBundle:
         if any(fingerprint not in self.fingerprints[revision] for fingerprint, revision in self.baselines.items()):
             raise MigrationError("invalid_bundle", "A baseline does not match its declared revision.")
         self.resources = {name: hashlib.sha256(content).hexdigest() for name, content in resources.items()}
+        self.domains = DomainRegistry(manifest, self.revisions, self.snapshot_directory, self.resources)
         self.checksums = {}
         for item in revisions:
             dependencies = manifest["revision_resources"][item.revision]
@@ -97,6 +100,9 @@ class MigrationBundle:
             inputs[Path(item.path).relative_to(self.snapshot_directory).as_posix()] = hashlib.sha256(
                 Path(item.path).read_bytes()
             ).hexdigest()
+            domain_inputs = self.domains.checksum_inputs(item.revision, self.resources)
+            if domain_inputs:
+                inputs["domain_contract"] = digest(domain_inputs)
             self.checksums[item.revision] = digest(inputs)
         self.checksum = digest(self.resources)
 

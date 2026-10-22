@@ -38,7 +38,7 @@ from powercontext.service.model import ServiceError
 
 BackupPolicy = Literal["auto", "manual", "skip"]
 Bundle = Annotated[
-    Literal["artifacts", "topic-memory-recovery"],
+    Literal["server", "artifacts", "topic-memory-recovery"],
     typer.Option(help="Select the registered domain bundle; readiness covers only that bundle."),
 ]
 EnvFile = Annotated[Path | None, typer.Option(help="Read the same environment file as the deployed Server.")]
@@ -79,7 +79,7 @@ def status(
     env_file: EnvFile = None,
     evidence_dir: EvidenceDir = None,
     lock_coordination: LockCoordination = None,
-    bundle: Bundle = "artifacts",
+    bundle: Bundle = "server",
 ) -> None:
     """Inspect the schema version without creating a database or control tables."""
     _inspect(env_file, evidence_dir=evidence_dir, lock_coordination=lock_coordination, verify=False, bundle=bundle)
@@ -90,7 +90,7 @@ def verify(
     env_file: EnvFile = None,
     evidence_dir: EvidenceDir = None,
     lock_coordination: LockCoordination = None,
-    bundle: Bundle = "artifacts",
+    bundle: Bundle = "server",
 ) -> None:
     """Verify database readiness; this does not assert Server or cluster readiness."""
     _inspect(env_file, evidence_dir=evidence_dir, lock_coordination=lock_coordination, verify=True, bundle=bundle)
@@ -104,7 +104,7 @@ def plan(
     backup: Annotated[BackupPolicy, typer.Option(help="Bind the selected backup policy to the plan.")] = "auto",
     manage_service: ManageService = False,
     shared_database: SharedDatabase = False,
-    bundle: Bundle = "artifacts",
+    bundle: Bundle = "server",
 ) -> None:
     """Preview the target, resource digests, backup policy, and maintenance scope."""
     with _operator_errors(), server_settings_context(env_file=_environment_file(env_file)) as settings:
@@ -150,7 +150,7 @@ def apply(
     backup_ref: Annotated[str | None, typer.Option(help="Optional reference for the operator's manual backup.")] = None,
     manage_service: ManageService = False,
     shared_database: SharedDatabase = False,
-    bundle: Bundle = "artifacts",
+    bundle: Bundle = "server",
 ) -> None:
     """Review once, then stop writes, back up, migrate, verify, and optionally switch a local service."""
     with _operator_errors(), server_settings_context(env_file=_environment_file(env_file)) as settings:
@@ -214,7 +214,7 @@ def _inspect(
     evidence_dir: Path | None,
     lock_coordination: Literal["single-host"] | None,
     verify: bool,
-    bundle: Literal["artifacts", "topic-memory-recovery"] = "artifacts",
+    bundle: Literal["server", "artifacts", "topic-memory-recovery"] = "server",
 ) -> None:
     with _operator_errors(), server_settings_context(env_file=_environment_file(env_file)) as settings:
         runner = deployment_runner(
@@ -235,7 +235,10 @@ def _interactive() -> bool:
 def _write_payload(value: MigrationPlan | MigrationResult, *, indent: int | None = None) -> None:
     typer.echo(
         json.dumps(
-            {**value.model_dump(mode="json"), "server_ready": False},
+            {
+                **value.model_dump(mode="json"),
+                "server_ready": value.readiness_scope == "server" and value.state == "ready",
+            },
             indent=indent,
         )
     )
@@ -243,9 +246,8 @@ def _write_payload(value: MigrationPlan | MigrationResult, *, indent: int | None
 
 def _write_confirmation(reviewed: MigrationPlan, policy: BackupPolicy) -> None:
     _write_payload(reviewed, indent=2)
-    typer.echo(
-        "This acceptance bundle does not verify complete Server schema, task formats, indexes or startup readiness."
-    )
+    if reviewed.readiness_scope != "server":
+        typer.echo("This partial bundle does not verify full Server readiness.")
     typer.echo("Maintenance pauses writes. Stop all other Servers, Workers, SDK clients and automatic restarts first.")
     typer.echo("PC cannot automatically discover every node or client connected to this database.")
     if reviewed.coordination and reviewed.coordination.get("mode") == "single-host":

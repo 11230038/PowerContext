@@ -12,25 +12,21 @@ The design follows [RFC #1771](https://github.com/oceanbase/powercontext/pull/17
 
 ## Current availability
 
-`powercontext server db-migrate status/plan/apply/verify` use the configured persistent SQLite, embedded seekdb, or
-OceanBase MySQL-mode database. They do not accept arbitrary test-bundle paths. Explicit environment files are authoritative
-for maintenance commands; use the deployment's environment file rather than relying on temporary shell overrides.
-The default `--bundle artifacts` ships frozen resources for Phase A acceptance of four Artifact tables: `pc_artifacts`, `pc_artifact_heads`,
-`pc_artifact_candidate_versions`, and `pc_artifact_tags`. Only empty targets and registered historical layouts are accepted.
-A complete Server database containing unmanaged objects is rejected.
+`powercontext server db-migrate status/plan/apply/verify` default to `--bundle server` and use the configured persistent SQLite, embedded seekDB, or OceanBase MySQL database. Explicit environment files are authoritative; arbitrary bundle paths are not accepted.
 
-The complete SQLite schema captured from the installed public 1.3.0 wheel is recognized separately, including its FTS
-shadow tables, indexes, and triggers. Maintenance reports `server_migration_unavailable` for this source because a complete
-Server upgrade path is not registered. Recognition does not stamp a revision, validate domain data, or authorize writes.
-Other complete schemas remain unknown unless their exact shape is registered.
+The full Server path registers the actual 1.3.0 no-vector, Code-disabled configuration as `s1300 → s1400 → s1401`. It covers the complete schema, Candidate renaming and retained history, Dream task formats, Processing ownership, full-text projections, and Source evidence. Unknown layouts, extra objects, vector/Code configurations, and unregistered sources fail before writes. Older Memory collection conversion is outside this path.
 
-`ready` means this migration bundle passed its schema and data checks. Output explicitly includes
-`readiness_scope=registered_bundle` and `server_ready=false`: it does not establish complete Server, index, legacy-task, or
-cluster readiness. Do not substitute it for a production upgrade or initialization of the complete business database.
-Full startup gates and complete historical baselines remain outside this bundle. Isolated four-table acceptance passed
-through an ODP endpoint on OceanBase AI Database 4.6.3, covering coordinator exclusion, acknowledged recovery after
-committed DDL, data preservation, and repeat execution. This does not establish complete Server readiness, automatic
-detection of unfinished remote DDL after a crash, or full Fork restoration acceptance.
+Only successful schema, domain, projection, and task validation returns `state=ready`, `readiness_scope=server`, and `server_ready=true`. Publication also requires installed-artifact acceptance on all three backends. An implemented path is not evidence that a release passed acceptance; consult the installation guide and release gate for support status.
+
+Stop all writers and drain queued/running 1.3.0 Dream tasks before upgrading: the target cannot execute the old prompt contract. Terminal task payloads and pending Processing counters are preserved; old worker leases are fenced. Registered capability additions retain the old automatic-processing choices instead of replacing ownership with the current configuration.
+
+Old Candidate tables are retained as `pc_legacy_artifact_candidate_heads` and `pc_legacy_artifact_candidate_versions` for migration-copy verification. They and the backup are not live write targets; subsequent business changes are not compared against old snapshots. New historical Artifact provenance fields remain unknown, and Source evidence is not inferred from old references. Projection rebuilds and verification scan their tables; budget downtime and capacity for backups and retained copies.
+
+Ordinary Server startup checks readiness without repairing an existing database. Empty local persistent SQLite/seekDB storage initializes through the same revision chain; OceanBase requires an explicit maintenance job first. In-memory SQLite remains transient runtime storage. A changed schema or inconsistent projection requires maintenance, not restart-based repair.
+
+Existing fresh deployments outside the no-vector, Code-disabled profile retain domain bootstrap and startup checks; they are not automatically adopted into this chain or covered by its upgrade support. Changing configuration cannot bypass admission or implicitly add vector/Code objects to managed storage.
+
+`--bundle artifacts` retains the partial Artifact prototype chain starting at `p0001`; `--bundle topic-memory-recovery` covers only registered Topic recovery layouts. Both report `server_ready=false`. Neither establishes full Server readiness, and their revisions cannot be stamped as full Server revisions.
 
 MySQL-compatible schema reflection supports arithmetic CHECK expressions with binary `+`, `-`, `*`, `/`, `%`,
 unary signs, and nested grouping, preserving arithmetic, comparison, and boolean precedence. Unsupported CHECK
@@ -367,8 +363,7 @@ bundle for retry. Released revision resources and their recorded checksums remai
 Parameter-free DDL uses statement-scoped driver execution options so CHECK remainder operators and percent-containing
 SQL literals reach the backend unchanged.
 
-Repositories run after schema checks. Versioned resources and controlled rebuilds for complete business full-text/vector
-indexes, plus legacy-task readiness, remain outside this acceptance bundle.
+Repositories run after schema checks. The full Server `s1300 → s1400 → s1401` chain registers exact per-statement schema transitions and recovery prefixes through `mysql_state_layouts`. Domain steps attach to the shared revision and use its connection, lock, and recovery point; verification precedes version advancement. Read-only live checks are separate from migration-copy validation. Vector configurations still require separate registration.
 
 One version table offers no generic run-ID resume. After interruption, inspect actual schema/data through read-only
 commands. Ambiguous state returns `recovery_required`; never blindly stamp or replace the original recovery point with a

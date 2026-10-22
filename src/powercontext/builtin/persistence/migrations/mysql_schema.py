@@ -140,7 +140,13 @@ def read_revision(
 class MySQLSchema:
     """Validate source, intermediate and post-DDL shapes from frozen resources."""
 
-    def __init__(self, bundle: MigrationBundle) -> None:
+    def __init__(self, bundle: MigrationBundle) -> None:  # noqa: C901 -- Keep ordered admission checks with their operation.
+        self.bundle = bundle
+        self.revisions = bundle.revisions
+        manifest = json.loads((bundle.snapshot_directory / "manifest.json").read_text())
+        if "mysql_state_layouts" in manifest:
+            self._load_state_layouts(manifest["mysql_state_layouts"])
+            return
         self.bundle = bundle
         if not bundle.mysql_layouts:
             raise MigrationError("invalid_bundle", "MySQL layout steps are not registered in this bundle.")
@@ -187,6 +193,59 @@ class MySQLSchema:
                 raise MigrationError(
                     "invalid_bundle", "Frozen MySQL layouts disagree with the registered revision steps."
                 )
+
+    def _load_state_layouts(self, resources: list[str]) -> None:  # noqa: C901 -- Keep ordered admission checks with their operation.
+        registered = {"revisions": {}}
+        for resource in resources:
+            if resource not in self.bundle.resources:
+                raise MigrationError("invalid_bundle", "A MySQL state layout is outside the frozen bundle.")
+            fragment = json.loads((self.bundle.snapshot_directory / resource).read_text())
+            if (
+                fragment.get("format") != "powercontext.mysql-state-layouts.v1"
+                or set(fragment["revisions"]) & registered["revisions"].keys()
+            ):
+                raise MigrationError("invalid_bundle", "A MySQL state layout is invalid or duplicated.")
+            registered["revisions"].update(fragment["revisions"])
+        if set(registered["revisions"]) != set(self.bundle.revisions):
+            raise MigrationError("invalid_bundle", "MySQL state layouts must cover exactly the shared revision chain.")
+        inventory = _empty_inventory()
+        self._statements = {}
+        self._prefixes = {}
+        self._schemas = {}
+        for revision in self.bundle.revisions:
+            entry = registered["revisions"][revision]
+            statements, changes = entry["statements"], entry["changes"]
+            if (
+                not statements
+                or len(statements) != len(changes)
+                or any(not isinstance(sql, str) or not sql.strip() for sql in statements)
+            ):
+                raise MigrationError("invalid_bundle", "Each MySQL operation requires its exact schema transition.")
+            prefixes = [copy.deepcopy(inventory)]
+            for change in changes:
+                for name, table in change.items():
+                    if table is None:
+                        if name not in inventory["tables"]:
+                            raise MigrationError("invalid_bundle", "A transition removes an unknown table.")
+                        del inventory["tables"][name]
+                    else:
+                        inventory["tables"][name] = table
+                prefixes.append(copy.deepcopy(inventory))
+            self._statements[revision] = tuple(statements)
+            self._prefixes[revision] = prefixes
+            self._schemas[revision] = copy.deepcopy(inventory)
+
+    def execute(self, connection: Connection, statement: str, configuration: dict[str, Any]) -> None:
+        if statement.startswith("@"):
+            import runpy
+
+            resource, name = statement.removeprefix("@").split(":", 1)
+            if resource not in self.bundle.resources:
+                raise MigrationError("invalid_bundle", "A conditional MySQL operation needs a frozen implementation.")
+            operation = runpy.run_path(str(self.bundle.snapshot_directory / resource))["execute"]
+            operation(connection, "@" + name, configuration)
+        else:
+            connection.exec_driver_sql(statement, execution_options={"no_parameters": True})
 
     @staticmethod
     def fingerprint(inventory: dict[str, Any]) -> str:
@@ -235,6 +294,8 @@ class MySQLSchema:
         expected = self._schemas.get(revision)
         if expected is None:
             raise MigrationError("incompatible_schema", "Cannot validate data for an unknown MySQL revision.")
+        if self.bundle.readiness_scope == "server":
+            expected = _business_inventory(mysql_inventory(connection))
         for name, table in expected["tables"].items():
             for check in table["checks"].values():
                 expression = _expression_sql(check["expression"])

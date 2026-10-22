@@ -37,6 +37,11 @@ if TYPE_CHECKING:
     from powercontext.server.settings import ServerSettings
 
 
+def server_bundle() -> MigrationBundle:
+    """The complete, shared Server revision chain."""
+    return MigrationBundle(Path(__file__).parent / "server_resources")
+
+
 def production_bundle() -> MigrationBundle:
     """Load installed resources; readiness is scoped to this acceptance bundle."""
     return MigrationBundle(Path(__file__).parent / "resources")
@@ -45,16 +50,39 @@ def production_bundle() -> MigrationBundle:
 MigrationRunner = SQLiteMigrationRunner | MySQLMigrationRunner | TopicMemoryRecoveryMigrationRunner
 
 
-def deployment_runner(
+def deployment_runner(  # noqa: C901 -- Keep ordered admission checks with their operation.
     settings: ServerSettings,
     *,
     evidence_dir: Path | None = None,
     lock_coordination: Literal["single-host"] | None = None,
     acknowledge_previous_run: str | None = None,
-    bundle: Literal["artifacts", "topic-memory-recovery"] = "artifacts",
+    bundle: Literal["server", "artifacts", "topic-memory-recovery"] = "server",
 ) -> MigrationRunner:
     """Use the real configured identity without opening a business profile."""
     database = settings.database
+    from powercontext.builtin.runtime.config import BuiltinConfig
+    from powercontext.builtin.runtime.processing_registry import canonical_processing_manifest
+
+    configuration = database.model_dump(mode="json", exclude={"url", "echo"})
+    if bundle == "server":
+        if settings.inference.embedding_model is not None or settings.code.enabled:
+            raise MigrationError(
+                "unsupported_upgrade_configuration",
+                "The registered 1.3.0 Server path covers the no-vector, Code-disabled configuration.",
+            )
+        config = BuiltinConfig(
+            code=settings.code,
+            runtime=settings.runtime,
+            database=database,
+            inference=settings.inference,
+            handoff_report=settings.handoff_report,
+            external_skills=settings.external_skills,
+        )
+        configuration.update(
+            processing_manifest=canonical_processing_manifest(config),
+            embedding_enabled=settings.inference.embedding_model is not None,
+        )
+    selected = server_bundle() if bundle == "server" else production_bundle()
     if bundle == "topic-memory-recovery":
         if not isinstance(database, (SQLiteConfig, SeekDBConfig, OceanBaseConfig)):
             raise MigrationError("unsupported_backend", "The database has no Topic recovery migration adapter.")
@@ -87,9 +115,9 @@ def deployment_runner(
                 lock_coordination=lock_coordination,
                 acknowledge_previous_run=acknowledge_previous_run,
             ),
-            production_bundle(),
+            selected,
             evidence_directory=evidence_dir,
-            configuration=database.model_dump(mode="json", exclude={"url", "echo"}),
+            configuration=configuration,
         )
     if not isinstance(database, SQLiteConfig):
         raise MigrationError("unsupported_backend", "The database has no registered migration adapter.")
@@ -102,7 +130,7 @@ def deployment_runner(
     target = Path(os.path.abspath(url.database))
     return SQLiteMigrationRunner(
         target,
-        production_bundle(),
-        configuration=database.model_dump(exclude={"url", "echo"}),
+        selected,
+        configuration=configuration,
         evidence_directory=evidence_dir,
     )

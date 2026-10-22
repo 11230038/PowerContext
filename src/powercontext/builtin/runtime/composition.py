@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 from urllib.parse import urlsplit
 
 from pydantic import AnyHttpUrl, JsonValue, SecretStr
+from sqlalchemy import inspect
 from typing_extensions import override
 
 from powercontext._logging import log_safely
@@ -1099,7 +1100,7 @@ async def _open_artifact_processing_supervisor(
 
 
 @asynccontextmanager
-async def open_builtin_contexts(
+async def open_builtin_contexts(  # noqa: C901 -- Backend admission and resource lifetimes stay together.
     config: BuiltinConfig,
     *,
     candidate_pipeline: CandidatePipeline | AtomicMemoryGenerationPipeline | None = None,
@@ -1147,29 +1148,35 @@ async def open_builtin_contexts(
                 # before startup schema reads, so concurrent Runtime openings cannot
                 # both establish a read snapshot and fail while upgrading to a write.
                 await connection.exec_driver_sql("BEGIN IMMEDIATE")
-                await bootstrap_processing_schema(connection, canonical_processing_manifest(config))
-                await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
-                await ensure_skill_distribution_schema(connection)
-                await ensure_topic_memory_tag_schema(connection)
-                await ensure_scope_search_schema(connection)
-                await ensure_artifact_revision_metadata_schema(connection)
-                # A Topic child reuses its parent's schema. It never reads or
-                # writes Memory/Experience projections; rebuilding their FTS
-                # indexes here would take the shared SQLite write lock once
-                # per Window. Normal runtime startup retains index recovery.
-                if not _topic_memory_worker:
-                    await _initialize_atomic_memory_authority(connection)
-                    await atomic_index.initialize(connection)
+                managed = await connection.run_sync(lambda sync: inspect(sync).has_table("pc_schema_revision"))
+                if managed:
+                    await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
                     await atomic_index.validate_current(connection)
-                    await refresh_lexical_projections(
-                        connection, atomic_index.table if atomic_index.table in atomic_index.tables else None
+                    await TopicMemoryRepository(index=topic_index).initialize(connection, validate_only=True)
+                else:
+                    await bootstrap_processing_schema(connection, canonical_processing_manifest(config))
+                    await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
+                    await ensure_skill_distribution_schema(connection)
+                    await ensure_topic_memory_tag_schema(connection)
+                    await ensure_scope_search_schema(connection)
+                    await ensure_artifact_revision_metadata_schema(connection)
+                    # A Topic child reuses its parent's schema. It never reads or
+                    # writes Memory/Experience projections; rebuilding their FTS
+                    # indexes here would take the shared SQLite write lock once
+                    # per Window. Normal runtime startup retains index recovery.
+                    if not _topic_memory_worker:
+                        await _initialize_atomic_memory_authority(connection)
+                        await atomic_index.initialize(connection)
+                        await atomic_index.validate_current(connection)
+                        await refresh_lexical_projections(
+                            connection, atomic_index.table if atomic_index.table in atomic_index.tables else None
+                        )
+                        await ensure_artifact_head_searchable_text(connection)
+                        await assert_atomic_memory_migration_ready(connection)
+                        await experience_index.initialize(connection)
+                    await TopicMemoryRepository(index=topic_index).initialize(
+                        connection, configure_retrieval_shape=not _topic_memory_worker
                     )
-                    await ensure_artifact_head_searchable_text(connection)
-                    await assert_atomic_memory_migration_ready(connection)
-                    await experience_index.initialize(connection)
-                await TopicMemoryRepository(index=topic_index).initialize(
-                    connection, configure_retrieval_shape=not _topic_memory_worker
-                )
             contexts = RelationalContexts(
                 model_usage_observer=model_usage_observer,
                 database=profile.database,
@@ -1233,25 +1240,31 @@ async def open_builtin_contexts(
     async with profile_context as profile:
         async with profile.database.transaction() as connection:
             await ensure_supported_atomic_memory_schema(connection)
-            await bootstrap_processing_schema(connection, canonical_processing_manifest(config))
-            await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
-            await ensure_skill_distribution_schema(connection)
-            await ensure_topic_memory_tag_schema(connection)
-            await ensure_scope_search_schema(connection)
-            await ensure_artifact_revision_metadata_schema(connection)
-            if not _topic_memory_worker:
-                await _initialize_atomic_memory_authority(connection)
-                await atomic_index.initialize(connection)
+            managed = await connection.run_sync(lambda sync: inspect(sync).has_table("pc_schema_revision"))
+            if managed:
+                await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
                 await atomic_index.validate_current(connection)
-                await refresh_lexical_projections(
-                    connection, atomic_index.table if atomic_index.table in atomic_index.tables else None
+                await TopicMemoryRepository(index=topic_index).initialize(connection, validate_only=True)
+            else:
+                await bootstrap_processing_schema(connection, canonical_processing_manifest(config))
+                await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
+                await ensure_skill_distribution_schema(connection)
+                await ensure_topic_memory_tag_schema(connection)
+                await ensure_scope_search_schema(connection)
+                await ensure_artifact_revision_metadata_schema(connection)
+                if not _topic_memory_worker:
+                    await _initialize_atomic_memory_authority(connection)
+                    await atomic_index.initialize(connection)
+                    await atomic_index.validate_current(connection)
+                    await refresh_lexical_projections(
+                        connection, atomic_index.table if atomic_index.table in atomic_index.tables else None
+                    )
+                    await ensure_artifact_head_searchable_text(connection)
+                    await assert_atomic_memory_migration_ready(connection)
+                    await experience_index.initialize(connection)
+                await TopicMemoryRepository(index=topic_index).initialize(
+                    connection, configure_retrieval_shape=not _topic_memory_worker
                 )
-                await ensure_artifact_head_searchable_text(connection)
-                await assert_atomic_memory_migration_ready(connection)
-                await experience_index.initialize(connection)
-            await TopicMemoryRepository(index=topic_index).initialize(
-                connection, configure_retrieval_shape=not _topic_memory_worker
-            )
         contexts = RelationalContexts(
             model_usage_observer=model_usage_observer,
             database=profile.database,

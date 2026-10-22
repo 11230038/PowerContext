@@ -72,7 +72,7 @@ def _configure(
 def _invoke(command: list[str], action: str, tmp_path: Path, *options: str, prompt_input: str | None = None):
     return CliRunner().invoke(
         create_cli([app]),
-        [*command, action, "--env-file", str(tmp_path / "deployment.env"), *options],
+        [*command, action, "--bundle", "artifacts", "--env-file", str(tmp_path / "deployment.env"), *options],
         input=prompt_input,
     )
 

@@ -108,7 +108,8 @@ class SQLiteMigrationRunner:
     ) -> None:
         self.database = database.expanduser().resolve()
         self.bundle = bundle
-        self.configuration_digest = digest(configuration or {})
+        self.configuration = json.loads(json.dumps(configuration or {}))
+        self.configuration_digest = digest(self.configuration)
         self.backup_provider = backup_provider or SQLiteBackupProvider(self.database)
         directory = evidence_directory or self.database.with_name(self.database.name + ".pc-migration-state")
         self.evidence_path = directory.expanduser().resolve() / "maintenance.json"
@@ -145,7 +146,7 @@ class SQLiteMigrationRunner:
         plan = self.plan(backup_policy=policy)
         if plan.state != "ready":
             raise MigrationError(plan.state, "Inspect and explicitly apply the registered bundle before verification.")
-        return MigrationResult(revision=self.bundle.head, changed=False)
+        return MigrationResult(revision=self.bundle.head, changed=False, readiness_scope=self.bundle.readiness_scope)
 
     def apply(
         self,
@@ -167,7 +168,9 @@ class SQLiteMigrationRunner:
         }
         initial = self.plan(**options)
         if initial.state == "ready":
-            return MigrationResult(revision=self.bundle.head, changed=False)
+            return MigrationResult(
+                revision=self.bundle.head, changed=False, readiness_scope=self.bundle.readiness_scope
+            )
         self._require_acceptance(initial, plan_id, accepted, maintenance_confirmed, backup_confirmed, accept_no_backup)
         with local_migration_lock(self.database):
             if self.plan(**options) != initial:
@@ -180,6 +183,9 @@ class SQLiteMigrationRunner:
                     raise MigrationError("plan_changed", "State changed before acquiring the write transaction.")
                 evidence = self._prepare_evidence(initial, backup_ref)
                 self.bundle.assert_unchanged()
+                self.bundle.domains.preflight(
+                    connection, initial.source_revision, backend="sqlite", configuration=self.configuration
+                )
                 version_exists = (
                     connection.exec_driver_sql("SELECT name FROM sqlite_schema WHERE name='pc_schema_revision'").first()
                     is not None
@@ -188,7 +194,7 @@ class SQLiteMigrationRunner:
                     connection.exec_driver_sql(_VERSION_DDL)
                     if initial.adopt_baseline and initial.source_revision is not None:
                         with ALEMBIC_CONTEXT_LOCK:
-                            command.stamp(self.bundle.config(connection), initial.source_revision)
+                            command.stamp(self._config(connection), initial.source_revision)
                 connection.commit()
                 self._upgrade(connection)
                 self._begin(connection)
@@ -205,6 +211,7 @@ class SQLiteMigrationRunner:
         return MigrationResult(
             revision=self.bundle.head,
             changed=True,
+            readiness_scope=self.bundle.readiness_scope,
             backup_state=evidence["backup_state"],
             backup_ref=ref["location"] if ref else evidence.get("manual_ref"),
         )
@@ -296,8 +303,10 @@ class SQLiteMigrationRunner:
                 raise MigrationError("unknown_baseline", "Schema is not registered; no changes were made.")
             self._verify_retained(inventory, revision)
             self._verify_integrity(connection)
+            self.bundle.domains.validate(connection, revision, backend="sqlite", configuration=self.configuration)
         else:
             revision = None
+        self.bundle.domains.preflight(connection, revision, backend="sqlite", configuration=self.configuration)
         return self._plan(revision, fingerprint, initialized=initialized, **options)
 
     def _plan(
@@ -311,6 +320,7 @@ class SQLiteMigrationRunner:
         shared_database: bool,
     ) -> MigrationPlan:
         pending = self.bundle.pending(revision)
+        domain_steps = self.bundle.domains.pending(revision, "sqlite")
         adopt = not initialized and revision is not None
         state = "migration_required" if pending or adopt else "ready"
         if not initialized and revision is None:
@@ -343,11 +353,14 @@ class SQLiteMigrationRunner:
             "database_id": self._database_id(),
             "source_revision": revision,
             "target_revision": self.bundle.head,
+            "readiness_scope": self.bundle.readiness_scope,
             "schema_fingerprint": fingerprint,
             "bundle_checksum": self.bundle.checksum,
             "configuration_digest": self.configuration_digest,
             "state": state,
             "revisions": pending,
+            "domain_steps": tuple(step.id for step in domain_steps),
+            "domain_validators": self.bundle.domains.readiness.get(self.bundle.head, ()),
             "adopt_baseline": adopt,
             "backup_policy": backup_policy,
             "backup_available": available,
@@ -509,6 +522,11 @@ class SQLiteMigrationRunner:
                 raise MigrationError("active_writers", "SQLite is busy; stop writers before retrying.") from error
             raise
 
+    def _config(self, connection):
+        config = self.bundle.config(connection)
+        config.attributes["configuration"] = self.configuration
+        return config
+
     def _upgrade(self, connection: Connection) -> None:
         current = connection.exec_driver_sql("SELECT version_num FROM pc_schema_revision").scalar_one_or_none()
         connection.commit()
@@ -516,7 +534,8 @@ class SQLiteMigrationRunner:
             self._begin(connection)
             self._verify_schema(connection, current)
             with ALEMBIC_CONTEXT_LOCK:
-                command.upgrade(self.bundle.config(connection), revision)
+                command.upgrade(self._config(connection), revision)
+            self.bundle.domains.apply(connection, revision, backend="sqlite", configuration=self.configuration)
             self._verify_schema(connection, revision)
             connection.commit()
             current = revision
@@ -527,6 +546,7 @@ class SQLiteMigrationRunner:
         self._verify_retained(inventory, revision)
         self.bundle.verify(revision, digest(sqlite_inventory(connection, exclude=excluded)))
         self._verify_integrity(connection)
+        self.bundle.domains.validate(connection, revision, backend="sqlite", configuration=self.configuration)
 
     def _verify_retained(self, inventory: list[list[Any]], revision: str | None) -> None:
         for name in self.bundle.retained_objects:

@@ -31,7 +31,7 @@ class DreamSchemaNotReadyError(RuntimeError):
         self.reason = reason
         super().__init__(
             f"{reason}: {detail}. Startup never migrates Dream storage. The versioned bundle accepts only empty "
-            "targets and registered historical layouts, so it cannot upgrade a complete Server database yet; see "
+            "targets and registered historical layouts; select the full Server bundle for supported upgrades. See "
             "docs/operate/database-migrations.md for the current acceptance boundary."
         )
 
@@ -46,11 +46,10 @@ def check_dream_schema(connection: Connection) -> None:
     inspector = inspect(connection)
     names = set(inspector.get_table_names())
     if "pc_schema_revision" in names:
-        # Until RFC 1771's complete Server gate is integrated, never turn the
-        # four-table acceptance prototype into a business DB using create_all.
-        raise DreamSchemaNotReadyError(
-            "migration_framework_not_ready", "Full Server readiness for versioned databases is not integrated"
-        )
+        from powercontext.builtin.persistence.migrations.server_readiness import check_server_schema
+
+        check_server_schema(connection)
+        return
     if names & {"pc_catalog_change_candidate_heads", "pc_catalog_change_candidate_versions"}:
         raise DreamSchemaNotReadyError("unknown_baseline", "Unpublished Catalog Change storage is unsupported")
     old = names & {"pc_artifact_candidate_heads", "pc_artifact_candidate_versions"}
