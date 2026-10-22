@@ -212,6 +212,15 @@ RFC 1771 的结构版本。Atomic Memory 内容恢复接口不能替代数据库
 
 ## 重建当前检索投影
 
+受管 Server 数据库上，该命令转发到
+[`db-migrate --bundle atomic-projection`](./database-migrations.md#atomic-memory-投影维护)。
+先用 `--action plan` 只读检查，再提供 `--plan-id`、显式 `--backup`、`--yes` 和
+`--maintenance-confirmed` 执行。已登记的无向量修复保留恢复点，在一个事务中提交完整修复，
+返回共享 Server 结果。`--action verify` 检查 current 就绪状态；投影已就绪时只读返回。
+此路径不登记向量 profile 切换。
+
+下文描述未受管数据库的领域独立修复：
+
 更换 embedding 模型、profile、维度或归一化方式，或修复当前检索数据时，先备份数据库，停止全部
 API、宿主、Worker、自动重启和输入写入，然后使用目标部署配置执行：
 

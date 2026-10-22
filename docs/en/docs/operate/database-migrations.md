@@ -74,6 +74,31 @@ backup policy, and evidence directory; the original maintenance window and recov
 Successful retry does not invalidate leases again. Full Server validators run before and after the change.
 An already matching configuration is a read-only no-op.
 
+## Atomic Memory projection maintenance
+
+`--bundle atomic-projection` repairs the current Atomic Memory rows and SQLite FTS helper on a current managed
+Server database in the registered no-vector, Code-disabled configuration. It preserves the Server revision,
+immutable content/history, lifecycle, formal tags, permissions and Source/Processing state.
+
+```bash
+powercontext server db-migrate plan --bundle atomic-projection --env-file .env --backup auto
+powercontext server db-migrate apply --bundle atomic-projection --env-file .env \
+  --backup auto --plan-id PLAN_ID --maintenance-confirmed --yes
+powercontext server db-migrate verify --bundle atomic-projection --env-file .env
+```
+
+The operation shares Processing maintenance's target lock, backup, stopped-writer declarations and durable recovery
+transaction. Plan and verify are read-only. Apply repairs only derived rows and commits after full Server validation;
+invalid authority or an unregistered layout is rejected. A ready projection is a read-only no-op. Interruption before
+commit rolls back the repair; resume from a new plan with the original artifact, configuration, backup policy and
+evidence directory to reuse its recovery point. Finish any incomplete maintenance operation before starting another.
+OceanBase requires the same fixed-host coordination and previous-run acknowledgment as other maintenance.
+
+Inspection and repair scan the relevant Atomic history, heads, tags, lineage and current projection. Keyset batches
+bound row buffering; this is an offline whole-projection operation. It does not register vector-profile changes or
+optional Code configurations. The compatibility command `server atomic-memory-rebuild-projection` delegates managed
+databases to this bundle and supports `--action plan/apply/verify` with the same confirmation and backup options.
+
 ## Topic Memory recovery bundle
 
 Select `--bundle topic-memory-recovery` for the versioned `powercontext.topic-memory-recovery.v1` conversion. It recognizes

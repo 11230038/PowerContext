@@ -28,6 +28,7 @@ from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime.config import BuiltinConfig
 from powercontext.builtin.runtime.processing_registry import canonical_processing_manifest
 
+from .atomic_projection import AtomicProjectionMigrationRunner
 from .bundle import MigrationBundle
 from .connections import MaintenanceConnections
 from .models import MigrationError
@@ -55,6 +56,7 @@ MigrationRunner = (
     | MySQLMigrationRunner
     | TopicMemoryRecoveryMigrationRunner
     | ProcessingConfigurationMigrationRunner
+    | AtomicProjectionMigrationRunner
 )
 
 
@@ -79,21 +81,24 @@ def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
     evidence_dir: Path | None = None,
     lock_coordination: Literal["single-host"] | None = None,
     acknowledge_previous_run: str | None = None,
-    bundle: Literal["server", "artifacts", "topic-memory-recovery", "processing"] = "server",
+    bundle: Literal["server", "artifacts", "topic-memory-recovery", "processing", "atomic-projection"] = "server",
     migration_id: str = "rfc1515",
     batch_size: int = 100,
 ) -> MigrationRunner:
     """Use the real configured identity without opening a business profile."""
     database = settings.database
     configuration = _migration_configuration(settings)
-    if bundle in {"server", "processing"}:
+    if bundle in {"server", "processing", "atomic-projection"}:
         if settings.inference.embedding_model is not None or settings.code.enabled:
             raise MigrationError(
                 "unsupported_upgrade_configuration",
                 "The registered 1.3.0 Server path covers the no-vector, Code-disabled configuration.",
             )
         configuration["embedding_enabled"] = False
-    selected = server_bundle() if bundle in {"server", "processing"} else production_bundle()
+    selected = server_bundle() if bundle in {"server", "processing", "atomic-projection"} else production_bundle()
+    maintenance_runner = (
+        AtomicProjectionMigrationRunner if bundle == "atomic-projection" else ProcessingConfigurationMigrationRunner
+    )
     if bundle == "topic-memory-recovery":
         if not isinstance(database, (SQLiteConfig, SeekDBConfig, OceanBaseConfig)):
             raise MigrationError("unsupported_backend", "The database has no Topic recovery migration adapter.")
@@ -125,8 +130,8 @@ def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
             lock_coordination=lock_coordination,
             acknowledge_previous_run=acknowledge_previous_run,
         )
-        if bundle == "processing":
-            return ProcessingConfigurationMigrationRunner(
+        if bundle in {"processing", "atomic-projection"}:
+            return maintenance_runner(
                 connections,
                 selected,
                 configuration=configuration,
@@ -149,9 +154,9 @@ def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
         )
     # Match SQLite's URL normalization before the runner expands standalone Path inputs.
     target = Path(os.path.abspath(url.database))
-    if bundle == "processing":
+    if bundle in {"processing", "atomic-projection"}:
         directory = evidence_dir or target.with_name(target.name + ".pc-migration-state")
-        return ProcessingConfigurationMigrationRunner(
+        return maintenance_runner(
             MaintenanceConnections(database),
             selected,
             configuration=configuration,

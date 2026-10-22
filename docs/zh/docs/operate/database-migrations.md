@@ -61,6 +61,30 @@ powercontext server db-migrate verify --bundle processing --env-file .env \
 中断后重新查看计划，保留原配置、迁移 ID、备份策略和证据目录恢复；原维护窗口和恢复点继续沿用。
 成功后的重试不会再次撤销租约。操作前后都运行完整 Server 校验；配置已匹配时只读返回。
 
+## Atomic Memory 投影维护
+
+`--bundle atomic-projection` 在当前受管 Server 数据库上修复 Atomic Memory current 行和 SQLite FTS
+辅助索引，适用于已登记的无向量、Code 关闭配置。它保留 Server revision、不可变正文与历史、生命周期、
+正式标签、权限和 Source/Processing 状态。
+
+```bash
+powercontext server db-migrate plan --bundle atomic-projection --env-file .env --backup auto
+powercontext server db-migrate apply --bundle atomic-projection --env-file .env \
+  --backup auto --plan-id PLAN_ID --maintenance-confirmed --yes
+powercontext server db-migrate verify --bundle atomic-projection --env-file .env
+```
+
+该操作与 Processing 维护共用目标锁、备份、停写声明和持久恢复事务。plan 和 verify 只读；
+apply 只修复派生行，完整 Server 校验通过后才提交。权威数据损坏或结构未登记时拒绝执行。
+投影已就绪则只读返回。提交前中断会回滚修复；使用新的计划、原软件产物、配置、备份策略和证据目录恢复，
+继续沿用原恢复点。另一项维护未完成时，须先完成原操作。OceanBase 同样要求固定维护主机协调，
+并在报告上次运行未结束时提供准确的确认 token。
+
+检查和修复扫描相关 Atomic 历史、head、标签、lineage 及 current 投影，通过键集分页限制行缓冲；
+这是停服执行的全投影操作，不登记向量 profile 切换或可选 Code 配置。
+兼容命令 `server atomic-memory-rebuild-projection` 在受管数据库上转发到此 bundle，
+支持 `--action plan/apply/verify` 和同样的确认、备份选项。
+
 ## Topic Memory 恢复 bundle
 
 选择 `--bundle topic-memory-recovery` 执行版本化的 `powercontext.topic-memory-recovery.v1` 转换。它识别恢复功能之前的

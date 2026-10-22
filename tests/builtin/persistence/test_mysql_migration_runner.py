@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 from typer.testing import CliRunner
 
+from powercontext.builtin.artifacts.atomic_memory.models import AtomicMemoryContent
 from powercontext.builtin.persistence.migrations import mysql as mysql_migrations
 from powercontext.builtin.persistence.migrations.backup import BackupCapabilities, BackupProvider
 from powercontext.builtin.persistence.migrations.connections import BackendIdentity, MaintenanceConnections
@@ -455,6 +456,7 @@ def test_mysql_atomic_compatibility_command_uses_shared_server_upgrade(
         "--lock-coordination",
         "single-host",
     ]
+
     def invoke(options):
         # Pytest live SQL logging suspends capture during emit. Keep its
         # stream switching outside Typer's independent stdout isolation.
@@ -498,6 +500,71 @@ def test_mysql_atomic_compatibility_command_uses_shared_server_upgrade(
         )
 
     assert backend.connections().run(inspect_history) == ("s1401", b'{"history":"unchanged"}')
+
+
+def test_mysql_registered_projection_repair_preserves_authority_and_revision(backend: _BackendTarget) -> None:
+    from powercontext.builtin.persistence.migrations.atomic_projection import AtomicProjectionMigrationRunner
+
+    full = _full_server_runner(backend)
+    plan = full.plan()
+    full.apply(plan_id=plan.plan_id, accepted=True, maintenance_confirmed=True)
+    content = (
+        AtomicMemoryContent(kind="fact", text="Preserve immutable nebula evidence.")
+        .model_dump_json(by_alias=True)
+        .encode()
+    )
+
+    def seed(connection, identity, guard):
+        connection.exec_driver_sql(
+            "INSERT INTO pc_scopes (scope_id,title,summary,scope_id_search,title_search,summary_search,version) "
+            "VALUES ('scope','title','summary','scope','title','summary',1)"
+        )
+        connection.execute(
+            text(
+                "INSERT INTO pc_artifacts (scope_id,family,artifact_id,revision,content) "
+                "VALUES ('scope','atomic-memory','fact',1,:content)"
+            ),
+            {"content": content},
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO pc_artifact_heads (scope_id,family,artifact_id,revision) "
+            "VALUES ('scope','atomic-memory','fact',1)"
+        )
+        connection.commit()
+
+    backend.connections().run(seed, writable=True)
+    runner = AtomicProjectionMigrationRunner(
+        backend.connections(),
+        full.bundle,
+        configuration=full.configuration,
+        evidence_directory=backend.evidence_directory,
+        batch_size=1,
+    )
+    plan = runner.plan(backup_policy="manual")
+    assert plan.state == "migration_required"
+    result = runner.apply(
+        plan_id=plan.plan_id,
+        accepted=True,
+        maintenance_confirmed=True,
+        backup_policy="manual",
+        backup_confirmed=True,
+        backup_ref="operator://projection-recovery",
+    )
+    assert result.backup_state == "user_confirmed" and result.backup_ref == "operator://projection-recovery"
+    assert runner.verify().state == "ready"
+    assert full.verify().state == "ready"
+    assert not runner.apply().changed
+
+    def inspect_content(connection, identity, guard):
+        return (
+            connection.exec_driver_sql("SELECT version_num FROM pc_schema_revision").scalar_one(),
+            connection.exec_driver_sql("SELECT content FROM pc_artifacts WHERE artifact_id='fact'").scalar_one(),
+            connection.exec_driver_sql(
+                "SELECT text FROM pc_atomic_memory_current WHERE artifact_id='fact'"
+            ).scalar_one(),
+        )
+
+    assert backend.connections().run(inspect_content) == ("s1401", content, "Preserve immutable nebula evidence.")
 
 
 def _load_full_server_baseline(backend: _BackendTarget) -> None:

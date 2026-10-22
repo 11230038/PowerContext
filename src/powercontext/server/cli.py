@@ -436,13 +436,69 @@ def atomic_memory_migrate(
 @app.command("atomic-memory-rebuild-projection")
 def atomic_memory_rebuild_projection(
     env_file: Annotated[Path | None, typer.Option(help="Load the deployment's settings.")] = None,
+    action: Annotated[
+        Literal["plan", "apply", "verify"], typer.Option(help="Managed projection maintenance action.")
+    ] = "apply",
     maintenance_confirmed: Annotated[
         bool, typer.Option(help="Confirm every API, host and Worker is stopped and input writes are paused.")
     ] = False,
     batch_size: Annotated[int, typer.Option(min=1, max=1000, help="Identities read per maintenance batch.")] = 100,
+    evidence_dir: database_migration.EvidenceDir = None,
+    lock_coordination: database_migration.LockCoordination = None,
+    backup: Annotated[
+        database_migration.BackupPolicy | None, typer.Option(help="Managed storage backup policy.")
+    ] = None,
+    plan_id: Annotated[str | None, typer.Option(help="Exact managed projection plan to accept.")] = None,
+    yes: Annotated[bool, typer.Option("--yes", help="Accept the managed projection plan.")] = False,
+    backup_confirmed: Annotated[bool, typer.Option(help="Declare a manual backup exists.")] = False,
+    accept_no_backup: Annotated[bool, typer.Option(help="Accept the no-backup risk.")] = False,
+    backup_ref: Annotated[str | None, typer.Option(help="Operator manual backup reference.")] = None,
+    acknowledge_previous_run: Annotated[
+        str | None, typer.Option(help="OceanBase token confirming the previous remote maintenance ended.")
+    ] = None,
 ) -> None:
     """Rebuild active Atomic Memory search rows from existing authority."""
 
+    env_file = resolve_server_environment_file(env_file, discover=True)
+    with database_migration._operator_errors(), server_settings_context(env_file=env_file) as settings:
+        managed = _managed_storage(settings.database)
+    if managed:
+        if action == "plan":
+            database_migration.plan(
+                env_file=env_file,
+                evidence_dir=evidence_dir,
+                lock_coordination=lock_coordination,
+                backup=backup or "auto",
+                bundle="atomic-projection",
+                batch_size=batch_size,
+            )
+        elif action == "verify":
+            database_migration.verify(
+                env_file=env_file,
+                evidence_dir=evidence_dir,
+                lock_coordination=lock_coordination,
+                bundle="atomic-projection",
+                batch_size=batch_size,
+            )
+        else:
+            database_migration.apply(
+                env_file=env_file,
+                evidence_dir=evidence_dir,
+                lock_coordination=lock_coordination,
+                bundle="atomic-projection",
+                batch_size=batch_size,
+                backup=backup,
+                plan_id=plan_id,
+                yes=yes,
+                maintenance_confirmed=maintenance_confirmed,
+                backup_confirmed=backup_confirmed,
+                accept_no_backup=accept_no_backup,
+                backup_ref=backup_ref,
+                acknowledge_previous_run=acknowledge_previous_run,
+            )
+        return
+    if action != "apply":
+        raise typer.BadParameter("plan and verify require managed Server storage")  # noqa: TRY003
     if not maintenance_confirmed:
         raise typer.BadParameter("projection rebuild requires --maintenance-confirmed after stopping every writer")  # noqa: TRY003
     with server_settings_context(env_file=env_file) as settings:

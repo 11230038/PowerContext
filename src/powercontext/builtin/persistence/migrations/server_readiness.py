@@ -21,6 +21,13 @@ from .models import MigrationError, digest
 
 
 def check_server_schema(connection):
+    bundle = check_server_layout(connection)
+    backend = "sqlite" if connection.dialect.name == "sqlite" else "seekdb"
+    bundle.domains.validate(connection, bundle.head, backend=backend, configuration={})
+
+
+def check_server_layout(connection):
+    """Validate the exact managed layout before a registered domain repair."""
     from .deployment import server_bundle
     from .mysql_schema import MySQLSchema, mysql_inventory
 
@@ -40,12 +47,10 @@ def check_server_schema(connection):
         )
         if connection.exec_driver_sql("PRAGMA foreign_key_check").first():
             raise MigrationError("verification_failed", "A live foreign key is invalid.")
-        backend = "sqlite"
     else:
         schema = MySQLSchema(bundle)
         schema.verify(mysql_inventory(connection), bundle.head)
-        backend = "seekdb"
-    bundle.domains.validate(connection, bundle.head, backend=backend, configuration={})
+    return bundle
 
 
 def prepare_server_storage(settings, *, injected_embedding=False):
