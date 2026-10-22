@@ -93,6 +93,7 @@ jobs:
           echo "POWERCONTEXT_TEST_MIGRATION_OCEANBASE_ENGINE_CRASH_ID=$container_id" >> "$GITHUB_ENV"
       - name: Verify migration recovery after observer SIGKILL
         run: |
+          mkdir -p "$RUNNER_TEMP/oceanbase-engine-recovery"
           uv run pytest -q tests/native/test_oceanbase_engine_recovery.py \
             --junitxml "$RUNNER_TEMP/oceanbase-engine-recovery/junit.xml" \
             --basetemp "$RUNNER_TEMP/oceanbase-engine-recovery/cases"
