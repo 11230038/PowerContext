@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -31,6 +32,7 @@ from powercontext.builtin.persistence.migrations import SQLiteMigrationRunner
 from powercontext.builtin.persistence.migrations.bundle import MigrationBundle, sqlite_inventory
 from powercontext.builtin.persistence.migrations.connections import MaintenanceConnections
 from powercontext.builtin.persistence.migrations.models import MigrationError, digest
+from powercontext.builtin.persistence.migrations.mysql import MySQLMigrationRunner
 from powercontext.builtin.persistence.migrations.mysql_schema import MySQLSchema, mysql_inventory, read_revision
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
 
@@ -110,9 +112,10 @@ def extended_bundle(tmp_path: Path) -> MigrationBundle:
         engine.dispose()
     manifest_path = directory / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    manifest["revision_resources"]["fixture_next"] = ["mysql_fixture_next.json"]
+    manifest["revision_resources"]["fixture_next"] = ["mysql_fixture_next.json", "mysql_wrappers/fixture_next.py"]
     manifest["sqlite_fingerprints"]["fixture_next"] = [fingerprint]
     manifest["mysql_layouts"].append("mysql_fixture_next.json")
+    manifest["mysql_wrappers"] = {"fixture_next": "mysql_wrappers/fixture_next.py"}
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     (directory / "mysql_fixture_next.json").write_text(
         json.dumps({
@@ -127,6 +130,14 @@ def extended_bundle(tmp_path: Path) -> MigrationBundle:
         "revision = 'fixture_next'\n"
         "down_revision = 'p0005'\n"
         f"def upgrade():\n    op.execute({_NEXT_TABLE!r})\n",
+        encoding="utf-8",
+    )
+    (directory / "mysql_wrappers").mkdir()
+    (directory / "mysql_wrappers/fixture_next.py").write_text(
+        "from alembic import context\n"
+        "revision = 'fixture_next'\n"
+        "down_revision = 'p0005'\n"
+        "def upgrade():\n    context.config.attributes['execute_revision'](revision)\n",
         encoding="utf-8",
     )
     return MigrationBundle(directory)
@@ -189,6 +200,74 @@ def test_mysql_layout_registration_must_cover_exactly_the_revision_chain(
     path.write_text(json.dumps(layouts), encoding="utf-8")
     with pytest.raises(MigrationError, match="invalid_bundle"):
         MySQLSchema(MigrationBundle(extended_bundle.directory))
+
+
+@pytest.mark.parametrize("change", ["missing", "predecessor", "unbound", "override"])
+def test_mysql_execution_registration_rejects_incomplete_history_before_opening_a_target(
+    extended_bundle: MigrationBundle, tmp_path: Path, change: str
+) -> None:
+    path = extended_bundle.directory / "manifest.json"
+    manifest = json.loads(path.read_text())
+    if change == "missing":
+        del manifest["mysql_wrappers"]
+    elif change == "predecessor":
+        wrapper = extended_bundle.directory / "mysql_wrappers/fixture_next.py"
+        wrapper.write_text(wrapper.read_text().replace("'p0005'", "'p0004'"), encoding="utf-8")
+    elif change == "unbound":
+        manifest["revision_resources"]["fixture_next"].remove("mysql_wrappers/fixture_next.py")
+    else:
+        manifest["mysql_wrappers"]["p0005"] = "mysql_wrappers/fixture_next.py"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    target = tmp_path / "absent-seekdb"
+    evidence = tmp_path / "absent-evidence"
+    with pytest.raises(MigrationError, match="invalid_bundle"):
+        MySQLMigrationRunner(
+            MaintenanceConnections(SeekDBConfig(path=target)),
+            MigrationBundle(extended_bundle.directory),
+            evidence_directory=evidence,
+        )
+    assert not target.exists()
+    assert not evidence.exists()
+
+
+@pytest.mark.skipif(os.environ.get("POWERCONTEXT_TEST_MIGRATION_SEEKDB") != "1", reason="real seekdb probe not enabled")
+def test_registered_next_revision_executes_directly_and_sequentially_on_real_seekdb(
+    extended_bundle: MigrationBundle, short_tmp_path: Path
+) -> None:
+    binding = pytest.importorskip("pylibseekdb")
+    leases = []
+    try:
+        fingerprints = []
+        for adjacent in (False, True):
+            target = short_tmp_path / ("adjacent" if adjacent else "direct")
+            # Retain a native engine lease while public maintenance calls open
+            # independent connections; restart behavior has separate acceptance.
+            leases.append(asyncio.run(binding.aopen(str(target))))
+            connections = MaintenanceConnections(SeekDBConfig(path=target))
+            evidence = short_tmp_path / (target.name + "-evidence")
+            previous = None
+            if adjacent:
+                previous = MySQLMigrationRunner(connections, MigrationBundle(_RESOURCES), evidence_directory=evidence)
+                previous.apply(plan_id=previous.plan().plan_id, accepted=True, maintenance_confirmed=True)
+            runner = MySQLMigrationRunner(connections, extended_bundle, evidence_directory=evidence)
+            if previous is not None:
+                assert all(runner.checksums[revision] == checksum for revision, checksum in previous.checksums.items())
+            plan = runner.plan(backup_policy="skip")
+            assert plan.revisions == (("fixture_next",) if adjacent else extended_bundle.revisions)
+            result = runner.apply(
+                plan_id=plan.plan_id,
+                backup_policy="skip",
+                accepted=True,
+                maintenance_confirmed=True,
+                accept_no_backup=True,
+            )
+            assert result.changed and runner.verify().revision == "fixture_next"
+            assert not runner.apply().changed
+            fingerprints.append(runner.plan().schema_fingerprint)
+        assert fingerprints[0] == fingerprints[1]
+    finally:
+        for lease in leases:
+            lease.close()
 
 
 def _append_clause(statement: str, clause: str) -> str:
