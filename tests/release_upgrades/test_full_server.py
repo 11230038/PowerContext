@@ -98,10 +98,9 @@ def server(python, environment, work, log):
                 yield client
         finally:
             if process.poll() is None:
-                if os.name == "nt":
-                    process.terminate()
-                else:
-                    os.killpg(process.pid, signal.SIGTERM)
+                # Let the Server close SQL sessions and its embedded engine in
+                # order. Signalling the whole group also kills seekDB mid-close.
+                process.terminate()
                 try:
                     process.wait(timeout=30)
                 except subprocess.TimeoutExpired:
