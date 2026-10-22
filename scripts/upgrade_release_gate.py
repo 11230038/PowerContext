@@ -21,10 +21,13 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from email.parser import Parser
 from pathlib import Path
 from typing import Any
@@ -258,6 +261,58 @@ def wheel_version(wheel: Path) -> str:
     return str(metadata["Version"])
 
 
+def _preserve_seekdb_logs(directory: Path, output: Path) -> None:
+    """Retain bounded diagnostics from synthetic acceptance stores, excluding database files."""
+
+    remaining = 16 * 1024 * 1024
+    files = []
+    with zipfile.ZipFile(output / "seekdb-native-logs.zip", "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in ("database", "fresh"):
+            for path in sorted((directory / name).rglob("*.log*")):
+                if remaining == 0:
+                    break
+                if path.is_symlink() or not path.is_file():
+                    continue
+                with path.open("rb") as source:
+                    size = source.seek(0, os.SEEK_END)
+                    length = min(size, 4 * 1024 * 1024, remaining)
+                    source.seek(size - length)
+                    content = source.read(length)
+                relative = path.relative_to(directory).as_posix()
+                archive.writestr(relative, content)
+                remaining -= len(content)
+                files.append({
+                    "path": relative,
+                    "size_bytes": size,
+                    "captured_bytes": len(content),
+                    "truncated": len(content) < size,
+                })
+    usage = shutil.disk_usage(directory)
+    manifest = {
+        "files": files,
+        "budget_exhausted": remaining == 0,
+        "filesystem": {"total_bytes": usage.total, "used_bytes": usage.used, "free_bytes": usage.free},
+    }
+    (output / "seekdb-native-logs.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
+@contextmanager
+def case_workspace(backend: str, output: Path) -> Iterator[Path]:
+    # Keep embedded sockets under a short private path. Native logs must leave
+    # this directory before cleanup, including when acceptance raises or times out.
+    with tempfile.TemporaryDirectory(prefix="pc-up-", dir="/tmp" if os.name != "nt" else None) as temporary:  # noqa: S108 -- private mkdtemp directory
+        directory = Path(temporary)
+        try:
+            yield directory
+        finally:
+            if backend == "seekdb":
+                try:
+                    _preserve_seekdb_logs(directory, output)
+                except OSError as error:
+                    # Diagnostics must not replace the acceptance failure.
+                    print(f"seekDB native log collection failed: {type(error).__name__}", file=sys.stderr)
+
+
 def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dict[str, Any]:
     output.mkdir(parents=True, exist_ok=False)
     # Never inherit a developer's live deployment or pytest selection overrides.
@@ -266,8 +321,7 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
         for key, value in os.environ.items()
         if not key.startswith(("POWERCONTEXT_", "PYTEST_")) and key not in {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"}
     }
-    with tempfile.TemporaryDirectory(prefix="pc-up-", dir="/tmp" if os.name != "nt" else None) as temporary:  # noqa: S108 -- private mkdtemp directory; short embedded socket path
-        directory = Path(temporary)
+    with case_workspace(case["backend"], output) as directory:
         extras = "cli,server,seekdb" if case["backend"] == "seekdb" else "cli,server"
         interpreters = {}
         artifact = case["source_artifact"]

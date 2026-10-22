@@ -458,6 +458,48 @@ def test_failed_backend_does_not_skip_other_required_backends(release, monkeypat
     assert [case["status"] for case in result["cases"]] == ["failed", "passed", "passed"]
 
 
+def test_failed_seekdb_acceptance_keeps_native_logs_before_workspace_cleanup(tmp_path):
+    output = tmp_path / "evidence"
+    output.mkdir()
+
+    with pytest.raises(gate.GateError, match="fixture migration failed"), gate.case_workspace("seekdb", output) as work:
+        native = work / "database/log"
+        native.mkdir(parents=True)
+        (native / "observer.log").write_bytes(b"native recovery diagnostic\n")
+        (work / "database/store").write_bytes(b"database payload must not become a log")
+        fresh = work / "fresh/log"
+        fresh.mkdir(parents=True)
+        (fresh / "observer.log.wf").write_bytes(b"fresh native diagnostic\n")
+        raise gate.GateError("fixture migration failed")  # noqa: TRY003 -- synthetic acceptance failure
+
+    assert not work.exists()
+    with zipfile.ZipFile(output / "seekdb-native-logs.zip") as archive:
+        assert set(archive.namelist()) == {"database/log/observer.log", "fresh/log/observer.log.wf"}
+        assert archive.read("database/log/observer.log") == b"native recovery diagnostic\n"
+        assert archive.read("fresh/log/observer.log.wf") == b"fresh native diagnostic\n"
+    manifest = json.loads((output / "seekdb-native-logs.json").read_text())
+    assert len(manifest["files"]) == 2
+    assert not any(item["truncated"] for item in manifest["files"])
+
+
+def test_seekdb_diagnostics_keep_a_bounded_tail_of_large_native_logs(tmp_path):
+    output = tmp_path / "evidence"
+    output.mkdir()
+    size = 5 * 1024 * 1024
+    with gate.case_workspace("seekdb", output) as work:
+        native = work / "database/log"
+        native.mkdir(parents=True)
+        (native / "observer.log").write_bytes(b"x" * size + b"final diagnostic")
+
+    with zipfile.ZipFile(output / "seekdb-native-logs.zip") as archive:
+        tail = archive.read("database/log/observer.log")
+        assert len(tail) <= 4 * 1024 * 1024
+        assert tail.endswith(b"final diagnostic")
+    manifest = json.loads((output / "seekdb-native-logs.json").read_text())
+    assert manifest["files"][0]["truncated"] is True
+    assert manifest["files"][0]["size_bytes"] == size + len(b"final diagnostic")
+
+
 @pytest.mark.parametrize(
     "relative",
     [
