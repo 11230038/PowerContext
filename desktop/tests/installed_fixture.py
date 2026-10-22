@@ -26,14 +26,14 @@ import tempfile
 import time
 import zipfile
 from collections.abc import Iterator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import httpx
 from fixture_qualification import fixture_profile
-from real_server import HarnessFailure, control_pipe
+from real_server import HarnessFailure, retained_fixture_server
 
 
 def fixture_compatibility_profile() -> str:
@@ -89,6 +89,7 @@ def isolated_server(
     if len(wheels) != 1:
         raise HarnessFailure("installed_server_wheel_count")
     wheel = wheels[0]
+    wheel_digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory(prefix="desktop-installed-server-") as directory:
         temp = Path(directory)
         wheel_root = temp / "wheel"
@@ -126,61 +127,26 @@ def isolated_server(
                 env=environment,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
-            control = control_pipe(process)
-            report = {
-                "pid": process.pid,
-                "port": port,
-                "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
-                "outcome": "failed",
-                "forced_kill": False,
-            }
-            try:
-                with httpx.Client(base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=10) as client:
-                    wait_ready(client, process)
-                    response = client.post(
-                        "/v1/scopes",
-                        json={
-                            "title": "Desktop installed CI",
-                            "summary": "Synthetic installed UI acceptance",
-                            "idempotency_key": "desktop-installed-ui-scope",
-                        },
-                    )
-                    response.raise_for_status()
-                    yield client, response.json()["scope_id"], report["wheel_sha256"]
-                report["outcome"] = "passed"
-            except BaseException as error:
-                report["exception_type"] = type(error).__name__
-                error.add_note(f"Installed fixture Server pid={process.pid}, port={port}")
-                raise
-            finally:
-                report["before_cleanup_returncode"] = process.poll()
-                try:
-                    if process.poll() is None:
-                        with suppress(BrokenPipeError):
-                            control.write(b"stop\n")
-                            control.flush()
-                        try:
-                            process.wait(timeout=30)
-                        except subprocess.TimeoutExpired:
-                            report["forced_kill"] = True
-                            process.kill()
-                            process.wait(timeout=10)
-                finally:
-                    report["after_cleanup_returncode"] = process.poll()
-                    with suppress(BrokenPipeError):
-                        control.close()
-                    # Only the synthetic fixture's bounded logs survive temporary
-                    # storage cleanup; database files and configuration do not.
-                    try:
-                        log.flush()
-                        with (temp / "server.log").open("rb") as source:
-                            size = source.seek(0, os.SEEK_END)
-                            source.seek(max(0, size - 256 * 1024))
-                            tail = source.read(256 * 1024)
-                        report["log_bytes"] = size
-                        report["log_truncated"] = size > len(tail)
-                        retained = Path(tempfile.mkdtemp(prefix="installed-ui-server-", dir=desktop / ".artifacts"))
-                        (retained / "server.log").write_bytes(tail)
-                        (retained / "process.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-                    except OSError:
-                        print("Installed fixture Server diagnostics could not be retained.", file=sys.stderr)
+            with (
+                retained_fixture_server(
+                    process,
+                    log,
+                    temp / "server.log",
+                    desktop / ".artifacts",
+                    label="installed-ui-server",
+                    port=port,
+                    wheel_sha256=wheel_digest,
+                ),
+                httpx.Client(base_url=f"http://127.0.0.1:{port}", trust_env=False, timeout=10) as client,
+            ):
+                wait_ready(client, process)
+                response = client.post(
+                    "/v1/scopes",
+                    json={
+                        "title": "Desktop installed CI",
+                        "summary": "Synthetic installed UI acceptance",
+                        "idempotency_key": "desktop-installed-ui-scope",
+                    },
+                )
+                response.raise_for_status()
+                yield client, response.json()["scope_id"], wheel_digest

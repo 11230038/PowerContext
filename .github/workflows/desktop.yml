@@ -132,6 +132,7 @@ jobs:
             desktop/.artifacts/windows-smoke.json
             desktop/.artifacts/ci-compatibility.json
             desktop/.artifacts/real-server.json
+            desktop/.artifacts/real-server-*/
             desktop/.artifacts/real-cli.json
             desktop/.artifacts/installed-ui.json
             desktop/.artifacts/installed-ui.png
