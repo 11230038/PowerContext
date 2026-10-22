@@ -17,6 +17,10 @@ Errors explain the affected operation and recovery. Read failures offer an expli
 
 The global bar shows the active connection, full Server address, Scope title and complete `scope_id` on every page. Identically named Scopes remain distinguishable. Identity, compatibility, liveness and readiness are separate facts; the latest check for the active configuration revision supplies the displayed facts and check time. A healthy Server does not grant operation permissions. Addresses and IDs wrap in small windows. The connection menu supports arrow keys, Home/End and Escape; the Scope dialog constrains focus and restores it when closed.
 
+Settings & diagnostics includes bilingual usage guidance, a locale-specific documentation address and a fixed issue-report address. Copy actions report success or failure; the read-only address fields select their text on focus for manual copying. Help is available without a Server or native connection state. The displayed Desktop version comes from the native host and is Unknown if unavailable.
+
+While a connection operation is pending, a global message remains visible across page changes. You can browse other pages, but Memory editing, saving, searching, exact reads and Scope switching pause until the operation and its native-state refresh finish. This prevents a late activation result from clearing text entered against the old Scope. Once the operation completes, explicitly select an exact Scope if needed. Existing draft confirmations and unknown-write protections continue to apply.
+
 ## Run the installed preview
 
 Download and extract `desktop-windows-internal-unsigned` from a successful **Desktop validation** Actions run on this branch. The installer is under `src-tauri/target/release/bundle/nsis/`. Its accompanying `.artifacts/windows-smoke.json` records the commit, SHA-256 and signature status; compare the downloaded installer with `Get-FileHash -Algorithm SHA256 <installer-path>`. The current package is unsigned and intended for internal validation.

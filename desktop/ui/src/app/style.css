@@ -1230,3 +1230,12 @@ footer {
     border-inline-start-color: Highlight;
   }
 }
+
+.help li + li {
+  margin-top: 8px;
+}
+.help-address textarea {
+  display: block;
+  overflow-wrap: anywhere;
+  user-select: text;
+}

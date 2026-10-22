@@ -94,6 +94,18 @@ On 2026-10-22, mocked-IPC UI tests verified that a resolved `WriteOutcome` with 
 
 2026-10-22 的模拟 IPC 测试验证：确定失败的保存结果显示与异常分支一致的中英文权限恢复说明，保留草稿及未保存状态，不自动重放写入；未知写入取消再次提交时不发请求，确认后才提交。16 项 Memory 测试、全部 52 项前端测试、typecheck、lint 和生产构建通过。本次未执行真实原生／后端或安装包验收；仓库钩子仍有上述既有 Windows Python 类型检查错误。
 
+## Help and pending-connection protection (#2102)
+
+On 2026-10-22, the pinned Windows tools above ran all 62 frontend tests, typecheck, lint and production build successfully. Ten focused help/connection tests cover bilingual guidance, fixed-address copying, success/failure feedback, keyboard selection for manual copying, offline access, native/unknown version display, pending activation and active-connection recheck across page changes, native failure recovery, overlapping checks, explicit Scope selection and the new draft's discard guard. Existing late-write, unknown-write and editor lifetime tests remain passing.
+
+Headless Edge 155.0.4283.62 exercised 18 combinations of English/Chinese, light/dark/system and CSS viewports 800×600, 400×400 and 400×300. Synthetic IPC delayed activation across Memory and Settings navigation; the old context stayed non-editable, completion required a new Scope, and cancellation of navigation preserved a new draft. Clipboard stubs checked the locale-specific documentation address, copy failure and manual address selection. Help, pending feedback and confirmation paths had no horizontal overflow. An additional forced-colors view was inspected. The 400×300 viewport at device scale factor 2 is a layout equivalent of 800×600 at 200%, not installed WebView zoom.
+
+Screenshots of help copy failure and pending activation were inspected. Evidence is under ignored `.artifacts/desktop-shell/help-transition-*`. Clipboard stubs and synthetic IPC do not qualify the native clipboard, actual Server or installed WebView. No installer, platform IME, screen-reader or macOS acceptance was executed for these changes. Repository hooks retain the previously documented Windows Python `ty check` failures; the other hooks passed.
+
+2026-10-22 使用上述固定工具版本，全部 62 项前端测试、typecheck、lint 和生产构建通过。新增 10 项专项测试覆盖双语帮助、固定地址复制与失败后的手动复制、离线入口、原生／未知版本，以及跨页激活等待、失败恢复、重叠请求和新草稿确认保护。原有晚到写入、未知写入及连接编辑器保护测试继续通过。
+
+Edge 检查覆盖中英文、三种主题和上述三个窗口尺寸的 18 组组合。合成 IPC 与剪贴板桩验证帮助复制、跨页等待、旧上下文不可编辑、完成后显式选择 Scope 及新草稿导航取消；页面没有横向溢出，并检查强制高对比度视图及截图。200% 为等效布局检查。本次未执行原生剪贴板、真实 Server、安装包、IME、屏幕阅读器或 macOS 验收；仓库钩子仍有既有 Windows Python 类型检查错误，其余通过。
+
 ## Remaining release qualification
 
 - Clean standard-user Windows 11, including absent/present WebView2 and bootstrap recovery.

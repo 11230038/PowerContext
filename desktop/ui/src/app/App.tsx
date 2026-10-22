@@ -28,6 +28,7 @@ import observationIcon from "../assets/retrieval.svg";
 import { TopBar } from "./TopBar";
 import { Overview } from "./Overview";
 import { MemoryWorkspace } from "./MemoryWorkspace";
+import { Help } from "./Help";
 import { Diagnostics } from "./Diagnostics";
 import { Connections } from "./Connections";
 import { Scopes } from "./Scopes";
@@ -54,6 +55,12 @@ export function App() {
   const [dirty, setDirty] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [pendingConnections, setPendingConnections] = useState(0);
+  const contextPending = pendingConnections > 0;
+  function connectionPending(pending: boolean) {
+    // Pending operations may finish after their editor has unmounted.
+    setPendingConnections((current) => current + (pending ? 1 : -1));
+  }
   function receiveState(next: DesktopState) {
     setDesktop((current) =>
       !current || next.generation >= current.generation ? next : current,
@@ -161,11 +168,17 @@ export function App() {
   }
   function disconnect() {
     if (!confirmSwitch()) return;
-    void desktopApi.disconnect().then(receiveState).catch(setNativeError);
+    connectionPending(true);
+    void desktopApi
+      .disconnect()
+      .then(receiveState)
+      .catch(setNativeError)
+      .finally(() => connectionPending(false));
   }
   async function refresh() {
     setRefreshing(true);
     setNativeError(null);
+    connectionPending(true);
     try {
       receiveState(
         desktop?.active
@@ -175,6 +188,7 @@ export function App() {
     } catch (e) {
       setNativeError(e);
     } finally {
+      connectionPending(false);
       setRefreshing(false);
     }
   }
@@ -250,6 +264,7 @@ export function App() {
           state={desktop}
           language={language}
           loading={stateLoading}
+          contextPending={contextPending}
           onManageConnections={() => navigate("connections")}
           onOpenScopes={openScopes}
           onDisconnect={disconnect}
@@ -258,6 +273,11 @@ export function App() {
           <h1 className="sr-only" tabIndex={-1} ref={heading}>
             {t[page]}
           </h1>
+          {contextPending && (
+            <PageFeedback kind="loading" title={t.connectionUpdating}>
+              <p>{t.connectionUpdatingHint}</p>
+            </PageFeedback>
+          )}
           {stateLoading && (
             <PageFeedback kind="loading" title={t.loadingState} />
           )}
@@ -315,6 +335,7 @@ export function App() {
               onDirty={setDirty}
               onManageConnections={() => navigate("connections")}
               onOpenScopes={openScopes}
+              contextPending={contextPending}
             />
           )}
           {page === "connections" && (
@@ -323,6 +344,7 @@ export function App() {
               language={language}
               onState={receiveState}
               onDirty={setDirty}
+              onPendingChange={connectionPending}
             />
           )}
           {page === "observation" && (
@@ -359,13 +381,14 @@ export function App() {
                   </select>
                 </div>
               </section>
+              <Help language={language} />
               <Diagnostics language={language} />
               <section className="card">
                 <h2>{t.version}</h2>
                 <dl>
                   <div>
                     <dt>{t.version}</dt>
-                    <dd>{host?.version ?? "0.1.0"}</dd>
+                    <dd>{host?.version ?? t.unknown}</dd>
                   </div>
                   <div>
                     <dt>{t.native}</dt>

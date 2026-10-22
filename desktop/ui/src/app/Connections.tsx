@@ -34,8 +34,15 @@ type Props = {
   language: Language;
   onState: (value: DesktopState) => void;
   onDirty: (value: boolean) => void;
+  onPendingChange?: (pending: boolean) => void;
 };
-export function Connections({ state, language, onState, onDirty }: Props) {
+export function Connections({
+  state,
+  language,
+  onState,
+  onDirty,
+  onPendingChange,
+}: Props) {
   const t = connectionMessages[language];
   const [selected, setSelected] = useState<string | null>(null);
   const profile = state?.profiles.find((p) => p.id === selected);
@@ -87,7 +94,12 @@ export function Connections({ state, language, onState, onDirty }: Props) {
       setSecret("");
       if (profile && !invalidated.current) {
         invalidated.current = true;
-        void desktopApi.invalidate(profile.id).then(onState).catch(setError);
+        onPendingChange?.(true);
+        void desktopApi
+          .invalidate(profile.id)
+          .then(onState)
+          .catch(setError)
+          .finally(() => onPendingChange?.(false));
       }
     }
   }
@@ -101,6 +113,7 @@ export function Connections({ state, language, onState, onDirty }: Props) {
     const ticket = lifetime.current;
     setBusy(true);
     setError(null);
+    onPendingChange?.(true);
     try {
       const next = await work();
       onState(next);
@@ -113,6 +126,7 @@ export function Connections({ state, language, onState, onDirty }: Props) {
         /* Keep the explicit failure visible. */
       }
     } finally {
+      onPendingChange?.(false);
       if (ticket === lifetime.current) setBusy(false);
     }
   }

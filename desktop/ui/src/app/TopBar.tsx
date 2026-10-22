@@ -24,6 +24,7 @@ type Props = {
   state: DesktopState | null;
   language: Language;
   loading?: boolean;
+  contextPending?: boolean;
   onManageConnections: () => void;
   onOpenScopes: () => void;
   onDisconnect: () => void;
@@ -32,6 +33,7 @@ export function TopBar({
   state,
   language,
   loading = false,
+  contextPending = false,
   onManageConnections,
   onOpenScopes,
   onDisconnect,
@@ -55,10 +57,9 @@ export function TopBar({
   }
   useLayoutEffect(() => {
     if (open !== "connection") return;
-    const items =
-      connectionMenu.current?.querySelectorAll<HTMLButtonElement>(
-        '[role="menuitem"]',
-      );
+    const items = connectionMenu.current?.querySelectorAll<HTMLButtonElement>(
+      '[role="menuitem"]:not(:disabled)',
+    );
     items?.[menuStart.current === -1 ? items.length - 1 : 0]?.focus();
   }, [open]);
   useEffect(() => {
@@ -172,7 +173,7 @@ export function TopBar({
               }
               const items = Array.from(
                 connectionMenu.current?.querySelectorAll<HTMLButtonElement>(
-                  '[role="menuitem"]',
+                  '[role="menuitem"]:not(:disabled)',
                 ) ?? [],
               );
               const current = items.indexOf(
@@ -229,6 +230,7 @@ export function TopBar({
                   className="menu-item"
                   role="menuitem"
                   tabIndex={-1}
+                  disabled={contextPending}
                   onClick={() => {
                     closePopup();
                     onDisconnect();
@@ -252,7 +254,7 @@ export function TopBar({
         <button
           className="menu-trigger scope-trigger"
           onClick={onOpenScopes}
-          disabled={!state}
+          disabled={!state || contextPending}
           aria-haspopup="dialog"
         >
           <span className="scope-label">

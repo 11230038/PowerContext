@@ -16,6 +16,29 @@
 
 export const messages = {
   zh: {
+    connectionUpdating: "正在更新连接状态…",
+    connectionUpdatingHint:
+      "可以浏览其他页面。连接操作完成前，记忆编辑、保存、搜索、精确读取及范围切换暂不可用；完成后请核对当前连接与精确 Scope。",
+    help: "使用帮助",
+    helpPrepare:
+      "请先按使用文档独立准备 PowerContext Server，或使用已运行的本地／远程 Server。Desktop 不安装或启停 Server。",
+    helpConnect:
+      "在“连接”中保存地址及认证配置，核对受支持的兼容配置后，显式点击“使用此连接”。选择配置不会自动激活连接。",
+    helpScope:
+      "通过顶部 Scope 选择器查找并选择精确范围。核对完整 scope_id，以区分同名 Scope；选择范围不会修改 Agent 绑定。",
+    helpMemory:
+      "在“记忆”中保存正文、按关键词搜索并读取结果的精确版本。搜索最多返回 10 条，不代表完整目录或库存。",
+    helpRecovery:
+      "权限错误需申请对应权限或选择有权限的连接／Scope。保存结果未知时先核对原目标，再决定是否再次提交，避免重复写入。",
+    helpDocuments: "使用文档",
+    helpIssues: "问题反馈",
+    copyDocuments: "复制使用文档地址",
+    copyIssues: "复制问题反馈地址",
+    addressCopied: "地址已复制。",
+    addressCopyFailed: "复制失败，请选择并手动复制下方地址。",
+    helpAddressHint:
+      "复制地址后，可在浏览器中打开。反馈时请勿包含凭据或私有记忆正文。",
+    unknown: "未知",
     loadingState: "正在加载 Desktop 状态…",
     stateUnavailable: "Desktop 状态尚不可用",
     stateFailed: "无法加载 Desktop 状态",
@@ -176,6 +199,30 @@ export const messages = {
       "连接已有的 PowerContext Server 并选择精确范围后，即可保存和查找记忆。",
   },
   en: {
+    connectionUpdating: "Updating connection state…",
+    connectionUpdatingHint:
+      "You can browse other pages. Memory editing, saving, searching, exact reads and Scope switching are unavailable until the connection operation finishes. Then verify the current connection and exact Scope.",
+    help: "Usage help",
+    helpPrepare:
+      "Prepare PowerContext Server independently using the usage guide, or use an existing local or remote Server. Desktop does not install, start or stop the Server.",
+    helpConnect:
+      "In Connections, save the address and authentication settings, verify a supported compatibility profile, then explicitly choose Use this connection. Selecting a profile does not activate it.",
+    helpScope:
+      "Find and select an exact Scope using the global selector. Check the complete scope_id to distinguish identical titles. Selecting a Scope does not change Agent bindings.",
+    helpMemory:
+      "In Memories, save text, search by keyword, and read the exact version of a result. Search returns at most 10 matches and does not represent a full directory or inventory.",
+    helpRecovery:
+      "For permission errors, request access or choose an authorized connection or Scope. If a save outcome is unknown, inspect its original target before deciding to submit again to avoid duplicate writes.",
+    helpDocuments: "Usage documentation",
+    helpIssues: "Report an issue",
+    copyDocuments: "Copy documentation address",
+    copyIssues: "Copy issue report address",
+    addressCopied: "Address copied.",
+    addressCopyFailed:
+      "Copy failed. Select and copy the address below manually.",
+    helpAddressHint:
+      "Paste these addresses into your browser. Exclude credentials and private memory text from issue reports.",
+    unknown: "Unknown",
     loadingState: "Loading Desktop state…",
     stateUnavailable: "Desktop state is unavailable",
     stateFailed: "Could not load Desktop state",

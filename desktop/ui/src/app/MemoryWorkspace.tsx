@@ -35,10 +35,17 @@ type Props = {
   onDirty: (dirty: boolean) => void;
   onManageConnections?: () => void;
   onOpenScopes?: () => void;
+  contextPending?: boolean;
 };
 export const textBytes = (value: string) =>
   new TextEncoder().encode(value).length;
-export function NoteForm({ state, language, onState, onDirty }: Props) {
+export function NoteForm({
+  state,
+  language,
+  onState,
+  onDirty,
+  contextPending = false,
+}: Props) {
   const t = memoryMessages[language];
   const active = state?.active;
   const profile = state?.profiles.find((p) => p.id === active?.connectionId);
@@ -51,7 +58,8 @@ export function NoteForm({ state, language, onState, onDirty }: Props) {
   const lifetime = useRef(0);
   const generation = useRef(active?.generation);
   generation.current = active?.generation;
-  const enabled = !!active?.scope && active.report.compatibilityVerified;
+  const enabled =
+    !contextPending && !!active?.scope && active.report.compatibilityVerified;
   const bytes = textBytes(text);
   useEffect(() => {
     setText("");
@@ -65,7 +73,8 @@ export function NoteForm({ state, language, onState, onDirty }: Props) {
     };
   }, [active?.generation]);
   async function save() {
-    if (!active?.scope || submitting.current || composing.current) return;
+    if (!enabled || !active?.scope || submitting.current || composing.current)
+      return;
     if (!text.trim() || bytes > 8192) {
       setError({ code: "invalid_input" });
       return;
@@ -147,6 +156,8 @@ export function NoteForm({ state, language, onState, onDirty }: Props) {
             </strong>{" "}
             <code>{active?.scope?.scope_id}</code>
           </>
+        ) : contextPending ? (
+          messages[language].connectionUpdating
         ) : (
           t.noScope
         )}
@@ -191,7 +202,7 @@ export function NoteForm({ state, language, onState, onDirty }: Props) {
   );
 }
 export function MemoryWorkspace(props: Props) {
-  const { state, language, onState, onDirty } = props;
+  const { state, language, onState, onDirty, contextPending = false } = props;
   const common = messages[language];
   const failedReference = useRef<ArtifactReference | undefined>(undefined);
   const t = memoryMessages[language];
@@ -209,7 +220,8 @@ export function MemoryWorkspace(props: Props) {
   const pendingCancel = useRef(Promise.resolve());
   const current = useRef(active?.generation);
   current.current = active?.generation;
-  const enabled = !!active?.scope && active.report.compatibilityVerified;
+  const enabled =
+    !contextPending && !!active?.scope && active.report.compatibilityVerified;
   function clearRead() {
     failedReference.current = undefined;
     sequence.current++;
@@ -239,7 +251,7 @@ export function MemoryWorkspace(props: Props) {
     };
   }, [active?.generation]);
   async function read(reference?: ArtifactReference) {
-    if (!active?.scope) return;
+    if (!enabled || !active?.scope) return;
     const generation = active.generation;
     const ticket = ++sequence.current;
     failedReference.current = reference;
@@ -296,7 +308,7 @@ export function MemoryWorkspace(props: Props) {
   const record = state?.lastWrite;
   return (
     <div className="stack memory-workspace">
-      {state && !enabled && (
+      {state && !enabled && !contextPending && (
         <PageFeedback
           kind="unavailable"
           title={
@@ -347,6 +359,7 @@ export function MemoryWorkspace(props: Props) {
         language={language}
         onState={onState}
         onDirty={onDirty}
+        contextPending={contextPending}
       />
       <section className="card stack">
         <h2>{t.query}</h2>
@@ -385,7 +398,9 @@ export function MemoryWorkspace(props: Props) {
           </button>
         </div>
         <p className="small search-meta">{t.searchSummary}</p>
-        {!enabled && <p>{t.noScope}</p>}
+        {!enabled && (
+          <p>{contextPending ? common.connectionUpdating : t.noScope}</p>
+        )}
         {busy && (
           <PageFeedback
             compact
@@ -455,7 +470,7 @@ export function MemoryWorkspace(props: Props) {
                             <span className="badge">{t.hitVector}</span>
                           )}
                         <button
-                          disabled={!!busy}
+                          disabled={!enabled || !!busy}
                           aria-pressed={selected === key}
                           onClick={(event) => {
                             readButton.current = event.currentTarget;
