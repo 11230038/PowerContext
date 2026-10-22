@@ -158,26 +158,34 @@ export function NoteForm({ state, language, onState, onDirty }: Props) {
       {error != null && (
         <ErrorFeedback error={error} language={language} title={t.failed} />
       )}
-      {outcome && (
-        <PageFeedback
-          compact
-          kind={
-            outcome.record.status === "succeeded"
-              ? "success"
-              : outcome.record.status === "unknown"
-                ? "warning"
-                : "error"
-          }
-          title={
-            outcome.record.status === "succeeded"
-              ? outcome.result?.records.length
-                ? t.success
-                : t.noEntry
-              : outcome.record.status === "unknown"
-                ? t.unknown
-                : `${t.failed} ${connectionError(outcome.record.error, language)}`
-          }
+      {outcome?.record.status === "failed" ? (
+        <ErrorFeedback
+          error={outcome.record.error}
+          language={language}
+          title={t.failed}
         />
+      ) : (
+        outcome && (
+          <PageFeedback
+            compact
+            kind={
+              outcome.record.status === "succeeded"
+                ? "success"
+                : outcome.record.status === "unknown"
+                  ? "warning"
+                  : "error"
+            }
+            title={
+              outcome.record.status === "succeeded"
+                ? outcome.result?.records.length
+                  ? t.success
+                  : t.noEntry
+                : outcome.record.status === "unknown"
+                  ? t.unknown
+                  : `${t.failed} ${connectionError(outcome.record.error, language)}`
+            }
+          />
+        )
       )}
     </section>
   );

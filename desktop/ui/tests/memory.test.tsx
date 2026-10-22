@@ -95,7 +95,7 @@ const artifact: ArtifactReference = {
   artifact_id: "atomic-a",
   revision: 7,
 };
-function outcome(status: "succeeded" | "unknown"): WriteOutcome {
+function outcome(status: "succeeded" | "unknown" | "failed"): WriteOutcome {
   return {
     record: {
       operationId: "operation-a",
@@ -245,6 +245,53 @@ test("UTF-8 overflow and IME composition cannot accidentally submit", async () =
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(desktopApi.remember).not.toHaveBeenCalled();
 });
+test.each(["en", "zh"] as const)(
+  "a failed save outcome explains permission recovery and retains its draft (%s)",
+  async (language) => {
+    const user = userEvent.setup();
+    const failed = outcome("failed");
+    failed.record.error = {
+      code: "forbidden",
+      requestId: null,
+      dispatched: true,
+    };
+    vi.mocked(desktopApi.state).mockResolvedValue(state);
+    vi.mocked(desktopApi.remember).mockResolvedValue(failed);
+    const onDirty = vi.fn();
+    render(
+      <NoteForm
+        state={state}
+        language={language}
+        onState={vi.fn()}
+        onDirty={onDirty}
+      />,
+    );
+    const input = screen.getByRole("textbox");
+    await user.type(input, "preserve denied draft");
+    onDirty.mockClear();
+    await user.click(
+      screen.getByRole("button", { name: language === "zh" ? "保存" : "Save" }),
+    );
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain(
+      language === "zh"
+        ? "当前身份无权执行此操作"
+        : "This identity cannot perform this operation",
+    );
+    expect(alert.textContent).toContain(
+      language === "zh"
+        ? "申请此操作所需的权限"
+        : "Request permission for this operation",
+    );
+    expect(alert.textContent).toContain(
+      language === "zh" ? "精确 Scope" : "exact Scope",
+    );
+    expect((input as HTMLTextAreaElement).value).toBe("preserve denied draft");
+    expect(onDirty).not.toHaveBeenCalledWith(false);
+    expect(desktopApi.remember).toHaveBeenCalledTimes(1);
+  },
+);
+
 test("unknown save retains the draft and does not replay automatically", async () => {
   const user = userEvent.setup();
   form();
@@ -256,6 +303,17 @@ test("unknown save retains the draft and does not replay automatically", async (
     (screen.getByLabelText("Memory text") as HTMLTextAreaElement).value,
   ).toBe("preserve me");
   expect(desktopApi.remember).toHaveBeenCalledTimes(1);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(confirm).toHaveBeenCalledOnce();
+  expect(desktopApi.remember).toHaveBeenCalledTimes(1);
+  expect(
+    (screen.getByLabelText("Memory text") as HTMLTextAreaElement).value,
+  ).toBe("preserve me");
+  confirm.mockReturnValue(true);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(confirm).toHaveBeenCalledTimes(2);
+  expect(desktopApi.remember).toHaveBeenCalledTimes(2);
 });
 test("search opens only the exact reference and renders hostile text literally", async () => {
   const user = userEvent.setup();
