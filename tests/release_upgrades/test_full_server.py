@@ -230,14 +230,12 @@ def environment_for(case, *, fresh=False):
         "no_proxy": "localhost,127.0.0.1",
     })
     if case["configuration"] == "full-server-code":
-        environment["POWERCONTEXT_SERVER_CODE_ENABLED"] = "true"
-        environment["POWERCONTEXT_SERVER_CODE_CACHE_DIR"] = str(
-            case["work"] / ("fresh-code-cache" if fresh else "code-cache")
-        )
         scope = case.get("code_scope")
-        environment["POWERCONTEXT_SERVER_CODE_REPOSITORIES"] = json.dumps(
-            {} if fresh or scope is None else {scope: {"root": str(case["work"] / "repository")}}
-        )
+        environment["POWERCONTEXT_SERVER_CODE"] = json.dumps({
+            "enabled": True,
+            "cache_dir": str(case["work"] / ("fresh-code-cache" if fresh else "code-cache")),
+            "repositories": {} if fresh or scope is None else {scope: {"root": str(case["work"] / "repository")}},
+        })
     database = case["work"] / ("fresh" if fresh else "database")
     backend = case["backend"]
     environment["POWERCONTEXT_SERVER_DATABASE_KIND"] = backend
@@ -251,10 +249,17 @@ def environment_for(case, *, fresh=False):
         parsed = urlsplit(url)
         expected = "/pc_upgrade_fresh" if fresh else "/pc_upgrade_test"
         assert parsed.scheme == "mysql+aoceanbase" and parsed.hostname in {"127.0.0.1", "localhost"}
-        assert parsed.path == expected, "Only dedicated disposable OceanBase databases may be used"
         if case["configuration"] == "full-server-code":
-            parsed = parsed._replace(path="/pc_upgrade_code_fresh" if fresh else "/pc_upgrade_code_test")
+            code_path = "/pc_upgrade_code_fresh" if fresh else "/pc_upgrade_code_test"
+            if parsed.path == expected:
+                parsed = parsed._replace(path=code_path)
+            else:
+                assert re.fullmatch(re.escape(code_path) + r"_[0-9a-f]{8}", parsed.path), (
+                    "Only dedicated disposable Code databases may be used"
+                )
             url = parsed.geturl()
+        else:
+            assert parsed.path == expected, "Only dedicated disposable OceanBase databases may be used"
         environment["POWERCONTEXT_SERVER_DATABASE_URL"] = url
         environment["PC_UPGRADE_OCEANBASE_URL"] = url
     return environment
@@ -439,7 +444,7 @@ def historical_code(case, scope):
             f"/v1/scopes/{scope}/code/query",
             {"operation": {"kind": "symbols", "query": "upgrade_code_evidence"}},
         )
-        assert result["status"] == "ready" and result["fingerprint"] == indexed["fingerprint"]
+        assert result["status"] == "ok" and result["fingerprint"] == indexed["fingerprint"]
         symbols = [item for item in result["items"] if item["name"] == "upgrade_code_evidence"]
         assert symbols and all(item["path"] == "evidence.py" for item in symbols)
     cache = code_cache_snapshot(case)
@@ -576,7 +581,7 @@ def preserved_code(case, migrated):
             f"/v1/scopes/{historical['scope']}/code/query",
             {"operation": {"kind": "symbols", "query": "upgrade_code_evidence"}},
         )
-        assert result["status"] == "ready" and result["fingerprint"] == source["fingerprint"]
+        assert result["status"] == "ok" and result["fingerprint"] == source["fingerprint"]
         symbols = [item for item in result["items"] if item["name"] == "upgrade_code_evidence"]
         assert symbols == source["symbols"]
     assert code_cache_snapshot(case) == source["cache_sha256"]
