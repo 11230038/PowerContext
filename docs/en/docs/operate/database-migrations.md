@@ -50,6 +50,35 @@ conversion for unmanaged legacy Memory layouts. Decision files for that conversi
 chain. The compatibility command returns the shared Server plan/result for managed storage; an already-ready apply is a
 read-only no-op. See [Migrate to Atomic Memory](atomic-memory-migration.md).
 
+## Initialization and maintenance ownership
+
+The following inventory identifies the owners of schema changes and projection repair. "Managed" means that the
+database contains `pc_schema_revision`, including an unknown revision. Passing a partial domain check does not admit
+that database for Server use. Full profile admission checks the registered Server layout and domain state first.
+
+| Entry point or helper | Managed storage | Unmanaged storage |
+| --- | --- | --- |
+| `SQLiteProfile.open`, `SeekDBProfile.open`, `OceanBaseProfile.open`; `schema.create_tables` | Full profile readiness checks precede use; selected tables must already exist | Retain selected-table creation and domain admission |
+| Runtime composition: Skill distribution, tag families, Scope search, revision metadata and Artifact head columns | Skip compatibility DDL and backfills; the registered Server chain owns these objects | Retain the existing compatibility helpers |
+| Runtime Atomic Memory authority/current indexes and SQLite FTS helpers | Validate current data; repair through `db-migrate --bundle atomic-projection` after layout admission | Retain domain initialization and offline projection repair |
+| Runtime Experience/Skill searchable text and FTS indexes | The registered Server domain step builds and validates projections; startup does not rebuild them | Retain domain initialization and projection recovery |
+| Runtime Topic Memory indexes, recovery tables and retrieval shape | Initialize with `validate_only=True`; partial Topic recovery rejects managed storage | Retain domain initialization; registered partial recovery covers only its declared layouts |
+| Processing schema and ownership configuration | Validate at startup; change configuration through `db-migrate --bundle processing` | Retain domain bootstrap and `processing-migrate` |
+| `ServerIdentityRepository.initialize` | Check the identity table without DDL; identity value creation and explicit rotation are ordinary transactions | Retain concurrent-safe identity table initialization |
+| Offline Memory archive | The Server chain registers its structure at `s1401`; runtime admission checks it | Legacy offline Memory conversion owns its archive and conversion receipts |
+| `atomic-memory-migrate` and `processing-migrate` | Delegate to the shared Server or registered maintenance plan | Retain their domain-only behavior; recognized historical Server storage must use the full upgrade first |
+| Optional vector and Code objects | No registered configuration transition; reject before adding objects | Retain existing feature bootstrap without claiming registered upgrade support |
+
+These helpers remain available to their owning runtime or maintenance operations; calling a low-level helper directly
+does not replace profile admission, a reviewed maintenance plan, or backup and recovery requirements. Future changes to
+managed objects belong in the registered revision/domain steps and validators, rather than another startup helper.
+Read-only SQLite inspection and dedicated maintenance connections can inspect historical storage without business
+initialization; successfully opening an inspection connection does not establish Server readiness.
+
+Code's embedded seekDB store adds `pc_code_generations`, `pc_code_nodes`, `pc_code_edges` and `ix_code_search` to the
+deployment database. Other Code deployments use a local SQLite cache. These are derived indexes owned by the Code
+service; their existence does not register a Code-enabled Server baseline or permit implicit managed-schema expansion.
+
 ## Processing configuration maintenance
 
 `--bundle processing` registers an offline ownership-configuration operation on a complete, current Server database.

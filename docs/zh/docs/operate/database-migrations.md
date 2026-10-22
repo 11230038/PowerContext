@@ -40,6 +40,32 @@ MySQL 兼容后端的结构反射支持 CHECK 表达式中的二元 `+`、`-`、
 该转换的决策文件不能修改已登记的 Server 版本链。兼容命令在受管库上返回共享 Server 计划或结果，
 已就绪时 apply 保持只读，不重复迁移。参见[迁移到 Atomic Memory](atomic-memory-migration.md)。
 
+## 初始化与维护职责
+
+下表列出结构变更与投影修复的执行入口。含有 `pc_schema_revision` 的数据库均视为受管库，包括未知 revision；
+局部领域检查通过不代表整个 Server 可以使用该库。Profile 准入先验证已登记的整库结构与领域状态。
+
+| 入口或辅助函数 | 受管数据库 | 未受管数据库 |
+| --- | --- | --- |
+| `SQLiteProfile.open`、`SeekDBProfile.open`、`OceanBaseProfile.open`；`schema.create_tables` | 使用前先做整库就绪检查；所选表必须已经存在 | 保留所选表创建和领域准入 |
+| Runtime composition：Skill 分发、标签 Family、Scope 搜索、revision 元数据和 Artifact Head 列 | 跳过兼容性 DDL 与回填，由已登记的 Server 版本链负责 | 保留既有兼容辅助函数 |
+| Runtime Atomic Memory 权威记录、current 索引和 SQLite FTS 辅助对象 | 校验 current 数据；结构准入后通过 `db-migrate --bundle atomic-projection` 修复 | 保留领域初始化与离线投影修复 |
+| Runtime Experience/Skill 搜索文本与 FTS 索引 | 由已登记的 Server 领域步骤构建和校验；启动不重建 | 保留领域初始化与投影恢复 |
+| Runtime Topic Memory 索引、恢复表和检索配置 | 使用 `validate_only=True` 初始化；局部 Topic 恢复拒绝受管库 | 保留领域初始化；局部恢复只覆盖其登记的布局 |
+| Processing 结构与所有权配置 | 启动时校验；配置变更走 `db-migrate --bundle processing` | 保留领域 bootstrap 和 `processing-migrate` |
+| `ServerIdentityRepository.initialize` | 检查 identity 表，不执行 DDL；创建 identity 值和显式轮换仍使用普通事务 | 保留支持并发的 identity 表初始化 |
+| 离线 Memory 归档 | Server 版本链在 `s1401` 登记结构，运行时准入检查该结构 | 旧 Memory 离线转换负责其归档和转换回执 |
+| `atomic-memory-migrate`、`processing-migrate` | 转发到共享 Server 或已登记的维护计划 | 保留领域独立行为；识别为历史完整 Server 的库必须先完成整库升级 |
+| 可选向量与 Code 对象 | 尚无已登记的配置转换，添加对象前拒绝 | 保留既有功能初始化，不宣称已登记升级支持 |
+
+这些辅助函数仍供所属 runtime 或维护操作使用；直接调用底层函数不能替代 Profile 准入、已确认的维护计划和
+备份恢复要求。未来受管对象的变化应加入已登记的 revision、领域步骤与校验器，不另建启动迁移入口。
+只读 SQLite 检查入口与独立维护连接可以在业务初始化之前检查历史存储；检查连接打开成功不代表 Server 已就绪。
+
+Code 的嵌入式 seekDB 存储在部署数据库中添加 `pc_code_generations`、`pc_code_nodes`、`pc_code_edges` 和
+`ix_code_search`；其他 Code 部署使用本地 SQLite 缓存。这些派生索引由 Code 服务负责，其存在不代表已经登记
+Code 启用的 Server 基线，也不允许隐式扩展受管结构。
+
 ## Processing 配置维护
 
 `--bundle processing` 在结构完整、已到当前 revision 的 Server 数据库上登记离线所有权配置操作。
