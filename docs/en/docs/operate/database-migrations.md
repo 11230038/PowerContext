@@ -299,15 +299,23 @@ activation suppressed until an explicit `service start`; an unverified migration
 They manage only the current user's PC-owned local service, not a cluster or other clients. `stop` suppresses automatic
 restart during maintenance; `start` restores startup. One `restart` cannot replace stopped-write migration.
 
-The complete managed-upgrade design drains requests, stops the service and automatic restarts, takes the migration lock,
-reinspects, applies backup policy, migrates, verifies, switches the launch definition to the accepted new executable, and
-starts a previously running service with readiness checks. Migration failure keeps it stopped; a previously stopped
-service stays stopped. Database verification and service startup are reported separately. Resolve startup failures without
-rerunning a successful migration.
+For `--bundle server`, `--manage-service` binds the owned local registration and target executable to the reviewed plan.
+Use the registered environment file and data directory; a different effective Server configuration is rejected before
+stopping the service. Stop incoming traffic and drain work first. Apply suppresses automatic restarts, stops the local
+service, takes the migration lock, reinspects, applies the backup policy, migrates and verifies, then switches the launch
+definition to the accepted executable. It starts a previously running service and checks readiness; a previously stopped
+service stays stopped. Migration failure keeps the old registration stopped and protected against automatic activation.
 
-`--manage-service` always covers only the accepted local service. It cannot replace `--maintenance-confirmed` for other
-writers and shared nodes. The Phase A partial bundle does not establish complete Server readiness: when persistent changes
-are needed, `--manage-service` returns `service_unsupported` rather than switching a business service.
+Database verification and service startup are reported separately. `service_start_failed` with `database_state=ready`
+means the schema migration succeeded; fix the startup problem and use `powercontext service start`. If execution stopped
+after database verification but before switching the registration, review and apply a new `--manage-service` plan. It can
+finish the service transition when the database is already ready, without rerunning completed revisions.
+
+`--manage-service` covers only the accepted local service. It cannot replace `--maintenance-confirmed` for other writers
+and shared nodes. The partial Artifact and Topic recovery bundles reject service management when changes are needed;
+an already-ready no-op does not touch the service. They cannot establish complete Server readiness or switch a business
+service. Controller tests use a simulated native manager with a real
+SQLite migration; they do not establish native service-manager acceptance on every supported operating system.
 
 For manual deployment, stop the old service first. After a supported complete migration succeeds, ensure the launch
 definition points to the new environment before starting it. For foreground deployment, exit the old process and use the
@@ -334,7 +342,8 @@ without every handler supporting two table layouts.
 Legacy tasks require inspection in the read-only plan, after stopped-write locking, after migration, and before Worker
 startup. Unknown formats or unobservable sources must not be reported as an empty queue. Use declared compatible
 consumption, idempotent conversion, or bounded draining. Preserve task IDs, idempotency keys, Scope, retries, and domain
-receipts. The Phase A bundle does not yet cover these complete business checks.
+receipts. The partial Artifact bundle does not cover these complete business checks. The full Server path checks its
+registered 1.3.0 Dream formats and rejects queued/running old tasks before migration; terminal payloads remain intact.
 
 ## Storage layers and recovery boundaries
 
@@ -396,4 +405,5 @@ The existing Scope discovery startup migration inspects the actual search-column
 storage. If an earlier startup stopped after adding nullable columns or backfilling them, the next startup fills any
 remaining missing values from the original text and completes `NOT NULL` constraints. Columns already marked
 `NOT NULL` do not receive another `MODIFY COLUMN`. Original Scope titles, summaries, external references, and binding
-identifiers are preserved. This compatibility repair is separate from the four-table unified migration bundle above.
+identifiers are preserved. This compatibility repair remains for unmanaged profiles. Managed Server storage uses the
+registered migration chain and read-only startup admission; its startup never invokes this repair to upgrade the schema.

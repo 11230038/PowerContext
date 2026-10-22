@@ -210,9 +210,20 @@ powercontext service restart
 
 这些命令只管理当前用户归 PC 所有的服务，不管理集群或其他客户端。`stop` 禁止维护期间自动拉起旧服务；`start` 恢复启动。涉及迁移时不能用一次 `restart` 替代停写维护。
 
-完整升级的托管设计为：排空请求、停服并禁止自动重启 → 取迁移锁并复核 → 按策略备份 → 迁移 → 验证 → 将启动定义切换到已确认新版程序 → 启动原本运行的服务 → readiness。迁移失败保持停服；原本停止的服务保持停止。数据库验证成功而服务启动失败时分别报告，处理启动问题而不重跑迁移。
+`--bundle server` 的 `--manage-service` 将本机自有服务注册和目标可执行程序绑定到待确认的计划。
+必须使用注册时的环境文件和数据目录；实际 Server 配置不一致时，在停止服务前拒绝执行。
+先停止流量并排空旧任务，再应用计划。应用会抑制自动重启、停止本机服务、取得迁移锁、重新检查并执行备份策略，
+完成迁移和数据库验证后才切换注册。原先运行的服务会重新启动并检查 readiness；原先停止的服务保持停止。
+迁移失败时保留旧注册和停止保护，不恢复自动启动。
 
-`--manage-service` 的范围始终只是已确认的本机服务，不能代替 `--maintenance-confirmed` 对其他写入者和共享库节点的声明。阶段 A 的有限 bundle 未完成完整 Server readiness 验收；需要持久化变更时，`--manage-service` 返回 `service_unsupported`，不能据此自动切换生产服务。
+数据库验证与服务启动分别报告。`service_start_failed` 且 `database_state=ready` 表示迁移已成功，
+修复启动问题后使用 `powercontext service start`。如果在数据库验证之后、切换服务注册之前中断，
+可以重新审阅并应用 `--manage-service` 计划；数据库已就绪时也能完成服务切换，不重复执行已完成的 revision。
+
+`--manage-service` 仅管理已确认的本机服务，不能代替 `--maintenance-confirmed` 对其他写入者和共享库节点的声明。
+部分 Artifact 和 Topic recovery bundle 需要变更时返回 `service_unsupported`；已就绪的空操作不触碰服务。
+它们不能用于完整 Server readiness 或业务服务切换。
+控制器测试使用模拟的原生服务管理器和真实 SQLite 迁移，不代表所有支持操作系统的原生服务验收。
 
 手动管理时，先停旧服务，在已支持的完整迁移成功后确认服务启动定义指向新版，再启动。前台部署则退出旧进程，使用新版环境的现有入口：
 
@@ -251,4 +262,5 @@ Repository 仅在结构满足后运行。完整 Server 的 `s1300 → s1400 → 
 
 现有 Scope discovery 启动迁移会检查 MySQL 兼容存储中搜索列的实际可空性。如果上次启动在添加可空列或回填后中断，
 下次启动会根据原文补齐剩余缺失值，再完成 `NOT NULL` 约束。已为 `NOT NULL` 的列不会再次执行 `MODIFY COLUMN`。
-Scope 的原始标题、摘要、外部引用和 binding 标识保持不变。此兼容修复独立于上述四表统一迁移 bundle。
+Scope 的原始标题、摘要、外部引用和 binding 标识保持不变。此兼容修复仅供未受管理的配置使用。
+受管理的 Server 存储使用登记的迁移链和只读启动准入，不会在启动时调用此修复来升级结构。

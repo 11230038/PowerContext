@@ -33,7 +33,9 @@ from powercontext.server.configuration import (
     resolve_server_environment_file,
     server_settings_context,
 )
+from powercontext.server.settings import ServerSettings
 from powercontext.service.controller import ServiceController
+from powercontext.service.environment import ProtectedEnvironmentFileError, load_protected_environment_file
 from powercontext.service.model import ServiceError
 
 BackupPolicy = Literal["auto", "manual", "skip"]
@@ -111,7 +113,9 @@ def plan(
         runner = deployment_runner(
             settings, evidence_dir=evidence_dir, lock_coordination=lock_coordination, bundle=bundle
         )
-        service = _service_scope(_environment_file(env_file)) if manage_service else None
+        service = (
+            _service_scope(_environment_file(env_file), bundle=bundle, settings=settings) if manage_service else None
+        )
         reviewed = runner.plan(backup_policy=backup, service=service, shared_database=shared_database)
         _write_payload(reviewed)
 
@@ -164,10 +168,12 @@ def apply(
         policy: BackupPolicy = backup or "auto"
         initial = runner.plan(backup_policy=policy, shared_database=shared_database)
         _check_previous_run(initial, acknowledge_previous_run)
-        if initial.state == "ready":
+        if initial.state == "ready" and (not manage_service or bundle != "server"):
             _write_payload(runner.verify())
             return
-        service = _service_scope(_environment_file(env_file)) if manage_service else None
+        service = (
+            _service_scope(_environment_file(env_file), bundle=bundle, settings=settings) if manage_service else None
+        )
         reviewed = runner.plan(backup_policy=policy, service=service, shared_database=shared_database)
         _check_previous_run(reviewed, acknowledge_previous_run)
         if policy == "auto" and not reviewed.backup_available and reviewed.state != "uninitialized":
@@ -273,12 +279,31 @@ def _write_confirmation(reviewed: MigrationPlan, policy: BackupPolicy) -> None:
     typer.echo("Old tables and recovery points are retained.")
 
 
-def _service_scope(env_file: Path | None) -> dict[str, object]:
-    del env_file
-    raise MigrationError(
-        "service_unsupported",
-        "This partial acceptance bundle cannot establish complete Server readiness or switch a business service.",
-    )
+def _service_scope(env_file: Path | None, *, bundle: str, settings: ServerSettings) -> dict[str, object]:
+    if bundle != "server":
+        raise MigrationError(
+            "service_unsupported",
+            "This partial acceptance bundle cannot establish complete Server readiness or switch a business service.",
+        )
+    summary = ServiceController().maintenance_summary(env_file=env_file)
+    registered = summary.definition
+    try:
+        environment = (
+            {}
+            if registered.env_file is None
+            else load_protected_environment_file(Path(registered.env_file.path), expected=registered.env_file).values
+        )
+    except ProtectedEnvironmentFileError as error:
+        raise MigrationError(
+            "service_configuration_mismatch", "The registered service environment changed; review its configuration."
+        ) from error
+    with server_settings_context(environment=environment, data_dir=Path(registered.data_dir)) as service_settings:
+        if settings != service_settings:
+            raise MigrationError(
+                "service_configuration_mismatch",
+                "Use the registered service environment and data directory for its database migration.",
+            )
+    return summary.as_dict()
 
 
 def _apply_reviewed(
@@ -311,6 +336,7 @@ def _apply_reviewed(
         raise MigrationError("service_unsupported", "The local service does not provide a stable maintenance identity.")
     with ServiceController().maintenance(expected_fingerprint=fingerprint, env_file=env_file) as session:
         result = migrate()
+        runner.verify()
         try:
             session.complete()
         except (ServiceError, OSError):
