@@ -21,6 +21,14 @@
 
 连接操作等待期间，全局提示在页面切换后持续显示。仍可浏览其他页面，但记忆编辑、保存、搜索、精确读取及 Scope 切换暂停，直到操作及其原生状态刷新完成，避免晚到的激活结果清空在旧 Scope 下新输入的正文。操作完成后，按需显式选择精确 Scope；现有草稿确认和未知写入保护继续生效。
 
+## Local Server 准备说明
+
+默认启动页仍为总览。记忆页未连接时，“本地设置”进入并聚焦“设置与诊断 → Local Server”；“连接已有 Server”进入现有连接编辑器。选择任一路径都不会安装软件、激活连接、执行诊断或探测就绪状态。
+
+也可直接进入设置查看 Local Server 说明；即使原生状态正在加载或不可用，说明仍可访问。区域明确标注 Desktop 安装、恢复及服务管理尚未接入，不据此判断本机是否已安装 Server 或服务是否运行。侧栏设置入口保持在底部。
+
+请按[安装与运行](../docs/zh/docs/get-started/install-and-run.md)及[部署 Server](../docs/zh/docs/operate/deploy-server.md)独立准备 Server，并遵守文档中的平台适用范围。确认实际地址、认证方式和经过验证的 Desktop 兼容配置，再保存、显式激活连接并选择精确 Scope。Server 已运行不代表 Desktop 兼容性已验证；已有独立运行的 Server 无需重复安装。应用内“使用帮助”可复制本说明的文档地址。
+
 ## 直接运行安装版
 
 在本分支的 GitHub Actions「Desktop validation」成功运行中，下载 `desktop-windows-internal-unsigned` 产物并解压，找到 `src-tauri/target/release/bundle/nsis/` 中的安装程序。对应 `.artifacts/windows-smoke.json` 记录提交、安装包 SHA-256 和签名状态，可用 `Get-FileHash -Algorithm SHA256 <安装包路径>` 核对下载文件。当前产物未签名，供内部验证。

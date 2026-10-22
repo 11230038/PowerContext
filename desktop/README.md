@@ -21,6 +21,14 @@ Settings & diagnostics includes bilingual usage guidance, a locale-specific docu
 
 While a connection operation is pending, a global message remains visible across page changes. You can browse other pages, but Memory editing, saving, searching, exact reads and Scope switching pause until the operation and its native-state refresh finish. This prevents a late activation result from clearing text entered against the old Scope. Once the operation completes, explicitly select an exact Scope if needed. Existing draft confirmations and unknown-write protections continue to apply.
 
+## Local Server preparation
+
+Overview remains the initial page. In disconnected Memories, **Set up locally** opens and focuses **Settings & diagnostics → Local Server**; **Connect an existing Server** opens the existing connection editor. Selecting either path does not install software, activate a connection, run diagnostics or probe readiness.
+
+The Local Server guidance is also available by opening Settings directly, including when native state is loading or unavailable. It explicitly marks Desktop installation, recovery and service management as unavailable; that status makes no claim about an actual local installation or running service. Settings stays at the bottom of the sidebar.
+
+Prepare a Server independently using [Install and run](../docs/en/docs/get-started/install-and-run.md) and [Deploy the Server](../docs/en/docs/operate/deploy-server.md), observing their platform limits. Confirm the actual address, authentication and a qualified Desktop compatibility profile, then save and explicitly activate the connection and select an exact Scope. A running Server alone does not establish Desktop compatibility. Existing independently running Servers do not need to be reinstalled. The in-app Usage help provides a copyable address for this guide.
+
 ## Run the installed preview
 
 Download and extract `desktop-windows-internal-unsigned` from a successful **Desktop validation** Actions run on this branch. The installer is under `src-tauri/target/release/bundle/nsis/`. Its accompanying `.artifacts/windows-smoke.json` records the commit, SHA-256 and signature status; compare the downloaded installer with `Get-FileHash -Algorithm SHA256 <installer-path>`. The current package is unsigned and intended for internal validation.

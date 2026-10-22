@@ -406,7 +406,9 @@ test.each(["disconnected", "unverified", "scope"] as const)(
     const recovery =
       kind === "scope"
         ? "Select an exact Scope first"
-        : "Manage connections and credentials";
+        : kind === "disconnected"
+          ? "Connect an existing Server"
+          : "Manage connections and credentials";
     await user.click(screen.getByRole("button", { name: recovery }));
     expect(kind === "scope" ? choose : manage).toHaveBeenCalledOnce();
     expect(

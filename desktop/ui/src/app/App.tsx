@@ -28,6 +28,7 @@ import observationIcon from "../assets/retrieval.svg";
 import { TopBar } from "./TopBar";
 import { Overview } from "./Overview";
 import { MemoryWorkspace } from "./MemoryWorkspace";
+import { LocalServerSettings } from "./LocalServerSettings";
 import { Help } from "./Help";
 import { Diagnostics } from "./Diagnostics";
 import { Connections } from "./Connections";
@@ -74,6 +75,8 @@ export function App() {
   );
   const activeReport = activeCheckReport(desktop);
   const heading = useRef<HTMLHeadingElement>(null);
+  const localServerHeading = useRef<HTMLHeadingElement>(null);
+  const settingsSection = useRef<"local-server" | undefined>(undefined);
   const scopeDialog = useRef<HTMLDivElement>(null);
   const scopeReturnFocus = useRef<HTMLElement | null>(null);
   const t = messages[language];
@@ -103,7 +106,11 @@ export function App() {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
   useLayoutEffect(() => {
-    heading.current?.focus();
+    const localServer =
+      page === "settings" && settingsSection.current === "local-server";
+    const target = localServer ? localServerHeading.current : heading.current;
+    target?.focus();
+    if (localServer) target?.scrollIntoView?.({ block: "start" });
   }, [page]);
   function openScopes() {
     scopeReturnFocus.current = document.activeElement as HTMLElement;
@@ -160,8 +167,9 @@ export function App() {
           ?.focus();
     };
   }, [scopeOpen]);
-  function navigate(next: Page) {
+  function navigate(next: Page, section?: "local-server") {
     if (next === page || !confirmSwitch()) return;
+    settingsSection.current = section;
     setDirty(false);
     setPage(next);
     setMenu(false);
@@ -335,6 +343,7 @@ export function App() {
               onDirty={setDirty}
               onManageConnections={() => navigate("connections")}
               onOpenScopes={openScopes}
+              onOpenLocalServer={() => navigate("settings", "local-server")}
               contextPending={contextPending}
             />
           )}
@@ -381,6 +390,11 @@ export function App() {
                   </select>
                 </div>
               </section>
+              <LocalServerSettings
+                language={language}
+                headingRef={localServerHeading}
+                onManageConnections={() => navigate("connections")}
+              />
               <Help language={language} />
               <Diagnostics language={language} />
               <section className="card">

@@ -106,6 +106,18 @@ Screenshots of help copy failure and pending activation were inspected. Evidence
 
 Edge 检查覆盖中英文、三种主题和上述三个窗口尺寸的 18 组组合。合成 IPC 与剪贴板桩验证帮助复制、跨页等待、旧上下文不可编辑、完成后显式选择 Scope 及新草稿导航取消；页面没有横向溢出，并检查强制高对比度视图及截图。200% 为等效布局检查。本次未执行原生剪贴板、真实 Server、安装包、IME、屏幕阅读器或 macOS 验收；仓库钩子仍有既有 Windows Python 类型检查错误，其余通过。
 
+## Disconnected paths and Local Server guidance (#2102)
+
+On 2026-10-22, the pinned Windows tools above passed all 68 frontend tests, typecheck, lint and production build. Six focused UI tests cover the English/Chinese disconnected Memory choices, focused navigation to the Local Server section, the existing connection editor handoff, Settings access during pending/failed native-state loading, unchanged Overview/default navigation, the editor's discard guard and exact Scope selection for an already active connection. No installer, connection activation, readiness check or local diagnostic is triggered by these navigation paths.
+
+Headless Edge 155.0.4283.62 with synthetic IPC checked 72 combinations: English/Chinese, light/dark/system, native state disconnected/loading/error, and CSS viewports 1180×800, 800×600, 400×400 and 400×300. Both disconnected paths worked, the targeted Local Server heading received focus and remained unobscured, keyboard Tab/Enter reached the connection editor, and the pages had no horizontal overflow. A forced-colors offline view was also checked. Screenshots of the 800×600 disconnected entry and focused Local Server section were inspected. Evidence is under ignored `.artifacts/desktop-shell/local-server*`.
+
+The 400×300 viewport at device scale factor 2 checks layout equivalent to 800×600 at 200%, not installed WebView zoom. Synthetic IPC does not establish real Server, installed-package, IME, screen-reader or macOS acceptance; those were not executed for this change. Repository hooks retain the previously documented Windows Python `ty check` failures; the other hooks passed.
+
+2026-10-22 使用固定工具版本，全部 68 项前端测试、typecheck、lint 和生产构建通过。新增 6 项测试覆盖双语双路径、Local Server 定向焦点、现有连接编辑器接入、原生状态加载／失败时离线可达、默认总览及原有草稿／Scope 保护。进入这些页面不会安装软件、激活连接、执行诊断或探测 readiness。
+
+Edge 合成 IPC 检查覆盖上述 72 组组合；定向焦点未被顶栏遮挡，键盘可继续进入连接编辑器，无横向溢出，并检查了离线强制高对比度视图及截图。200% 为等效布局验证。本次未执行真实 Server、安装包、平台 IME、屏幕阅读器或 macOS 验收。仓库钩子仍有既有 Windows Python 类型检查错误，其余通过。
+
 ## Remaining release qualification
 
 - Clean standard-user Windows 11, including absent/present WebView2 and bootstrap recovery.

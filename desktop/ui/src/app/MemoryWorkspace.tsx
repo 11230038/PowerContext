@@ -35,6 +35,7 @@ type Props = {
   onDirty: (dirty: boolean) => void;
   onManageConnections?: () => void;
   onOpenScopes?: () => void;
+  onOpenLocalServer?: () => void;
   contextPending?: boolean;
 };
 export const textBytes = (value: string) =>
@@ -319,19 +320,36 @@ export function MemoryWorkspace(props: Props) {
                 : common.chooseScopeTitle
           }
           action={
-            !active || !active.report.compatibilityVerified
-              ? props.onManageConnections && (
+            !active ? (
+              <>
+                {props.onOpenLocalServer && (
+                  <button onClick={props.onOpenLocalServer}>
+                    {common.setUpLocally}
+                  </button>
+                )}
+                {props.onManageConnections && (
                   <button onClick={props.onManageConnections}>
-                    {common.chooseConnection}
+                    {common.connectExisting}
                   </button>
-                )
-              : props.onOpenScopes && (
-                  <button onClick={props.onOpenScopes}>
-                    {common.chooseScopeTitle}
-                  </button>
-                )
+                )}
+              </>
+            ) : !active.report.compatibilityVerified ? (
+              props.onManageConnections && (
+                <button onClick={props.onManageConnections}>
+                  {common.chooseConnection}
+                </button>
+              )
+            ) : (
+              props.onOpenScopes && (
+                <button onClick={props.onOpenScopes}>
+                  {common.chooseScopeTitle}
+                </button>
+              )
+            )
           }
-        />
+        >
+          {!active && <p>{common.startPathsHint}</p>}
+        </PageFeedback>
       )}
 
       {record &&
