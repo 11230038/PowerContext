@@ -27,6 +27,7 @@ import { desktopApi } from "../shared/ipc";
 import { connectionMessages, connectionError } from "./connection-messages";
 import { messages, type Language } from "./messages";
 import { PageFeedback, ErrorFeedback } from "./PageFeedback";
+import { useConfirmation } from "./useConfirmation";
 import connectionsIcon from "../assets/connections.svg";
 
 type Props = {
@@ -46,6 +47,7 @@ export function Connections({
   initialProfileId,
 }: Props) {
   const t = connectionMessages[language];
+  const { confirm, confirmation } = useConfirmation(language);
   const [selected, setSelected] = useState<string | null>(
     initialProfileId ?? null,
   );
@@ -107,8 +109,8 @@ export function Connections({
       }
     }
   }
-  function select(id: string | null) {
-    if (dirty && !window.confirm(t.discard)) return;
+  async function select(id: string | null) {
+    if (dirty && !(await confirm(t.discard))) return;
     setSecret("");
     setSelected(id);
     reset(state?.profiles.find((p) => p.id === id));
@@ -189,6 +191,7 @@ export function Connections({
     selectedCompatibility?.contractSha256 !== contractSha256;
   return (
     <div className="connection-grid">
+      {confirmation}
       <section className="card stack">
         <div className="card-heading">
           <h2>{t.savedConnections}</h2>
@@ -423,8 +426,8 @@ export function Connections({
               {t.save}
             </button>
             <button
-              onClick={() => {
-                if (!dirty || window.confirm(t.discard)) reset(profile);
+              onClick={async () => {
+                if (!dirty || (await confirm(t.discard))) reset(profile);
               }}
             >
               {t.cancel}
@@ -526,9 +529,9 @@ export function Connections({
               <button
                 className="link-danger"
                 disabled={busy}
-                onClick={() => {
-                  if (dirty && !window.confirm(t.discard)) return;
-                  if (window.confirm(t.removeConfirm))
+                onClick={async () => {
+                  if (dirty && !(await confirm(t.discard))) return;
+                  if (await confirm(t.removeConfirm))
                     void action(() =>
                       desktopApi.remove(profile.id, profile.revision),
                     ).then((next) => {

@@ -37,6 +37,8 @@ import { Observation, type ObservationTab } from "./Observation";
 import { connectionMessages } from "./connection-messages";
 import { PageFeedback, ErrorFeedback } from "./PageFeedback";
 import { activeCheckReport } from "./context";
+import { Modal } from "./Modal";
+import { useConfirmation } from "./useConfirmation";
 
 type Page = "home" | "connections" | "memories" | "observation" | "settings";
 type Theme = "light" | "dark" | "system";
@@ -76,8 +78,9 @@ export function App() {
       !current || next.generation >= current.generation ? next : current,
     );
   }
+  const { confirm, confirmation } = useConfirmation(language);
   function confirmSwitch() {
-    return !dirty || window.confirm(connectionMessages[language].discard);
+    return !dirty || confirm(connectionMessages[language].discard);
   }
   const activeProfile = desktop?.profiles.find(
     (p) => p.id === desktop.active?.connectionId,
@@ -86,7 +89,6 @@ export function App() {
   const heading = useRef<HTMLHeadingElement>(null);
   const localServerHeading = useRef<HTMLHeadingElement>(null);
   const settingsSection = useRef<"local-server" | undefined>(undefined);
-  const scopeDialog = useRef<HTMLDivElement>(null);
   const scopeReturnFocus = useRef<HTMLElement | null>(null);
   const t = messages[language];
   const ct = connectionMessages[language];
@@ -121,69 +123,18 @@ export function App() {
     target?.focus();
     if (localServer) target?.scrollIntoView?.({ block: "start" });
   }, [page, connectionSelection]);
-  function openScopes() {
-    scopeReturnFocus.current = document.activeElement as HTMLElement;
+  function openScopes(trigger: HTMLElement) {
+    scopeReturnFocus.current = trigger;
     setScopeOpen(true);
   }
-  useEffect(() => {
-    if (!scopeOpen) return;
-    const previous = scopeReturnFocus.current;
-    const dialog = scopeDialog.current;
-    const background = Array.from(
-      document.querySelector(".app")?.children ?? [],
-    ).filter(
-      (element): element is HTMLElement =>
-        element instanceof HTMLElement &&
-        !element.classList.contains("modal-backdrop"),
-    );
-    const inertValues = background.map((element) => element.inert);
-    background.forEach((element) => {
-      element.inert = true;
-    });
-    dialog?.querySelector<HTMLButtonElement>("button")?.focus();
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setScopeOpen(false);
-      }
-      if (event.key !== "Tab") return;
-      const controls = Array.from(
-        dialog?.querySelectorAll<HTMLElement>(
-          'button, input, select, [tabindex="0"]',
-        ) ?? [],
-      ).filter((element) => !element.matches(":disabled"));
-      const first = controls[0];
-      const last = controls[controls.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first?.focus();
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      background.forEach((element, index) => {
-        element.inert = inertValues[index];
-      });
-      if (scopeReturnFocus.current === null) return;
-      const fallback = document.querySelector<HTMLButtonElement>(
-        ".topbar-group button:not(:disabled)",
-      );
-      const target =
-        previous?.isConnected && !previous.matches(":disabled")
-          ? previous
-          : (fallback ?? heading.current);
-      target?.focus();
-    };
-  }, [scopeOpen]);
-  function navigate(
+  async function navigate(
     next: Page,
     target?: { section?: "local-server"; profileId?: string },
   ) {
-    if ((next === page && target?.profileId === undefined) || !confirmSwitch())
+    if (
+      (next === page && target?.profileId === undefined) ||
+      !(await confirmSwitch())
+    )
       return;
     settingsSection.current = target?.section;
     setConnectionSelection((current) =>
@@ -195,8 +146,8 @@ export function App() {
     setPage(next);
     setMenu(false);
   }
-  function disconnect() {
-    if (!confirmSwitch()) return;
+  async function disconnect() {
+    if (!(await confirmSwitch())) return;
     connectionPending(true);
     void desktopApi
       .disconnect()
@@ -454,47 +405,37 @@ export function App() {
         </main>
       </div>
       {scopeOpen && (
-        <div
-          className="modal-backdrop"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) setScopeOpen(false);
-          }}
+        <Modal
+          label={ct.scope}
+          onClose={() => setScopeOpen(false)}
+          returnFocus={() => scopeReturnFocus.current}
         >
-          <div
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={ct.scope}
-            ref={scopeDialog}
-          >
-            <div className="modal-heading">
-              <h2>{ct.scope}</h2>
-              <button onClick={() => setScopeOpen(false)}>
-                {t.closeDialog}
-              </button>
-            </div>
-            <Scopes
-              key={`scopes-${desktop?.active?.generation ?? "none"}`}
-              state={desktop}
-              language={language}
-              onState={receiveState}
-              confirmSwitch={confirmSwitch}
-              onPendingChange={scopePending}
-              onSelectionError={setNativeError}
-              onSelected={() => {
-                setDirty(false);
-                setScopeOpen(false);
-              }}
-              hideHeading
-              onManageConnections={() => {
-                scopeReturnFocus.current = null;
-                setScopeOpen(false);
-                navigate("connections");
-              }}
-            />
+          <div className="modal-heading">
+            <h2>{ct.scope}</h2>
+            <button onClick={() => setScopeOpen(false)}>{t.closeDialog}</button>
           </div>
-        </div>
+          <Scopes
+            key={`scopes-${desktop?.active?.generation ?? "none"}`}
+            state={desktop}
+            language={language}
+            onState={receiveState}
+            confirmSwitch={confirmSwitch}
+            onPendingChange={scopePending}
+            onSelectionError={setNativeError}
+            onSelected={() => {
+              setDirty(false);
+              setScopeOpen(false);
+            }}
+            hideHeading
+            onManageConnections={() => {
+              scopeReturnFocus.current = null;
+              setScopeOpen(false);
+              navigate("connections");
+            }}
+          />
+        </Modal>
       )}
+      {confirmation}
     </div>
   );
 }

@@ -130,6 +130,20 @@ The 400×300 viewport at device scale factor 2 is layout equivalent to 800×600 
 
 Edge 合成 IPC 验证上述 48 组组合，检查焦点恢复、指定配置接入、Scope 晚到响应后的草稿保护、确认／取消、同 ID 重选及无隐式连接检查；页面无横向溢出，并检查了等待状态与强制高对比度错误视图截图。200% 为等效布局验证。本次未执行真实原生／后端、安装包、IME、屏幕阅读器或 macOS 验收。仓库钩子仍有既有 Windows Python 类型检查错误，其余通过。
 
+## macOS application navigation and confirmations
+
+On 2026-10-22, macOS 26.5.1 Apple Silicon checks used Node 24.14.1, pnpm 11.13.1 and Rust 1.95.0. Frontend behavior tests, typecheck, lint, generated-contract/icon checks, Rust fmt/clippy and native tests pass. Confirmation tests operate the application dialog rather than replacing a host dialog: they cover bilingual cancel/confirm, Escape, focus containment, retained drafts, two-stage connection removal, unknown-write resubmission, and Scope changes while confirmation is pending.
+
+The actual debug `.app` was built with `pnpm --dir desktop tauri build --debug --bundles app --ci -- --locked`. Its bundled `tauri://localhost` page loads without Vite and its native state/version IPC works. In that packaged WebView, English/Chinese draft navigation and cancel-editing confirmations, explicit discard, Escape cancellation, Tab/Shift+Tab containment, and an 800×600 English confirmation were exercised. After clicking a local diagnostic and then the Scope trigger, Escape restores focus to the Scope trigger. Pending Scope selection and nested confirmation remain covered by UI behavior tests with simulated IPC; no real Server was used for these packaged UI checks.
+
+The native navigation policy permits the platform's local application origin and rejects external, other-platform, credential-bearing and explicitly ported packaged addresses. macOS uses `tauri://localhost`; Windows uses `http://tauri.localhost`. This does not qualify signing/notarization, Intel Mac, IME, VoiceOver, native 200% zoom, Keychain, local CLI diagnostics, or installed Server workflows.
+
+2026-10-22 在 macOS 26.5.1 Apple Silicon 上，使用上述固定工具完成前端行为测试、类型检查、lint、生成合同／图标检查及 Rust fmt、clippy 和原生测试。确认测试实际操作应用内对话框，覆盖双语确认／取消、Escape、焦点循环、草稿保留、两步移除配置、未知写入再次提交，以及确认期间 Scope 改变时不提交旧草稿。
+
+实际构建并启动 debug `.app`，其 `tauri://localhost` 页面不依赖 Vite，原生状态和版本 IPC 正常。在打包 WebView 中验证了双语草稿导航、取消编辑、确认丢弃、Escape 取消、Tab／Shift+Tab 和 800×600 英文确认框；先点击本机诊断再点击 Scope，Escape 后焦点返回实际 Scope 按钮。等待中的 Scope 和嵌套确认由模拟 IPC 的行为测试覆盖；本次打包 UI 检查未连接真实 Server。
+
+导航白名单按平台仅放行本地应用 origin，同时拒绝外部、其他平台、带用户信息或显式端口的打包地址。上述结果不代表签名／公证、Intel Mac、IME、VoiceOver、原生 200% 缩放、Keychain、本机 CLI 诊断或安装版 Server 工作流通过。
+
 ## Remaining release qualification
 
 - Clean standard-user Windows 11, including absent/present WebView2 and bootstrap recovery.

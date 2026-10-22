@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { answerConfirmation } from "./confirmation";
 import { App } from "../src/app/App";
 import { desktopApi } from "../src/shared/ipc";
 import { messages } from "../src/app/messages";
@@ -143,9 +144,9 @@ test("navigating to Settings retains the existing editor discard guard", async (
   await user.click(screen.getByRole("button", { name: "连接" }));
   const input = screen.getByRole("textbox", { name: "连接名称" });
   await user.type(input, "unsaved connection");
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
   await user.click(screen.getByRole("button", { name: "设置与诊断" }));
-  expect(confirm).toHaveBeenCalledOnce();
+  await answerConfirmation(user, false);
   expect(screen.queryByRole("region", { name: "Local Server" })).toBeNull();
   expect((input as HTMLInputElement).value).toBe("unsaved connection");
 });

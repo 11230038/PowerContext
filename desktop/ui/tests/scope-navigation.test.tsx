@@ -15,8 +15,16 @@
  */
 
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  within,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { answerConfirmation } from "./confirmation";
 import { App } from "../src/app/App";
 import { desktopApi } from "../src/shared/ipc";
 import type { DesktopState } from "../src/generated/ipc";
@@ -162,9 +170,9 @@ test.each(["Escape", "close button", "backdrop"])(
     const current = screen.getByRole("textbox", { name: "记忆内容" });
     expect(current.matches(":enabled")).toBe(true);
     await user.type(current, "draft for Scope B");
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
     await user.click(screen.getByRole("button", { name: "观察" }));
-    expect(confirm).toHaveBeenCalledOnce();
+    await answerConfirmation(user, false);
     expect((current as HTMLTextAreaElement).value).toBe("draft for Scope B");
     expect(desktopApi.selectScope).toHaveBeenCalledTimes(1);
     expect(desktopApi.remember).not.toHaveBeenCalled();
@@ -213,9 +221,9 @@ test("a late Scope result cannot dismiss a connection editor draft created after
   await act(async () => {
     finish(selected);
   });
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
   await user.click(screen.getByRole("button", { name: "观察" }));
-  expect(confirm).toHaveBeenCalledOnce();
+  await answerConfirmation(user, false);
   expect((input as HTMLInputElement).value).toBe("Second new draft");
 });
 
@@ -224,10 +232,12 @@ test("the global menu opens the requested editor while preserving the active con
   render(<App />);
   await screen.findByRole("button", { name: /当前连接: First/ });
   await chooseProfile(user, "Second");
-  expect(
-    (screen.getByRole("textbox", { name: "连接名称" }) as HTMLInputElement)
-      .value,
-  ).toBe("Second");
+  await waitFor(() =>
+    expect(
+      (screen.getByRole("textbox", { name: "连接名称" }) as HTMLInputElement)
+        .value,
+    ).toBe("Second"),
+  );
   expect(
     (screen.getByRole("textbox", { name: "Server 地址" }) as HTMLInputElement)
       .value,
@@ -246,27 +256,30 @@ test("same-page external profile navigation confirms drafts and supports repeate
   await screen.findByRole("button", { name: /当前连接: First/ });
   await chooseProfile(user, "First");
   await user.type(screen.getByRole("textbox", { name: "连接名称" }), " draft");
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
   await chooseProfile(user, "Second");
+  await answerConfirmation(user, false);
   expect(
     (screen.getByRole("textbox", { name: "连接名称" }) as HTMLInputElement)
       .value,
   ).toBe("First draft");
-  confirm.mockReturnValue(true);
   await chooseProfile(user, "Second");
+  await answerConfirmation(user, true);
   await user.type(screen.getByRole("textbox", { name: "连接名称" }), " draft");
-  confirm.mockReturnValue(false);
   await chooseProfile(user, "Second");
+  await answerConfirmation(user, false);
   expect(
     (screen.getByRole("textbox", { name: "连接名称" }) as HTMLInputElement)
       .value,
   ).toBe("Second draft");
-  confirm.mockReturnValue(true);
   await chooseProfile(user, "Second");
-  expect(
-    (screen.getByRole("textbox", { name: "连接名称" }) as HTMLInputElement)
-      .value,
-  ).toBe("Second");
+  await answerConfirmation(user, true);
+  await waitFor(() =>
+    expect(
+      (screen.getByRole("textbox", { name: "连接名称" }) as HTMLInputElement)
+        .value,
+    ).toBe("Second"),
+  );
   expect(desktopApi.check).not.toHaveBeenCalled();
 });
 
@@ -277,16 +290,18 @@ test("a cancelled cross-page profile navigation preserves the Memory draft", asy
   await screen.findByRole("button", { name: /Scope A scope-a/ });
   const input = screen.getByRole("textbox", { name: "记忆内容" });
   await user.type(input, "Memory draft");
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
   await chooseProfile(user, "Second");
-  expect(confirm).toHaveBeenCalledOnce();
+  await answerConfirmation(user, false);
   expect((input as HTMLTextAreaElement).value).toBe("Memory draft");
-  confirm.mockReturnValue(true);
   await chooseProfile(user, "Second");
-  expect(
-    (screen.getByRole("textbox", { name: "连接名称" }) as HTMLInputElement)
-      .value,
-  ).toBe("Second");
+  await answerConfirmation(user, true);
+  await waitFor(() =>
+    expect(
+      (screen.getByRole("textbox", { name: "连接名称" }) as HTMLInputElement)
+        .value,
+    ).toBe("Second"),
+  );
   expect(desktopApi.check).not.toHaveBeenCalled();
 });
 
@@ -304,8 +319,9 @@ test("a late save from a replaced profile editor preserves the requested editor 
   await chooseProfile(user, "First");
   await user.type(screen.getByRole("textbox", { name: "连接名称" }), " saved");
   await user.click(screen.getByRole("button", { name: "保存配置" }));
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
   await chooseProfile(user, "Second");
+  await answerConfirmation(user, true);
   const input = screen.getByRole("textbox", { name: "连接名称" });
   await user.type(input, " pending draft");
   await act(async () => {
@@ -315,9 +331,8 @@ test("a late save from a replaced profile editor preserves the requested editor 
       profiles: [{ ...profileA, revision: 2, name: "First saved" }, profileB],
     });
   });
-  confirm.mockClear().mockReturnValue(false);
   await user.click(screen.getByRole("button", { name: "观察" }));
-  expect(confirm).toHaveBeenCalledOnce();
+  await answerConfirmation(user, false);
   expect((input as HTMLInputElement).value).toBe("Second pending draft");
 });
 
@@ -328,10 +343,11 @@ test("cancelling Scope selection keeps the current draft and never starts a cont
   await screen.findByRole("button", { name: /Scope A scope-a/ });
   const input = screen.getByRole("textbox", { name: "记忆内容" });
   await user.type(input, "keep the original Scope draft");
-  vi.spyOn(window, "confirm").mockReturnValue(false);
+
   await user.click(screen.getByRole("button", { name: /Scope A scope-a/ }));
   await user.click(screen.getByRole("button", { name: "查找范围" }));
   await user.click(screen.getByRole("button", { name: "Scope B" }));
+  await answerConfirmation(user, false);
   expect(desktopApi.selectScope).not.toHaveBeenCalled();
   expect(
     screen.queryByRole("heading", { name: "正在核对并选择精确 Scope…" }),

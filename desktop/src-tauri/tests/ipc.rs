@@ -21,7 +21,7 @@ use tauri::{
     webview::InvokeRequest,
 };
 
-// Tauri mock IPC uses the host platform's local protocol; product navigation remains Windows-only.
+// Tauri uses the host platform's local protocol for both mock IPC and packaged navigation.
 const LOCAL_ORIGIN: &str = if cfg!(any(windows, target_os = "android")) {
     "http://tauri.localhost"
 } else {
@@ -101,12 +101,24 @@ fn blocks_remote_navigation_and_userinfo() {
         "javascript:alert(1)",
         "http://tauri.localhost.evil",
         "http://user@tauri.localhost",
+        "tauri://user@localhost",
+        "tauri://localhost:8000",
+        "tauri://localhost.evil",
+        "https://tauri.localhost",
+        "tauri://remote-host",
     ] {
         assert!(!allowed_navigation(&url.parse().unwrap()));
     }
+    assert!(allowed_navigation(&LOCAL_ORIGIN.parse().unwrap()));
     assert!(allowed_navigation(
-        &"http://tauri.localhost/".parse().unwrap()
+        &format!("{LOCAL_ORIGIN}/index.html").parse().unwrap()
     ));
+    let other_platform = if cfg!(any(windows, target_os = "android")) {
+        "tauri://localhost"
+    } else {
+        "http://tauri.localhost"
+    };
+    assert!(!allowed_navigation(&other_platform.parse().unwrap()));
 }
 
 #[test]

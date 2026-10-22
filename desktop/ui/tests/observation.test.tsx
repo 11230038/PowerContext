@@ -23,6 +23,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { answerConfirmation } from "./confirmation";
 import { App } from "../src/app/App";
 import { Observation } from "../src/app/Observation";
 import { desktopApi } from "../src/shared/ipc";
@@ -169,7 +170,7 @@ test("entering Observation respects the existing Memory draft confirmation", asy
       },
     },
   });
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
   render(<App />);
   await user.click(screen.getByRole("button", { name: "记忆" }));
   await waitFor(() =>
@@ -179,13 +180,13 @@ test("entering Observation respects the existing Memory draft confirmation", asy
   );
   await user.type(screen.getByLabelText("记忆内容"), "unsaved draft");
   await user.click(screen.getByRole("button", { name: "观察" }));
-  expect(confirm).toHaveBeenCalled();
+  await answerConfirmation(user, false);
   expect((screen.getByLabelText("记忆内容") as HTMLTextAreaElement).value).toBe(
     "unsaved draft",
   );
   expect(screen.queryByRole("tablist")).toBeNull();
-  confirm.mockReturnValue(true);
   await user.click(screen.getByRole("button", { name: "观察" }));
+  await answerConfirmation(user, true);
   expect(screen.getByRole("tablist", { name: "观察" })).toBeTruthy();
 });
 

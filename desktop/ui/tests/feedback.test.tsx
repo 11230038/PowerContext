@@ -15,7 +15,14 @@
  */
 
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  cleanup,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "../src/app/App";
 import { TopBar } from "../src/app/TopBar";
@@ -466,4 +473,20 @@ test("Scope recovery navigation focuses the destination title", async () => {
   expect(document.activeElement).toBe(
     screen.getByRole("heading", { level: 1, name: "连接" }),
   );
+});
+
+test("clicking Scope with body focus restores the actual trigger after Escape", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  const trigger = await screen.findByRole("button", {
+    name: /Same title exact-scope-a/,
+  });
+  (document.activeElement as HTMLElement).blur();
+  expect(document.activeElement).toBe(document.body);
+  fireEvent.click(trigger);
+  expect(document.activeElement).toBe(
+    within(screen.getByRole("dialog")).getByRole("button", { name: "关闭" }),
+  );
+  await user.keyboard("{Escape}");
+  expect(document.activeElement).toBe(trigger);
 });

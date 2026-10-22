@@ -26,7 +26,7 @@ type Props = {
   loading?: boolean;
   contextPending?: boolean;
   onManageConnections: (profileId?: string) => void;
-  onOpenScopes: () => void;
+  onOpenScopes: (trigger: HTMLElement) => void;
   onDisconnect: () => void;
 };
 export function TopBar({
@@ -253,7 +253,7 @@ export function TopBar({
         <span className="topbar-label">{t.scopeLabel}</span>
         <button
           className="menu-trigger scope-trigger"
-          onClick={onOpenScopes}
+          onClick={(event) => onOpenScopes(event.currentTarget)}
           disabled={!state || contextPending}
           aria-haspopup="dialog"
         >

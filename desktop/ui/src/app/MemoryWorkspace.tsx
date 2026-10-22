@@ -27,6 +27,7 @@ import { connectionError } from "./connection-messages";
 import { memoryMessages } from "./memory-messages";
 import { messages, type Language } from "./messages";
 import { PageFeedback, ErrorFeedback } from "./PageFeedback";
+import { useConfirmation } from "./useConfirmation";
 import memoryIcon from "../assets/memory.svg";
 type Props = {
   state: DesktopState | null;
@@ -34,7 +35,7 @@ type Props = {
   onState: (state: DesktopState) => void;
   onDirty: (dirty: boolean) => void;
   onManageConnections?: () => void;
-  onOpenScopes?: () => void;
+  onOpenScopes?: (trigger: HTMLElement) => void;
   onOpenLocalServer?: () => void;
   contextPending?: boolean;
 };
@@ -48,6 +49,7 @@ export function NoteForm({
   contextPending = false,
 }: Props) {
   const t = memoryMessages[language];
+  const { confirm, confirmation } = useConfirmation(language);
   const active = state?.active;
   const profile = state?.profiles.find((p) => p.id === active?.connectionId);
   const [text, setText] = useState("");
@@ -80,14 +82,15 @@ export function NoteForm({
       setError({ code: "invalid_input" });
       return;
     }
+    const original = active.generation;
+    const ticket = lifetime.current;
     if (
       (outcome?.record.status === "unknown" ||
         state?.lastWrite?.status === "unknown") &&
-      !window.confirm(t.retry)
+      !(await confirm(t.retry))
     )
       return;
-    const original = active.generation;
-    const ticket = lifetime.current;
+    if (ticket !== lifetime.current || generation.current !== original) return;
     const isCurrent = () =>
       ticket === lifetime.current && generation.current === original;
     submitting.current = true;
@@ -120,6 +123,7 @@ export function NoteForm({
   }
   return (
     <section className="card stack">
+      {confirmation}
       <h2>{t.saveOne}</h2>
       <div className="save-row">
         <label>
@@ -341,7 +345,9 @@ export function MemoryWorkspace(props: Props) {
               )
             ) : (
               props.onOpenScopes && (
-                <button onClick={props.onOpenScopes}>
+                <button
+                  onClick={(event) => props.onOpenScopes?.(event.currentTarget)}
+                >
                   {common.chooseScopeTitle}
                 </button>
               )

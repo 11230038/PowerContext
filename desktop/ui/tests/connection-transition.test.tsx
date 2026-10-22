@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { answerConfirmation } from "./confirmation";
 import { App } from "../src/app/App";
 import { desktopApi } from "../src/shared/ipc";
 import type { DesktopState } from "../src/generated/ipc";
@@ -142,9 +143,9 @@ test.each(["使用此连接", "检查连接"])(
     await user.click(within(dialog).getByRole("button", { name: "Scope B" }));
     const newInput = screen.getByRole("textbox", { name: "记忆内容" });
     await user.type(newInput, "new target draft");
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
     await user.click(screen.getByRole("button", { name: "观察" }));
-    expect(confirm).toHaveBeenCalledOnce();
+    await answerConfirmation(user, false);
     expect((newInput as HTMLTextAreaElement).value).toBe("new target draft");
   },
 );
@@ -176,9 +177,9 @@ test("a failed connection operation refreshes native state and releases the edit
     screen.queryByRole("heading", { name: "正在更新连接状态…" }),
   ).toBeNull();
   await user.type(input, "draft after failure");
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
   await user.click(screen.getByRole("button", { name: "观察" }));
-  expect(confirm).toHaveBeenCalledOnce();
+  await answerConfirmation(user, false);
   expect((input as HTMLTextAreaElement).value).toBe("draft after failure");
 });
 

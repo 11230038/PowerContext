@@ -34,7 +34,7 @@ export function Scopes({
   state: DesktopState | null;
   language: Language;
   onState: (state: DesktopState) => void;
-  confirmSwitch: () => boolean;
+  confirmSwitch: () => boolean | Promise<boolean>;
   onSelected?: () => void;
   hideHeading?: boolean;
   onManageConnections?: () => void;
@@ -112,8 +112,15 @@ export function Scopes({
     }
   }
   async function select(id: string) {
-    if (!active || !confirmSwitch()) return;
+    if (!active) return;
     const ticket = lifetime.current;
+    const generation = active.generation;
+    if (
+      !(await confirmSwitch()) ||
+      ticket !== lifetime.current ||
+      generation !== currentGeneration.current
+    )
+      return;
     setOperation("select");
     setBusy(true);
     setError(null);
