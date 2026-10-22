@@ -93,7 +93,7 @@ Server identity and authorization, and shared limits used in table definitions. 
 `MANAGED_INPUTS` when introducing them. The digest intentionally includes non-schema code: it forces a review of
 changes, but does not infer semantic compatibility or replace real upgrade tests.
 
-Build exactly one wheel into `dist/`, then run `make upgrade-release-test`. Before release, additionally run
+Build one wheel and its matching `.tar.gz` source distribution into `dist/`, then run `make upgrade-release-test`. Before release, additionally run
 `uv run python scripts/run_upgrade_release_gate.py --release --release-notes /path/to/notes.md`. The notes must contain
 the exact English support declaration generated in the installation guide. The release workflow performs this check
 against the GitHub event's notes and gates both PyPI publication and release assets on the same tested wheel.
@@ -108,3 +108,15 @@ not the earlier manual creation of a GitHub Release; run the prepublication comm
 workflows do not invoke it as upgrade acceptance. An expected rejection or its `--respect-policy` result can never
 replace a successful positive upgrade. The gate attempts every required backend even after an earlier case fails,
 then fails overall and archives each case's logs and result. Empty matrices and missing suites are errors.
+
+## Publication artifacts
+
+The runner validates every distribution input. Publication requires exactly one wheel and one source archive with
+matching names and metadata. It rebuilds the source archive with `uv build --wheel` and compares wheel member bytes,
+excluding only the derived `RECORD` file. A same-version stale source archive fails just like an older-version one.
+PRs may test a wheel alone, but the PR workflow builds both formats to exercise this validation too.
+
+Acceptance uses a private copy of those files. Only a passing run creates `validated-dist/` and `publication.json`
+in its evidence directory. CI uploads that directory; local `make publish` calls the runner with `--release --publish`
+and uploads its exact returned paths, never a fresh glob of `dist/`. Failed acceptance produces no publication set.
+Managed persistence hashes normalize CRLF/LF checkout line endings; artifact SHA-256s remain byte-exact.

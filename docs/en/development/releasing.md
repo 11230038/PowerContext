@@ -144,15 +144,28 @@ The suite contract and evidence requirements are in `tests/release_upgrades/READ
 
 `make check` and `make release-check` validate this policy and the bilingual installation notices. Changes to
 managed persistence inputs require a compatibility review with an updated digest and rationale. A digest is a
-review trigger, not evidence that a migration is correct. `make version-bump` also updates the policy target;
+review trigger, not evidence that a migration is correct. Managed text hashes normalize CRLF to LF so checkout
+line endings do not require a new review; distribution hashes always cover the exact archive bytes. `make version-bump` also updates the policy target;
 regenerate the support notices with `uv run python scripts/upgrade_release_gate.py --write-docs` after matrix changes.
 
-After building exactly one wheel into `dist/`, execute the declared upgrade cases:
+Build exactly one wheel and its matching source distribution into `dist/`, then execute the declared upgrade cases:
 
 ```bash
 make upgrade-release-test
 uv run python scripts/run_upgrade_release_gate.py --release --release-notes /path/to/release-notes.md
 ```
+
+The publication input directory must contain exactly one wheel and one matching `.tar.gz` source distribution;
+leftover distributions and unexpected files fail validation (`uv`'s `.gitignore` is not an artifact). The runner checks
+source metadata and builds a wheel from the source archive, comparing all member contents except the derived
+`RECORD` listing. A stale source archive with the same version therefore cannot bypass validation. Archive timestamps
+and compression do not affect this comparison. A build-tool change that alters wheel contents requires rebuilding
+the complete pair, not ignoring the mismatch.
+
+The runner tests a private snapshot, records exact artifact SHA-256s in `publication.json`, and exports only passing
+files to the evidence directory's `validated-dist/`. CI uploads that set. `make publish` uses `--release --publish` to
+upload those exact paths in the same invocation; subsequent changes to the original `dist/` cannot join the upload.
+No packages are uploaded by validation commands without `--publish`.
 
 The release check requires the actual wheel version to match the policy and the release notes to include the exact
 English support declaration from the installation guide. It installs each exact source release and the target wheel

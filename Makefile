@@ -243,7 +243,7 @@ upgrade-policy-check: ## Verify the declared upgrade matrix, persistence review,
 	@uv run python scripts/upgrade_release_gate.py
 
 .PHONY: upgrade-release-test
-upgrade-release-test: ## Run installed-release acceptance for the single wheel in dist (fresh-install-only makes no upgrade claim).
+upgrade-release-test: ## Validate distributions in dist and require successful installed-release upgrades.
 	@uv run python scripts/run_upgrade_release_gate.py
 
 .PHONY: clean-build
@@ -253,9 +253,7 @@ clean-build: ## Clean build artifacts
 
 .PHONY: publish
 publish: ## Publish after release upgrade acceptance; UPGRADE_RELEASE_NOTES must name the reviewed release notes file.
-	@uv run python scripts/run_upgrade_release_gate.py --release --release-notes "$$UPGRADE_RELEASE_NOTES"
-	@echo "🚀 Publishing."
-	@uv publish dist/*
+	@uv run python scripts/run_upgrade_release_gate.py --release --publish --release-notes "$$UPGRADE_RELEASE_NOTES"
 
 .PHONY: build-and-publish
 build-and-publish: build publish ## Build and publish.

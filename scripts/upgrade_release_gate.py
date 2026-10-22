@@ -76,10 +76,11 @@ def managed_digest(root: Path) -> str:
 
     This deliberately over-approximates schema changes. It is a review trigger,
     not a claim to prove SQL or data-format compatibility from Python syntax.
+    Normalize checkout line endings; artifact hashes must retain their exact bytes.
     """
     inputs = [root / relative for relative in MANAGED_INPUTS]
     files = {
-        path.relative_to(root).as_posix(): sha256(path)
+        path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
         for location in inputs
         for path in (location.rglob("*") if location.is_dir() else [location])
         if path.is_file() and path.suffix in {".py", ".sql", ".json"}
@@ -107,7 +108,8 @@ def load_policy(root: Path) -> dict[str, Any]:
         isinstance(review["rationale"], str) and review["rationale"].strip(), "Schema compatibility rationale required"
     )
     require(
-        review["persistence_sha256"] == managed_digest(root), "Persistence changed: update the compatibility review"
+        review["persistence_sha256"] == managed_digest(root),
+        "Persistence changed (file set or content; CRLF/LF normalized): update the compatibility review",
     )
     cases = policy["cases"]
     require(isinstance(cases, list), "Upgrade cases must be a list")

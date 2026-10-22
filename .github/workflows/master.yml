@@ -37,9 +37,9 @@ jobs:
       - name: Verify upgrade policy and gate regressions
         run: |
           make upgrade-policy-check
-          uv run pytest -q tests/test_upgrade_release_gate.py
+          uv run pytest -q tests/test_upgrade_release_gate.py tests/test_upgrade_publication.py
       - name: Build the target artifact
-        run: uv build --wheel --out-dir dist
+        run: uv build --out-dir dist
       - name: Start the isolated upgrade OceanBase environment
         uses: ./.github/actions/setup-upgrade-oceanbase
 

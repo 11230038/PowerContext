@@ -134,15 +134,25 @@ DSH README 中说明某项能力已包含在 `1.1.0` 的文字同样属于历史
 验收契约和证据要求见仓库中的 `tests/release_upgrades/README.md`。
 
 `make check` 和 `make release-check` 会核对策略及双语安装说明。受管持久化文件变化时，必须审查兼容性影响，
-更新摘要和理由。摘要用于触发审查，本身不证明迁移正确。`make version-bump` 同时更新策略中的目标版本；
+更新摘要和理由。摘要用于触发审查，本身不证明迁移正确。受管文本的哈希会将 CRLF 归一为 LF，避免检出行尾
+差异误报兼容性变更；发行包哈希仍覆盖完整原始字节。`make version-bump` 同时更新策略中的目标版本；
 支持矩阵变化后，运行 `uv run python scripts/upgrade_release_gate.py --write-docs` 更新安装说明中的支持范围。
 
-将唯一的目标 wheel 构建到 `dist/` 后，执行声明的升级组合验收：
+将唯一的目标 wheel 和配套源码包构建到 `dist/` 后，执行声明的升级组合验收：
 
 ```bash
 make upgrade-release-test
 uv run python scripts/run_upgrade_release_gate.py --release --release-notes /path/to/release-notes.md
 ```
+
+发布输入目录必须只有一个 wheel 和一个配套的 `.tar.gz` 源码包；残留发行包和其他文件都会使检查失败，
+`uv` 生成的 `.gitignore` 不作为发行产物。门禁检查源码包元数据，并从该源码包实际重建 wheel，逐项比较归档中的
+文件内容，仅排除派生的 `RECORD` 哈希清单。因此，同版本但内容过期的源码包也无法绕过检查。归档时间戳和压缩
+方式不影响比较；构建工具变化导致内容不一致时，需要重新构建整组产物，不能忽略差异。
+
+门禁验收输入文件的独立副本，在 `publication.json` 中记录实际 SHA-256，并且只有全部通过才将文件输出到证据目录
+下的 `validated-dist/`，供 CI 上传。`make publish` 使用 `--release --publish` 在同一次调用中上传这些确切路径；
+验收期间原 `dist/` 的变化不会混入上传。未指定 `--publish` 的验收命令不会发布软件包。
 
 发布检查要求实际 wheel 版本与策略一致，发布说明包含安装指南中的完整英文支持声明。每个组合分别安装准确的
 旧版发行包和目标 wheel。测试缺失、后端跳过、执行失败或证据缺失都会阻断检查。仅通过静态策略检查不表示

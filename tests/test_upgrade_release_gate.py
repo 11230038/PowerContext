@@ -376,6 +376,7 @@ def test_publishing_jobs_depend_on_nonoptional_preupload_upgrade_gate():
     assert "--release --release-event" in steps[index]["run"]
     upload = next(i for i, step in enumerate(steps) if step.get("with", {}).get("name") == "release-dists")
     assert index < upload
+    assert steps[upload]["with"]["path"] == "${{ runner.temp }}/upgrade-release-evidence/validated-dist/*"
     for name in ("pypi-publish", "release-assets"):
         assert workflow["jobs"][name]["needs"] == "release-build"
 
@@ -455,3 +456,36 @@ def test_failed_backend_does_not_skip_other_required_backends(release, monkeypat
     result = json.loads((root / "evidence/result.json").read_text())
     assert result["status"] == "failed"
     assert [case["status"] for case in result["cases"]] == ["failed", "passed", "passed"]
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "src/powercontext/builtin/persistence/tables.py",
+        "src/powercontext/builtin/persistence/revision.sql",
+        "src/powercontext/builtin/code/layout.json",
+        "src/powercontext/server/authz/repository.py",
+        "src/powercontext/server/identity.py",
+        "src/powercontext/limits.py",
+    ],
+)
+def test_checkout_line_endings_preserve_compatibility_review(release, relative):
+    root, _, policy = release
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"first line\nsecond line\n")
+    policy["schema_review"]["persistence_sha256"] = gate.managed_digest(root)
+    (root / gate.MANIFEST).write_text(json.dumps(policy))
+    path.write_bytes(b"first line\r\nsecond line\r\n")
+    assert gate.load_policy(root)["schema_review"] == policy["schema_review"]
+    path.write_bytes(b"first line\r\nchanged content\r\n")
+    with pytest.raises(gate.GateError, match="file set or content; CRLF/LF normalized"):
+        gate.load_policy(root)
+
+
+def test_artifact_hashes_do_not_normalize_bytes(tmp_path):
+    artifact = tmp_path / "artifact"
+    artifact.write_bytes(b"payload\n")
+    before = gate.sha256(artifact)
+    artifact.write_bytes(b"payload\r\n")
+    assert gate.sha256(artifact) != before
