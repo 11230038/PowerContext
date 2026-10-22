@@ -4,36 +4,34 @@
 `fresh-install-only`: **no production database upgrade combination is supported**. Discovered candidates in this mode
 are not accepted upgrades. Full migration integration is tracked in #2154.
 
-## Automatic source versions
+## Fixed source and current target
 
-The default `automatic_sources` policy uses `all-stable-since`, with `minimum_version: "1.3.0"` and SQLite/seekDB
-backend profiles. Every gate run reads the public PowerContext PyPI release catalog and selects all stable `X.Y.Z`
-versions at or above the minimum and strictly below the **actual target wheel version**. It excludes prereleases,
-the target itself, and newer versions. The next run automatically includes newly published stable source versions;
-no new test file or per-version matrix entry is needed. The target is the local build, so it need not be on PyPI yet.
+The `automatic_sources` policy uses `strategy: "fixed-version"` and `source_version: "1.3.0"`, with SQLite,
+embedded seekDB, and OceanBase profiles. Every run expands that exact source across the three backends. The target
+is the **actual wheel built by this job**, not the latest published PyPI package. Thus releases 1.4.1 and 1.5.0
+exercise 1.3.0 → 1.4.1 and 1.3.0 → 1.5.0 without adding test scripts or changing the source version. Newly published
+intermediate versions do not become additional sources. This fixed baseline does not establish support for every
+intermediate release's database or data shapes; add explicit `cases` if those need separate acceptance.
 
-Each selected source is expanded across every configured backend/profile. A missing or yanked required wheel,
-discovery outage, missing minimum version, or empty source window fails the gate instead of reducing coverage.
-Source wheels are installed by their discovered public URL and SHA-256. The evidence records the catalog digest,
-exact selected artifacts, and expanded matrix. Unrelated package indexes cannot substitute a source wheel.
+The runner resolves the exact source wheel from public PyPI and installs its URL with a SHA-256. Missing/yanked
+source wheels, invalid artifact metadata, catalog outages, and a target at or below the source version fail the gate.
+Evidence records the catalog digest, exact source artifact, target artifact digest, and expanded matrix. The resolver
+requires universal `py3-none-any` wheels; a distribution format change must extend it explicitly.
 
-For example, with a minimum of `1.4.0`, a target of `1.4.1` tests `1.4.0`; after `1.4.1` is published, target `1.5.0`
-tests both `1.4.0` and `1.4.1` on every backend. Other stable patches in the same interval are included too. This is
-a promise to test **all** versions in the configured window, not just the latest patch. Change the minimum only
-through a reviewed change to the support policy. The resolver currently requires universal `py3-none-any` wheels;
-a future distribution format change must extend it explicitly, not silently omit a release.
+Currently the three profiles have `suite: null` and the mode remains `fresh-install-only`. Resolving candidates
+executes and accepts **zero** positive upgrades. To activate supported upgrades, implement the complete suite
+contract below for each backend, replace the null paths, set `mode` to `supported-upgrades`, and regenerate the
+installation notices. A missing suite fails supported mode. Tests must fail when migration support is missing;
+the runner never changes expected success into a rejection automatically.
 
-Currently the profiles have `suite: null` and the mode remains `fresh-install-only`. Discovery records candidate
-cases, but executes and accepts **zero** positive upgrades. To activate supported upgrades, implement the complete
-suite contract below for every profile, replace every null with a real suite path, set `mode` to `supported-upgrades`,
-and regenerate the installation notices. The gate rejects supported mode with a missing suite. Future source releases
-then use those same suites, with version adapters added where historical public interfaces differ. Tests must fail
-when migration support is missing; the runner never changes expected success into a rejection automatically.
+`cases` remains available for additional exact source versions/configurations. Each case needs `source_version`,
+`backend`, `configuration`, and `suite`; overlapping cases fail. Optional features that create persistent objects
+require additional profiles. The fixed CI baseline and advertised upgrade support must stay consistent.
 
-`cases` remains available for exact source versions/configurations outside the automatic profiles. Each case needs
-`source_version`, `backend`, `configuration`, and `suite`. Overlapping resolved cases fail rather than running twice.
-Optional features that create persistent objects require additional backend profiles. OceanBase can be included by
-adding its real environment/suite; embedded seekDB evidence does not establish OceanBase compatibility.
+PR/master and publication CI start an isolated OceanBase CE container using the image and MySQL tenant setup from
+the existing E2E workflow. They wait for SQL readiness and adequate datafile capacity before testing, save diagnostics,
+and remove the container even when a check fails. No external database credentials are needed. Embedded seekDB
+runs directly in a temporary runner directory. A backend startup failure fails the job instead of skipping it.
 
 The runner creates separate source/target environments, installs the exact published source package and the built
 target wheel, verifies their versions, then executes the reviewed suite in an isolated working directory. Repository
@@ -47,6 +45,9 @@ The suite receives:
 - `PC_UPGRADE_BACKEND`, `PC_UPGRADE_CONFIGURATION`: the declared case.
 - `PC_UPGRADE_WORK`: disposable workspace for both databases, controlled inference fixtures, and environment files.
 - `PC_UPGRADE_EVIDENCE`: destination for backend evidence JSON.
+- `PC_UPGRADE_OCEANBASE_URL`, `PC_UPGRADE_OCEANBASE_FRESH_URL`: dedicated disposable MySQL-tenant databases for
+  the upgraded and fresh-install comparisons. CI supplies both; local positive OceanBase suites must supply their
+  own isolated databases. Each suite must isolate/reset its own fixtures when multiple configurations run.
 
 Provide these behavioral tests (additional tests are allowed):
 
@@ -81,11 +82,12 @@ For example, after implementing and reviewing actual suites, automatic selection
 
 ```json
 {
-  "strategy": "all-stable-since",
-  "minimum_version": "1.3.0",
+  "strategy": "fixed-version",
+  "source_version": "1.3.0",
   "profiles": [
     {"backend": "sqlite", "configuration": "full-server-no-vector", "suite": "tests/release_upgrades/test_sqlite.py"},
-    {"backend": "seekdb", "configuration": "full-server-no-vector", "suite": "tests/release_upgrades/test_seekdb.py"}
+    {"backend": "seekdb", "configuration": "full-server-no-vector", "suite": "tests/release_upgrades/test_seekdb.py"},
+    {"backend": "oceanbase", "configuration": "full-server-no-vector", "suite": "tests/release_upgrades/test_oceanbase.py"}
   ]
 }
 ```
@@ -109,15 +111,18 @@ not the earlier manual creation of a GitHub Release; run the prepublication comm
 
 ## Actual historical rejection regressions
 
-The PR/master job runs `ci_legacy_upgrade_rejection.py` for **both SQLite and embedded seekDB** against a database
-created and populated by installed PowerContext 1.3.0. It uses separate source/target environments, one disposable
-database directory, sequential process ownership, and public HTTP writes/readback before testing target CLI behavior.
+The PR/master and publication jobs run `ci_legacy_upgrade_rejection.py` for **SQLite, embedded seekDB, and OceanBase**
+against a database created and populated by installed PowerContext 1.3.0. It uses separate source/target environments, one disposable
+database per backend, sequential process ownership, and public HTTP writes/readback before testing target CLI behavior.
 The installed drivers inventory the actual tables and record each environment's engine, driver, and binding versions.
-No external seekDB service or credentials are needed. A missing embedded binding fails the job; it is never skipped.
+OceanBase uses the container's dedicated `pc_upgrade_test` database and records its MySQL tenant mode and direct
+connection. The negative runner only accepts the local test database and verifies it is empty before starting the
+old Server; it refuses to overwrite existing data. No external service or credentials are needed. A missing embedded
+binding or unavailable OceanBase instance fails the job; neither backend is skipped.
 
 The regressions require historical startup rejection, full-baseline migration rejection, and rejection after adding
 only the prototype revision table to the disposable fixture. The last operation is deliberately **not a migration**.
-SeekDB permits either the known CHECK-reflection rejection or unknown-baseline rejection, so fixing #2160 does not
+SeekDB and OceanBase permit either the known CHECK-reflection rejection or unknown-baseline rejection, so fixing #2160 does not
 require retaining the parser defect. These tests do not certify that an upgrade succeeds.
 
 CI invokes them with `--respect-policy` after the main gate. Once supported-path acceptance is activated, these

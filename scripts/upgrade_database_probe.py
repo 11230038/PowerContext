@@ -23,11 +23,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sqlite3
 from importlib import import_module
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 REVISION_DDL = "CREATE TABLE pc_schema_revision (version_num VARCHAR(32) PRIMARY KEY)"
 
@@ -42,18 +44,35 @@ async def inspect(backend: str, database: Path, *, add_revision: bool) -> dict[s
 
     # Use the driver's public API, not a current-checkout Profile that could run
     # startup guards or mutate an old schema before the target CLI is tested.
-    binding = import_module("pylibseekdb")
     pymysql = import_module("pymysql")
-    instance = await binding.aopen(str(database))
+    instance = None
+    details = {}
+    if backend == "seekdb":
+        binding = import_module("pylibseekdb")
+        instance = await binding.aopen(str(database))
+        options = {**instance.connection_options(), "database": "test"}
+        details["embedded_binding_version"] = version("pylibseekdb")
+    else:
+        url = urlsplit(os.environ["PC_UPGRADE_OCEANBASE_URL"])
+        options = {
+            "host": url.hostname,
+            "port": url.port or 2881,
+            "user": unquote(url.username or ""),
+            "password": unquote(url.password or ""),
+            "database": url.path.removeprefix("/"),
+            "charset": "utf8mb4",
+            "connect_timeout": 15,
+        }
     try:
-        with (
-            pymysql.connect(**instance.connection_options(), database="test", autocommit=True) as connection,
-            connection.cursor() as cursor,
-        ):
+        with pymysql.connect(**options, autocommit=True) as connection, connection.cursor() as cursor:
             if add_revision:
                 cursor.execute(REVISION_DDL)
             cursor.execute("SELECT VERSION()")
             engine = str(cursor.fetchone()[0])
+            if backend == "oceanbase":
+                cursor.execute("SHOW VARIABLES LIKE 'ob_compatibility_mode'")
+                details["tenant_mode"] = str(cursor.fetchone()[1]).lower()
+                details["proxy_version"] = "direct"
             cursor.execute("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'")
             names = sorted(row[0] for row in cursor.fetchall())
             tables = {}
@@ -63,16 +82,17 @@ async def inspect(backend: str, database: Path, *, add_revision: bool) -> dict[s
         return {
             "engine_version": engine,
             "driver_version": version("pymysql"),
-            "embedded_binding_version": version("pylibseekdb"),
+            **details,
             "tables": tables,
         }
     finally:
-        instance.close()
+        if instance is not None:
+            instance.close()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend", choices=("sqlite", "seekdb"), required=True)
+    parser.add_argument("--backend", choices=("sqlite", "seekdb", "oceanbase"), required=True)
     parser.add_argument("--database", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--add-revision", action="store_true")

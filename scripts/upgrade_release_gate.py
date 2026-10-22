@@ -114,11 +114,11 @@ def load_policy(root: Path) -> dict[str, Any]:
     automatic = policy["automatic_sources"]
     profiles = []
     if automatic is not None:
-        require(set(automatic) == {"strategy", "minimum_version", "profiles"}, "Invalid automatic source policy")
-        require(automatic["strategy"] == "all-stable-since", "Unknown source selection strategy")
+        require(set(automatic) == {"strategy", "source_version", "profiles"}, "Invalid automatic source policy")
+        require(automatic["strategy"] == "fixed-version", "Unknown source selection strategy")
         require(
-            isinstance(automatic["minimum_version"], str) and re.fullmatch(STABLE, automatic["minimum_version"]),
-            "Minimum source must be a stable version",
+            isinstance(automatic["source_version"], str) and re.fullmatch(STABLE, automatic["source_version"]),
+            "Fixed source must be a stable version",
         )
         profiles = automatic["profiles"]
         require(isinstance(profiles, list) and profiles, "Automatic sources require backend profiles")
@@ -168,7 +168,7 @@ def support_text(policy: dict[str, Any], language: str) -> str:
     )
     if automatic := policy["automatic_sources"]:
         lines.extend(
-            f"| stable >= {automatic['minimum_version']}, < target | {policy['target_version']} | {profile['backend']} | {profile['configuration']} |"
+            f"| {automatic['source_version']} | {policy['target_version']} | {profile['backend']} | {profile['configuration']} |"
             for profile in automatic["profiles"]
         )
     return "\n".join(lines)

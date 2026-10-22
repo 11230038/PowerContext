@@ -23,6 +23,9 @@ jobs:
     name: Upgrade release gate
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    env:
+      PC_UPGRADE_OCEANBASE_URL: mysql+aoceanbase://root%40test:powercontext-e2e@127.0.0.1:2881/pc_upgrade_test?charset=utf8mb4
+      PC_UPGRADE_OCEANBASE_FRESH_URL: mysql+aoceanbase://root%40test:powercontext-e2e@127.0.0.1:2881/pc_upgrade_fresh?charset=utf8mb4
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -37,18 +40,31 @@ jobs:
           uv run pytest -q tests/test_upgrade_release_gate.py
       - name: Build the target artifact
         run: uv build --wheel --out-dir dist
+      - name: Start the isolated upgrade OceanBase environment
+        uses: ./.github/actions/setup-upgrade-oceanbase
+
       - name: Run declared installed-release acceptance
         run: >-
           uv run python scripts/run_upgrade_release_gate.py
           --output "$RUNNER_TEMP/upgrade-release-evidence"
-      - name: Reproduce unsupported SQLite and embedded seekDB upgrades
+      - name: Reproduce unsupported upgrades on all three backends
         run: |
           wheel=$(find dist -name '*.whl' -print -quit)
-          for backend in sqlite seekdb; do
+          for backend in sqlite seekdb oceanbase; do
             uv run python scripts/ci_legacy_upgrade_rejection.py \
               --backend "$backend" --respect-policy --wheel "$wheel" \
               --output "$RUNNER_TEMP/upgrade-release-evidence/legacy-$backend"
           done
+      - name: Preserve OceanBase diagnostics
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/upgrade-release-evidence"
+          docker logs upgrade-oceanbase > "$RUNNER_TEMP/upgrade-release-evidence/oceanbase.log" 2>&1 || true
+          docker inspect --format '{{json .State}}' upgrade-oceanbase \
+            > "$RUNNER_TEMP/upgrade-release-evidence/oceanbase-state.json" 2>&1 || true
+      - name: Stop the isolated upgrade OceanBase environment
+        if: always()
+        run: docker rm --force upgrade-oceanbase
       - name: Preserve upgrade acceptance evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

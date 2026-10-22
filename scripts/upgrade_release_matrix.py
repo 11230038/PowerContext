@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Resolve a release support window into immutable source wheels and backend cases."""
+"""Resolve a fixed source release into immutable source wheels and backend cases."""
 
 from __future__ import annotations
 
@@ -69,22 +69,7 @@ def resolve_matrix(policy: dict[str, Any], target: str) -> dict[str, Any]:
         raise ValueError("Empty or malformed PyPI release catalog")  # noqa: TRY003
     cases = [dict(case) for case in explicit]
     if automatic:
-        minimum = Version(automatic["minimum_version"])
-        versions = sorted(
-            (
-                version
-                for version in catalog["releases"]
-                if re.fullmatch(STABLE, version) and minimum <= Version(version) < Version(target)
-            ),
-            key=Version,
-        )
-        # Requiring the lower bound also detects a truncated catalog instead of
-        # silently dropping an older version that remains in the support promise.
-        if automatic["minimum_version"] not in versions:
-            raise ValueError("Automatic source window has no published minimum version below the target")  # noqa: TRY003
-        cases.extend(
-            {"source_version": version, **profile} for version in versions for profile in automatic["profiles"]
-        )
+        cases.extend({"source_version": automatic["source_version"], **profile} for profile in automatic["profiles"])
     identities = set()
     for case in cases:
         version = case["source_version"]

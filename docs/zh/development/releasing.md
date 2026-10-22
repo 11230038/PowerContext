@@ -122,9 +122,11 @@ DSH README 中说明某项能力已包含在 `1.1.0` 的文字同样属于历史
 
 ### 数据库升级支持范围
 
-`release/upgrade-support.json` 声明目标版本、来源版本选择策略、后端和配置。`automatic_sources` 从 PyPI 自动选择
-大于等于 `minimum_version`、小于实际目标 wheel 的全部稳定版本，再与每个后端配置展开组合。新稳定版发布后，
-后续运行会自动将其加入来源，不必逐版本新增测试。证据会记录具体来源 wheel 的 SHA-256。
+`release/upgrade-support.json` 声明目标版本、来源版本选择策略、后端和配置。`automatic_sources` 使用
+`fixed-version` 策略，将 `source_version` 固定为 `1.3.0`，展开 SQLite、嵌入式 seekDB 和 OceanBase 三种后端。
+目标始终是本次 CI 构建的实际 wheel；后续发布 1.4.1、1.5.0 时，自动测试 1.3.0 到本次版本，不增加中间版本来源。
+来源 wheel 的公开 PyPI 地址和 SHA-256 与目标产物一起记录。固定起点不能证明其他版本实际生成的数据同样兼容；
+如需额外声明这些路径，使用显式 `cases` 补充验收。
 当前策略为 `fresh-install-only`，不支持已有 Server 数据库升级；配置中的空套件路径只生成候选组合，不算验收通过。
 启用支持升级模式时，每个后端配置都必须有真实套件。只有实现并通过已安装发行包的完整升级验收，才能声明支持
 对应组合。验收契约和证据要求见仓库中的 `tests/release_upgrades/README.md`。
@@ -144,9 +146,11 @@ uv run python scripts/run_upgrade_release_gate.py --release --release-notes /pat
 旧版发行包和目标 wheel。测试缺失、后端跳过、执行失败或证据缺失都会阻断检查。`fresh-install-only` 策略检查
 通过不表示存在升级路径。普通 PR 构建允许使用开发版本；`--release` 必须验证最终 tag 构建的 wheel，不能覆盖版本号。
 
-CI 中的 **Upgrade release gate** 还会使用真实 1.3.0 SQLite 和嵌入式 seekDB Server 数据库复现已知的升级拒绝行为。
-seekDB 直接在 runner 的临时目录中启动，不需要外部服务。启用支持升级模式后，固定的拒绝断言退出，自动展开的
-全部成功升级组合必须通过验收。仓库管理员需要在分支保护中将该检查设为必需。
+CI 中的 **Upgrade release gate** 使用真实 1.3.0 SQLite、嵌入式 seekDB 和 OceanBase Server 数据库复现升级拒绝行为。
+seekDB 直接在 runner 临时目录启动；PR 和发布工作流均启动隔离的 OceanBase CE 容器，等待 MySQL 租户就绪，
+归档诊断并在测试失败时也清理容器，不依赖外部数据库凭据。任一后端无法启动都使检查失败，不能跳过。
+启用支持升级模式后，固定的拒绝断言退出，1.3.0 到目标版本的三种后端完整升级验收必须通过。
+仓库管理员需要在分支保护中将该检查设为必需。
 发布工作流只有验收通过才会上传发行包、发布 PyPI 和上传 Release 附件，并归档验收证据。工作流在
 `release.published` 后运行，无法阻止之前手动发布 GitHub Release 页面，因此必须先运行上述命令再发布页面。
 `make publish` 要求提供 `UPGRADE_RELEASE_NOTES=/path/to/release-notes.md`，并在上传软件包之前执行相同门禁。

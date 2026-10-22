@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Reproduce unsupported 1.3.0 upgrades on an actual SQLite or embedded seekDB Server.
+"""Reproduce unsupported 1.3.0 upgrades on actual SQLite, embedded seekDB or OceanBase Servers.
 
 This is a negative regression, never positive upgrade acceptance. CI retires
 these assertions once the supported-path matrix becomes mandatory.
@@ -26,6 +26,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 from ci_release_smoke import _available_port, _stop_process, _wait_until_ready
@@ -108,7 +109,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--backend", choices=("sqlite", "seekdb"), default="sqlite")
+    parser.add_argument("--backend", choices=("sqlite", "seekdb", "oceanbase"), default="sqlite")
     parser.add_argument(
         "--respect-policy",
         action="store_true",
@@ -133,6 +134,14 @@ def main() -> None:
         )
         print("Historical rejection assertions retired; the supported upgrade matrix must pass instead.")
         return
+    if args.backend == "oceanbase":
+        url = urlsplit(os.environ.get("PC_UPGRADE_OCEANBASE_URL", ""))
+        require(
+            url.scheme == "mysql+aoceanbase"
+            and url.hostname in {"localhost", "127.0.0.1"}
+            and url.path == "/pc_upgrade_test",
+            "OceanBase regression requires the dedicated local pc_upgrade_test database",
+        )
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -164,17 +173,20 @@ def main() -> None:
         require(metadata["source"]["powercontext"] == "1.3.0", "Wrong source package")
         require(metadata["target"]["powercontext"] == wheel_version(wheel), "Wrong target package")
         database = directory / "database"
-        database_environment = (
-            {"POWERCONTEXT_SERVER_DATABASE_KIND": "seekdb", "POWERCONTEXT_SERVER_DATABASE_PATH": str(database)}
-            if args.backend == "seekdb"
-            else {"POWERCONTEXT_SERVER_DATABASE_URL": f"sqlite+aiosqlite:///{database}"}
-        )
+        if args.backend == "seekdb":
+            database_environment = {
+                "POWERCONTEXT_SERVER_DATABASE_KIND": "seekdb",
+                "POWERCONTEXT_SERVER_DATABASE_PATH": str(database),
+            }
+        elif args.backend == "oceanbase":
+            database_environment = {"POWERCONTEXT_SERVER_DATABASE_URL": environment["PC_UPGRADE_OCEANBASE_URL"]}
+        else:
+            database_environment = {"POWERCONTEXT_SERVER_DATABASE_URL": f"sqlite+aiosqlite:///{database}"}
         environment.update({
             "POWERCONTEXT_HOME": str(directory / "home"),
             **database_environment,
             "POWERCONTEXT_SERVER_ACCESS_MODE": "disabled",
         })
-        seed = source_database(interpreters["source"], directory, environment, output / "source.log")
         probe = [
             "-I",
             str(ROOT / "scripts/upgrade_database_probe.py"),
@@ -183,6 +195,17 @@ def main() -> None:
             "--database",
             str(database),
         ]
+        if args.backend == "oceanbase":
+            run(
+                [str(interpreters["source"]), *probe, "--output", str(output / "empty-schema.json")],
+                environment=environment,
+                cwd=directory,
+                log=output / "empty-probe.log",
+            )
+            empty_schema = json.loads((output / "empty-schema.json").read_text())
+            require(not empty_schema["tables"], "OceanBase test database must be empty; refusing to overwrite data")
+            require(empty_schema["tenant_mode"] == "mysql", "OceanBase MySQL tenant required")
+        seed = source_database(interpreters["source"], directory, environment, output / "source.log")
         for role, python in interpreters.items():
             run(
                 [str(python), *probe, "--output", str(output / f"{role}-schema.json")],
@@ -205,7 +228,7 @@ def main() -> None:
             environment,
             directory,
             output / "status.log",
-            ("unknown_baseline", "incompatible_schema") if args.backend == "seekdb" else ("unknown_baseline",),
+            ("unknown_baseline", "incompatible_schema") if args.backend != "sqlite" else ("unknown_baseline",),
         )
         rejected(
             [target, "server", "run", "--no-env-file", "--host", "127.0.0.1", "--port", str(_available_port())],

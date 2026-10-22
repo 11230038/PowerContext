@@ -231,69 +231,66 @@ def catalog_for(*versions):
     }
 
 
-def automatic_policy(policy, *, minimum="1.4.0"):
+def automatic_policy(policy):
     policy["automatic_sources"] = {
-        "strategy": "all-stable-since",
-        "minimum_version": minimum,
+        "strategy": "fixed-version",
+        "source_version": "1.3.0",
         "profiles": [
             {"backend": backend, "configuration": "full-server-no-vector", "suite": None}
-            for backend in ("sqlite", "seekdb")
+            for backend in ("sqlite", "seekdb", "oceanbase")
         ],
     }
 
 
-@pytest.mark.parametrize(
-    "target,expected",
-    [
-        ("1.4.1", ["1.4.0"]),
-        ("1.5.0", ["1.4.0", "1.4.1"]),
-        ("1.5.1", ["1.4.0", "1.4.1", "1.5.0"]),
-        ("1.5.1.dev2", ["1.4.0", "1.4.1", "1.5.0"]),
-    ],
-)
-def test_release_window_expands_for_each_target_without_new_test_scripts(release, monkeypatch, target, expected):
+@pytest.mark.parametrize("target", ["1.4.0", "1.4.1", "1.5.0", "1.5.1.dev2"])
+def test_fixed_source_tracks_each_target_on_all_three_backends(release, monkeypatch, target):
     _, _, policy = release
     automatic_policy(policy)
     monkeypatch.setattr(
-        matrix, "fetch_catalog", lambda: catalog_for("1.3.0", "1.4.0", "1.4.1", "1.5.0rc1", "1.5.0", "1.5.1", "1.6.0")
+        matrix, "fetch_catalog", lambda: catalog_for("1.3.0", "1.4.0", "1.4.1", "1.5.0rc1", "1.5.0", "1.6.0")
     )
     resolved = matrix.resolve_matrix(policy, target)
     assert [(case["source_version"], case["backend"]) for case in resolved["candidate_cases"]] == [
-        (version, backend) for version in expected for backend in ("sqlite", "seekdb")
+        ("1.3.0", backend) for backend in ("sqlite", "seekdb", "oceanbase")
     ]
-    assert resolved["required_cases"] == []  # Discovery does not establish upgrade support.
+    assert resolved["required_cases"] == []  # Candidate selection does not establish upgrade support.
     assert all(case["source_artifact"]["sha256"] == "a" * 64 for case in resolved["candidate_cases"])
 
 
-def test_newly_published_source_is_automatically_added_on_next_run(release, monkeypatch):
+def test_newly_published_versions_do_not_change_the_fixed_source(release, monkeypatch):
     _, _, policy = release
     automatic_policy(policy)
-    catalog = catalog_for("1.4.0")
+    catalog = catalog_for("1.3.0")
     monkeypatch.setattr(matrix, "fetch_catalog", lambda: catalog)
     first = matrix.resolve_matrix(policy, "1.5.0")
     catalog["releases"].update(catalog_for("1.4.1")["releases"])
     second = matrix.resolve_matrix(policy, "1.5.0")
-    assert len(first["candidate_cases"]) == 2
-    assert len(second["candidate_cases"]) == 4
-    assert first["catalog_sha256"] != second["catalog_sha256"]
+    assert first["candidate_cases"] == second["candidate_cases"]
+    assert len(second["candidate_cases"]) == 3
 
 
-@pytest.mark.parametrize(
-    "broken", ["empty", "missing-minimum", "yanked", "missing-wheel", "bad-hash", "foreign-origin"]
-)
+@pytest.mark.parametrize("target", ["1.2.0", "1.3.0", "1.3.0rc1"])
+def test_fixed_source_must_precede_target(release, target):
+    _, _, policy = release
+    automatic_policy(policy)
+    with pytest.raises(ValueError, match="must precede target"):
+        matrix.resolve_matrix(policy, target)
+
+
+@pytest.mark.parametrize("broken", ["empty", "missing-source", "yanked", "missing-wheel", "bad-hash", "foreign-origin"])
 def test_unavailable_source_cannot_silently_shrink_matrix(release, monkeypatch, broken):
     _, _, policy = release
     automatic_policy(policy)
-    catalog = catalog_for("1.4.0", "1.4.1")
-    wheel = catalog["releases"]["1.4.0"][0]
+    catalog = catalog_for("1.3.0", "1.4.1")
+    wheel = catalog["releases"]["1.3.0"][0]
     if broken == "empty":
         catalog["releases"] = {}
-    elif broken == "missing-minimum":
-        del catalog["releases"]["1.4.0"]
+    elif broken == "missing-source":
+        del catalog["releases"]["1.3.0"]
     elif broken == "yanked":
         wheel["yanked"] = True
     elif broken == "missing-wheel":
-        catalog["releases"]["1.4.1"] = []
+        catalog["releases"]["1.3.0"] = []
     elif broken == "bad-hash":
         wheel["digests"]["sha256"] = "invalid"
     else:
@@ -326,7 +323,7 @@ def test_switching_to_supported_upgrades_requires_all_backend_suites(release):
         gate.load_policy(root)
 
 
-def test_supported_window_executes_every_discovered_version_on_every_backend(release, monkeypatch):
+def test_supported_fixed_source_executes_every_backend(release, monkeypatch):
     root, wheel, policy = release
     supported_case(root, policy)
     suite = policy["cases"][0]["suite"]
@@ -336,7 +333,7 @@ def test_supported_window_executes_every_discovered_version_on_every_backend(rel
         profile["suite"] = suite
     (root / gate.MANIFEST).write_text(json.dumps(policy))
     gate.check_docs(root, policy, write=True)
-    monkeypatch.setattr(matrix, "fetch_catalog", lambda: catalog_for("1.4.0", "1.4.1"))
+    monkeypatch.setattr(matrix, "fetch_catalog", lambda: catalog_for("1.3.0", "1.4.1"))
     executed = []
 
     def execute(_root, _wheel, case, _output):
@@ -345,9 +342,9 @@ def test_supported_window_executes_every_discovered_version_on_every_backend(rel
 
     monkeypatch.setattr(gate, "run_case", execute)
     gate.gate(root, wheel, root / "evidence")
-    assert executed == [(version, backend) for version in ("1.4.0", "1.4.1") for backend in ("sqlite", "seekdb")]
+    assert executed == [(version, backend) for version in ("1.3.0",) for backend in ("sqlite", "seekdb", "oceanbase")]
     result = json.loads((root / "evidence/result.json").read_text())
-    assert len(result["cases"]) == len(result["resolved_matrix"]["required_cases"]) == 4
+    assert len(result["cases"]) == len(result["resolved_matrix"]["required_cases"]) == 3
 
 
 def test_publishing_jobs_depend_on_nonoptional_preupload_upgrade_gate():
@@ -362,3 +359,35 @@ def test_publishing_jobs_depend_on_nonoptional_preupload_upgrade_gate():
     assert index < upload
     for name in ("pypi-publish", "release-assets"):
         assert workflow["jobs"][name]["needs"] == "release-build"
+
+
+def test_repository_baseline_covers_all_three_databases():
+    policy = gate.load_policy(Path(__file__).parents[1])
+    selection = policy["automatic_sources"]
+    assert selection["strategy"] == "fixed-version"
+    assert selection["source_version"] == "1.3.0"
+    assert {profile["backend"] for profile in selection["profiles"]} == {"sqlite", "seekdb", "oceanbase"}
+
+
+@pytest.mark.parametrize("workflow_name,job_name", [("master", "upgrade-release-gate"), ("release", "release-build")])
+def test_upgrade_jobs_require_real_backends_and_always_clean_up(workflow_name, job_name):
+    root = Path(__file__).parents[1]
+    workflow = yaml.safe_load((root / f".github/workflows/{workflow_name}.yml").read_text())
+    job = workflow["jobs"][job_name]
+    steps = job["steps"]
+    setup_index = next(
+        i for i, step in enumerate(steps) if step.get("uses") == "./.github/actions/setup-upgrade-oceanbase"
+    )
+    gate_index = next(i for i, step in enumerate(steps) if "run_upgrade_release_gate.py" in step.get("run", ""))
+    regression_index = next(
+        i for i, step in enumerate(steps) if "ci_legacy_upgrade_rejection.py" in step.get("run", "")
+    )
+    assert setup_index < gate_index < regression_index
+    for index in (setup_index, gate_index, regression_index):
+        assert "if" not in steps[index] and not steps[index].get("continue-on-error")
+    assert "for backend in sqlite seekdb oceanbase; do" in steps[regression_index]["run"]
+    assert "--respect-policy" in steps[regression_index]["run"]
+    assert "/pc_upgrade_test?" in job["env"]["PC_UPGRADE_OCEANBASE_URL"]
+    assert "/pc_upgrade_fresh?" in job["env"]["PC_UPGRADE_OCEANBASE_FRESH_URL"]
+    cleanup = next(step for step in steps if "docker rm --force upgrade-oceanbase" in step.get("run", ""))
+    assert cleanup["if"] == "always()"

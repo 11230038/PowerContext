@@ -130,9 +130,11 @@ installation pins are synchronized.
 ### Database upgrade support
 
 `release/upgrade-support.json` declares the target version, source-version selection policy, backends, and
-configurations. `automatic_sources` selects every stable PyPI release from `minimum_version` up to, but excluding,
-the actual target wheel. Newly published stable versions become source cases on subsequent runs without adding
-per-version tests. The runner expands every source across all backend profiles and records source wheel SHA-256s.
+configurations. `automatic_sources` pins `source_version: "1.3.0"` with the `fixed-version` strategy and expands it
+across SQLite, embedded seekDB, and OceanBase. The target is the actual wheel built by CI. Future releases such as
+1.4.1 and 1.5.0 continue testing from 1.3.0 automatically; intermediate releases are not added as sources. Source
+wheel URLs and SHA-256s are resolved from public PyPI and recorded with the target artifact. This fixed baseline
+alone does not certify databases created/populated by other releases; use explicit cases for additional claims.
 The current policy is `fresh-install-only`; existing Server database upgrades are unsupported. Its null suite paths
 record candidates only, not accepted upgrades. Supported mode requires implemented suites for every backend profile.
 Do not advertise a supported upgrade until its installed-release acceptance suite is implemented and passes.
@@ -157,9 +159,10 @@ in separate environments. Missing tests, skipped backends, failures, and missing
 version; the `--release` check must run against the final tagged wheel without overriding its version.
 
 The **Upgrade release gate** CI job also reproduces the known unsupported upgrade rejections using real 1.3.0
-SQLite and embedded seekDB Server databases. It installs and starts seekDB inside the runner with a disposable
-directory; no external service is needed. Once supported mode is activated, these negative assertions retire and
-the full discovered upgrade matrix must pass. Repository administrators must make this job required in branch protection.
+SQLite, embedded seekDB, and OceanBase Server databases. seekDB runs in a temporary runner directory. Both PR
+and publication jobs start a disposable OceanBase CE container, wait for its MySQL tenant, archive diagnostics, and
+remove it even on failure. No external database credentials are needed. Once supported mode is activated, these negative assertions retire and
+the fixed-source three-backend upgrade matrix must pass. Repository administrators must make this job required in branch protection.
 The release workflow gates distribution upload, PyPI publication, and release assets on the acceptance result and
 archives its evidence. It runs after `release.published`, so it cannot prevent the earlier manual publication of
 the GitHub Release page: run the command above before that action. `make publish` requires

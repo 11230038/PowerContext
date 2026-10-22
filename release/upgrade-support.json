@@ -8,8 +8,8 @@
   },
   "cases": [],
   "automatic_sources": {
-    "strategy": "all-stable-since",
-    "minimum_version": "1.3.0",
+    "strategy": "fixed-version",
+    "source_version": "1.3.0",
     "profiles": [
       {
         "backend": "sqlite",
@@ -18,6 +18,11 @@
       },
       {
         "backend": "seekdb",
+        "configuration": "full-server-no-vector",
+        "suite": null
+      },
+      {
+        "backend": "oceanbase",
         "configuration": "full-server-no-vector",
         "suite": null
       }
