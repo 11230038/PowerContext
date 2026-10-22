@@ -32,6 +32,7 @@ from .bundle import MigrationBundle
 from .connections import MaintenanceConnections
 from .models import MigrationError
 from .mysql import MySQLMigrationRunner
+from .processing_configuration import ProcessingConfigurationMigrationRunner
 from .sqlite import SQLiteMigrationRunner
 from .topic_memory_recovery import TopicMemoryRecoveryMigrationRunner
 
@@ -49,7 +50,12 @@ def production_bundle() -> MigrationBundle:
     return MigrationBundle(Path(__file__).parent / "resources")
 
 
-MigrationRunner = SQLiteMigrationRunner | MySQLMigrationRunner | TopicMemoryRecoveryMigrationRunner
+MigrationRunner = (
+    SQLiteMigrationRunner
+    | MySQLMigrationRunner
+    | TopicMemoryRecoveryMigrationRunner
+    | ProcessingConfigurationMigrationRunner
+)
 
 
 def _migration_configuration(settings: ServerSettings) -> dict[str, Any]:
@@ -73,19 +79,21 @@ def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
     evidence_dir: Path | None = None,
     lock_coordination: Literal["single-host"] | None = None,
     acknowledge_previous_run: str | None = None,
-    bundle: Literal["server", "artifacts", "topic-memory-recovery"] = "server",
+    bundle: Literal["server", "artifacts", "topic-memory-recovery", "processing"] = "server",
+    migration_id: str = "rfc1515",
+    batch_size: int = 100,
 ) -> MigrationRunner:
     """Use the real configured identity without opening a business profile."""
     database = settings.database
     configuration = _migration_configuration(settings)
-    if bundle == "server":
+    if bundle in {"server", "processing"}:
         if settings.inference.embedding_model is not None or settings.code.enabled:
             raise MigrationError(
                 "unsupported_upgrade_configuration",
                 "The registered 1.3.0 Server path covers the no-vector, Code-disabled configuration.",
             )
         configuration["embedding_enabled"] = False
-    selected = server_bundle() if bundle == "server" else production_bundle()
+    selected = server_bundle() if bundle in {"server", "processing"} else production_bundle()
     if bundle == "topic-memory-recovery":
         if not isinstance(database, (SQLiteConfig, SeekDBConfig, OceanBaseConfig)):
             raise MigrationError("unsupported_backend", "The database has no Topic recovery migration adapter.")
@@ -111,13 +119,23 @@ def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
                 "coordination_required",
                 "OceanBase requires --lock-coordination single-host; run all migrators on one fixed host and evidence directory.",
             )
-        return MySQLMigrationRunner(
-            MaintenanceConnections(
-                database,
+        connections = MaintenanceConnections(
+            database,
+            evidence_directory=evidence_dir,
+            lock_coordination=lock_coordination,
+            acknowledge_previous_run=acknowledge_previous_run,
+        )
+        if bundle == "processing":
+            return ProcessingConfigurationMigrationRunner(
+                connections,
+                selected,
+                configuration=configuration,
                 evidence_directory=evidence_dir,
-                lock_coordination=lock_coordination,
-                acknowledge_previous_run=acknowledge_previous_run,
-            ),
+                migration_id=migration_id,
+                batch_size=batch_size,
+            )
+        return MySQLMigrationRunner(
+            connections,
             selected,
             evidence_directory=evidence_dir,
             configuration=configuration,
@@ -131,6 +149,16 @@ def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
         )
     # Match SQLite's URL normalization before the runner expands standalone Path inputs.
     target = Path(os.path.abspath(url.database))
+    if bundle == "processing":
+        directory = evidence_dir or target.with_name(target.name + ".pc-migration-state")
+        return ProcessingConfigurationMigrationRunner(
+            MaintenanceConnections(database),
+            selected,
+            configuration=configuration,
+            evidence_directory=directory,
+            migration_id=migration_id,
+            batch_size=batch_size,
+        )
     return SQLiteMigrationRunner(
         target,
         selected,

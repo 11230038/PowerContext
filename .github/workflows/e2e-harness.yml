@@ -175,7 +175,7 @@ jobs:
             tests/builtin/persistence/test_database_snapshots.py \
             --junitxml=.powercontext/recall-effort-ci/regressions.xml -q -rs
 
-      - name: Recover the full Server chain on real OceanBase without skips
+      - name: Recover and maintain the full Server chain on real OceanBase without skips
         env:
           POWERCONTEXT_TEST_MIGRATION_OCEANBASE_URL: >-
             mysql+aoceanbase://root%40test:powercontext-e2e@127.0.0.1:2881/pc_migration_probe_server_recovery?charset=utf8mb4
@@ -185,6 +185,7 @@ jobs:
             -Dpowercontext_test -e 'CREATE DATABASE pc_migration_probe_server_recovery'
           timeout --signal=TERM --kill-after=10s 600s uv run --locked pytest -q -rs \
             tests/builtin/persistence/test_mysql_migration_runner.py::test_mysql_full_server_interruption_preserves_history_and_original_maintenance \
+            tests/builtin/persistence/test_mysql_migration_runner.py::test_mysql_registered_processing_mode_switch_preserves_revision_and_history \
             -k oceanbase --junitxml=.powercontext/recall-effort-ci/full-server-recovery.xml
           uv run --locked python - <<'PY'
           from pathlib import Path
@@ -192,8 +193,8 @@ jobs:
 
           suites = ElementTree.parse(Path(".powercontext/recall-effort-ci/full-server-recovery.xml")).getroot()
           cases = list(suites.iter("testcase"))
-          if len(cases) != 4 or any(case.find(tag) is not None for case in cases for tag in ("skipped", "failure", "error")):
-              raise SystemExit("All four native full Server recovery scenarios must pass without skips.")
+          if len(cases) != 5 or any(case.find(tag) is not None for case in cases for tag in ("skipped", "failure", "error")):
+              raise SystemExit("All five native full Server recovery and maintenance scenarios must pass without skips.")
           PY
 
       - name: Collect the database log

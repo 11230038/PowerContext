@@ -36,9 +36,37 @@ operators/functions remain rejected; their errors identify the reflected table, 
 construct instead of misreporting balanced parentheses. Parsing an expression does not register a historical layout
 or bypass migration/data-integrity checks.
 
-The existing `server processing-migrate` remains available. Follow
-[Migrate Artifact processing state](artifact-processing-migration.md); it does not yet forward to the unified entry point.
+The existing `server processing-migrate` delegates managed databases to `db-migrate --bundle processing`.
+Databases without a registered revision retain their domain-only migration command.
+Follow [Migrate Artifact processing state](artifact-processing-migration.md).
 See [Deploy the Server](deploy-server.md) for service deployment.
+
+## Processing configuration maintenance
+
+`--bundle processing` registers an offline ownership-configuration operation on a complete, current Server database.
+It does not advance `pc_schema_revision` or adopt an older schema. Complete the full Server upgrade first.
+Use the deployment's new configuration and a new migration ID for each mode switch:
+
+```bash
+powercontext server db-migrate plan --bundle processing --env-file .env \
+  --migration-id global-to-dedicated-1 --backup auto
+powercontext server db-migrate apply --bundle processing --env-file .env \
+  --migration-id global-to-dedicated-1 --backup auto --plan-id PLAN_ID \
+  --maintenance-confirmed --yes
+powercontext server db-migrate verify --bundle processing --env-file .env \
+  --migration-id global-to-dedicated-1
+```
+
+The operation uses the same target lock, backup policies, backend connections, and stopped-writer declarations as
+schema migration. OceanBase still requires one fixed maintenance host, `--evidence-dir`, and
+`--lock-coordination single-host`; recovery requires the exact previous-run acknowledgment when reported.
+Local service switching is not part of this operation. Stop all writers and automatic restarts before applying.
+
+All mode-switch phases commit together. Failure before commit rolls back the ownership declaration and lease
+invalidation together. Reopen the plan after an interruption and resume with the original configuration, migration ID,
+backup policy, and evidence directory; the original maintenance window and recovery point are retained.
+Successful retry does not invalidate leases again. Full Server validators run before and after the change.
+An already matching configuration is a read-only no-op.
 
 ## Topic Memory recovery bundle
 

@@ -30,7 +30,31 @@ Candidate 旧表保留为 `pc_retained_dream_candidate_heads` 和 `pc_retained_d
 
 MySQL 兼容后端的结构反射支持 CHECK 表达式中的二元 `+`、`-`、`*`、`/`、`%`、一元正负号及嵌套括号，并保留算术、比较和布尔运算的优先级。未支持的 CHECK 运算符或函数仍被拒绝，错误会标明反射的表名、约束名及未支持的语法，避免将合法分组误报为括号不匹配。表达式解析成功不代表历史结构已登记，也不会绕过迁移或数据完整性检查。
 
-原有 `server processing-migrate` 保留，请按[迁移 Artifact 处理状态](artifact-processing-migration.md)使用。它尚未自动转发到统一入口。服务部署参考[部署 Server](deploy-server.md)。
+原有 `server processing-migrate` 在受管数据库上转发到 `db-migrate --bundle processing`；未登记 revision 的数据库仍保留领域独立迁移。具体步骤见[迁移 Artifact 处理状态](artifact-processing-migration.md)。服务部署参考[部署 Server](deploy-server.md)。
+
+## Processing 配置维护
+
+`--bundle processing` 在结构完整、已到当前 revision 的 Server 数据库上登记离线所有权配置操作。
+它不推进 `pc_schema_revision`，也不接管旧结构；必须先完成整库升级。
+使用切换后的部署配置，每次模式切换指定新的迁移 ID：
+
+```bash
+powercontext server db-migrate plan --bundle processing --env-file .env \
+  --migration-id global-to-dedicated-1 --backup auto
+powercontext server db-migrate apply --bundle processing --env-file .env \
+  --migration-id global-to-dedicated-1 --backup auto --plan-id PLAN_ID \
+  --maintenance-confirmed --yes
+powercontext server db-migrate verify --bundle processing --env-file .env \
+  --migration-id global-to-dedicated-1
+```
+
+该操作复用结构迁移的目标锁、备份策略、后端维护连接和停写声明。OceanBase 仍要求固定维护主机、
+`--evidence-dir` 和 `--lock-coordination single-host`；报告上次运行未结束时，恢复必须提供准确的运行确认 token。
+此操作不切换本地服务；执行前须自行停止全部写入者并暂停自动重启。
+
+模式切换的所有阶段在一个事务中提交。提交前失败时，所有权声明和租约撤销一起回滚。
+中断后重新查看计划，保留原配置、迁移 ID、备份策略和证据目录恢复；原维护窗口和恢复点继续沿用。
+成功后的重试不会再次撤销租约。操作前后都运行完整 Server 校验；配置已匹配时只读返回。
 
 ## Topic Memory 恢复 bundle
 

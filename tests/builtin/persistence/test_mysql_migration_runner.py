@@ -38,15 +38,16 @@ from sqlalchemy.pool import NullPool
 from powercontext.builtin.persistence.migrations import mysql as mysql_migrations
 from powercontext.builtin.persistence.migrations.backup import BackupCapabilities, BackupProvider
 from powercontext.builtin.persistence.migrations.connections import BackendIdentity, MaintenanceConnections
-from powercontext.builtin.persistence.migrations.deployment import production_bundle, server_bundle
+from powercontext.builtin.persistence.migrations.deployment import deployment_runner, production_bundle, server_bundle
 from powercontext.builtin.persistence.migrations.models import MigrationError, MigrationPlan
 from powercontext.builtin.persistence.migrations.mysql import MySQLMigrationRunner
 from powercontext.builtin.persistence.migrations.mysql_schema import mysql_inventory
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.oceanbase import profile as oceanbase_profile
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
-from powercontext.builtin.runtime.config import BuiltinConfig
+from powercontext.builtin.runtime.config import BuiltinConfig, RuntimeConfig
 from powercontext.builtin.runtime.processing_registry import canonical_processing_manifest
+from powercontext.server.settings import ServerSettings
 
 
 @dataclass(frozen=True)
@@ -387,6 +388,50 @@ def _full_server_runner(
             "embedding_enabled": False,
         },
     )
+
+
+def test_mysql_registered_processing_mode_switch_preserves_revision_and_history(backend: _BackendTarget) -> None:
+    _load_full_server_baseline(backend)
+    _apply(_full_server_runner(backend), policy="manual")
+    settings = ServerSettings(
+        database=backend.config,
+        runtime=RuntimeConfig(artifact_processing_supervisor_mode="dedicated"),
+    )
+    runner = deployment_runner(
+        settings,
+        bundle="processing",
+        evidence_dir=backend.evidence_directory,
+        lock_coordination="single-host" if isinstance(backend.config, OceanBaseConfig) else None,
+        migration_id="native-mode-switch",
+    )
+    plan = runner.plan(backup_policy="manual")
+    assert plan.state == "migration_required"
+    result = runner.apply(
+        plan_id=plan.plan_id,
+        accepted=True,
+        maintenance_confirmed=True,
+        backup_policy="manual",
+        backup_confirmed=True,
+        backup_ref="operator://mode-backup",
+    )
+    assert result.backup_state == "user_confirmed" and result.backup_ref == "operator://mode-backup"
+    assert runner.verify().state == "ready"
+    assert not runner.apply().changed
+
+    def inspect_history(connection, identity, guard):
+        return (
+            connection.exec_driver_sql("SELECT version_num FROM pc_schema_revision").scalar_one(),
+            json.loads(
+                connection.exec_driver_sql(
+                    "SELECT config_manifest FROM pc_artifact_processing_schema WHERE singleton=1"
+                ).scalar_one()
+            )["mode"],
+            connection.exec_driver_sql(
+                "SELECT content FROM pc_artifacts WHERE scope_id='historical' AND artifact_id='preserved'"
+            ).scalar_one(),
+        )
+
+    assert backend.connections().run(inspect_history) == ("s1401", "dedicated", b'{"history":"unchanged"}')
 
 
 def _load_full_server_baseline(backend: _BackendTarget) -> None:
