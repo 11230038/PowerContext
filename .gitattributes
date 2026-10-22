@@ -9,4 +9,5 @@ integrations/**/skills/powercontext-project-context/** text eol=lf
 # Migration evidence hashes exact resource bytes on every platform.
 src/powercontext/builtin/persistence/migrations/resources/** text eol=lf
 src/powercontext/builtin/persistence/migrations/mysql_resources/** text eol=lf
+src/powercontext/builtin/persistence/migrations/server_resources/** text eol=lf
 src/powercontext/builtin/persistence/migration_resources/** text eol=lf
