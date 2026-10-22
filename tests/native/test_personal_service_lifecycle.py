@@ -19,24 +19,34 @@ import os
 import plistlib
 import re
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
 import uuid
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
-from contextlib import suppress
+from contextlib import closing, suppress
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
 import pytest
+from alembic import command
+from sqlalchemy import create_engine
+from typer.testing import CliRunner
 
+from powercontext.builtin.persistence.migrations.deployment import deployment_runner, server_bundle
+from powercontext.cli.app import create_cli
+from powercontext.server import database_migration
+from powercontext.server.cli import app as server_app
+from powercontext.server.configuration import server_settings_context
 from powercontext.service.adapters.base import NativeServiceAdapter, service_python_executable
 from powercontext.service.adapters.launchd import LaunchdUserAdapter
 from powercontext.service.adapters.systemd import SystemdUserAdapter
 from powercontext.service.adapters.windows import WindowsTaskSchedulerAdapter
 from powercontext.service.controller import ServiceController
+from powercontext.service.environment import load_protected_environment_file
 from powercontext.service.model import (
     DEFINITION_VERSION,
     OWNERSHIP_MARKER,
@@ -133,6 +143,136 @@ def test_native_maintenance_preserves_registration_and_original_running_state(tm
         with suppress(Exception):
             controller.uninstall()
         _cleanup(adapter)
+
+
+def test_native_public_migration_upgrades_a_stopped_historical_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise the installed CLI, frozen SQLite baseline and real native manager together."""
+
+    adapter = _native_adapter(suffix="database-upgrade")
+    controller = ServiceController(adapter)
+    environment = _environment_file(tmp_path)
+    database = tmp_path / "data" / "powercontext.db"
+    database.parent.mkdir(parents=True, exist_ok=True)
+    with server_settings_context(env_file=environment) as settings:
+        runner = deployment_runner(settings)
+    bundle = server_bundle()
+    engine = create_engine(f"sqlite:///{database.as_posix()}")
+    try:
+        with engine.begin() as connection:
+            config = bundle.config(connection)
+            config.attributes["configuration"] = runner.configuration
+            command.upgrade(config, "s1300")
+            connection.exec_driver_sql("DROP TABLE pc_schema_revision")
+            connection.exec_driver_sql(
+                "INSERT INTO pc_scopes (scope_id,title,summary,scope_id_search,title_search,summary_search,version) "
+                "VALUES ('historical','retained title','retained summary','historical','retained title','retained summary',1)"
+            )
+    finally:
+        engine.dispose()
+    port = _service_port(tmp_path)
+    assert port is not None
+    # A stopped registration represents the historical deployment. Its database
+    # comes from frozen migration resources, not an installed 1.3.0 executable.
+    definition = ServiceDefinition(
+        ownership=OWNERSHIP_MARKER,
+        definition_version=DEFINITION_VERSION,
+        package_version="frozen-s1300-fixture",
+        python_executable=service_python_executable(),
+        endpoint=f"http://127.0.0.1:{port}",
+        data_dir=str(database.parent),
+        env_file=load_protected_environment_file(environment).identity,
+    )
+    try:
+        adapter.write(adapter.render(definition))
+        adapter.update_suspended()
+        controller.stop()
+        # Select only this uniquely named native registration; all manager,
+        # database, backup and readiness operations remain real.
+        monkeypatch.setattr(database_migration, "ServiceController", lambda: controller)
+        cli = create_cli([server_app])
+        reviewed = _native_migration_command(cli, environment, "plan")
+        assert reviewed["state"] == "migration_required"
+        assert reviewed["service"]["originally_running"] is False
+
+        result = _native_migration_command(
+            cli,
+            environment,
+            "apply",
+            "--backup",
+            "auto",
+            "--plan-id",
+            reviewed["plan_id"],
+            "--yes",
+            "--maintenance-confirmed",
+        )
+
+        assert result["server_ready"] is True
+        assert result["backup_state"] == "completed"
+        assert result["backup_ref"] and Path(result["backup_ref"]).is_file()
+        assert runner.verify().state == "ready"
+        assert adapter.manager_state() in {ManagerState.INACTIVE, ManagerState.FAILED}
+        with closing(sqlite3.connect(database)) as connection:
+            assert connection.execute("SELECT title,summary FROM pc_scopes WHERE scope_id='historical'").fetchone() == (
+                "retained title",
+                "retained summary",
+            )
+        assert controller.maintenance_path.exists()
+        assert controller.start().ok, _failure_diagnostics(adapter, tmp_path)
+        assert not controller.maintenance_path.exists()
+    finally:
+        _capture_native_failure(adapter, tmp_path)
+        with suppress(Exception):
+            controller.uninstall()
+        _cleanup(adapter)
+
+
+def test_native_public_migration_of_ready_storage_restores_a_running_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reviewed ready-database retry must still finish native service maintenance."""
+
+    adapter = _native_adapter(suffix="ready-database")
+    controller = ServiceController(adapter)
+    environment = _environment_file(tmp_path)
+    try:
+        assert controller.install(env_file=environment).ok
+        monkeypatch.setattr(database_migration, "ServiceController", lambda: controller)
+        cli = create_cli([server_app])
+        reviewed = _native_migration_command(cli, environment, "plan")
+        assert reviewed["state"] == "ready"
+        assert reviewed["service"]["originally_running"] is True
+
+        result = _native_migration_command(
+            cli,
+            environment,
+            "apply",
+            "--backup",
+            "auto",
+            "--plan-id",
+            reviewed["plan_id"],
+            "--yes",
+            "--maintenance-confirmed",
+        )
+
+        assert result["server_ready"] is True and result["changed"] is False
+        assert controller.status().ok, _failure_diagnostics(adapter, tmp_path)
+        assert adapter.manager_state() is ManagerState.ACTIVE
+        assert not controller.maintenance_path.exists()
+    finally:
+        _capture_native_failure(adapter, tmp_path)
+        with suppress(Exception):
+            controller.uninstall()
+        _cleanup(adapter)
+
+
+def _native_migration_command(cli, environment: Path, action: str, *options: str) -> dict[str, Any]:
+    result = CliRunner().invoke(
+        cli, ["server", "db-migrate", action, "--env-file", str(environment), "--manage-service", *options]
+    )
+    assert result.exit_code == 0, f"{result.output}\n{result.exception!r}"
+    return json.loads(result.output)
 
 
 def test_native_stopped_service_registration_updates_without_starting(tmp_path: Path) -> None:

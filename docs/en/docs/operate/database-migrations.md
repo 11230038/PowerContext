@@ -314,8 +314,11 @@ finish the service transition when the database is already ready, without rerunn
 `--manage-service` covers only the accepted local service. It cannot replace `--maintenance-confirmed` for other writers
 and shared nodes. The partial Artifact and Topic recovery bundles reject service management when changes are needed;
 an already-ready no-op does not touch the service. They cannot establish complete Server readiness or switch a business
-service. Controller tests use a simulated native manager with a real
-SQLite migration; they do not establish native service-manager acceptance on every supported operating system.
+service. Controller tests use a simulated native manager with a real SQLite migration. The native lifecycle suite also
+exercises the installed CLI with isolated service registrations: it upgrades a stopped frozen SQLite baseline, checks
+that it stays stopped until an explicit start, and completes service maintenance for an already-ready running database.
+Each operating system requires its own native run. A frozen baseline fixture is distinct from upgrading a database
+populated by an installed historical release.
 
 For manual deployment, stop the old service first. After a supported complete migration succeeds, ensure the launch
 definition points to the new environment before starting it. For foreground deployment, exit the old process and use the
