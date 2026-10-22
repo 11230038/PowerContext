@@ -105,7 +105,8 @@ categories and a nonzero exit status.
 
 Configuration binding includes the target's canonical Processing ownership mode, capabilities and declared automatic
 bindings. Changing those declarations requires a new plan; an accepted plan cannot be applied under a different
-Processing declaration. This binding does not validate or migrate the historical Processing state.
+Processing declaration. Plan binding alone does not validate or migrate historical Processing state; the full Server
+bundle separately validates the stored declaration and pending intents through its registered domain steps.
 
 Within the supported acceptance scope, interactive users can invoke `apply` directly. PC-managed backup is the default.
 The command displays the plan, backup method, maintenance impact, and stopped-write responsibility, then asks for one
