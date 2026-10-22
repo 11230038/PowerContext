@@ -18,13 +18,15 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy.engine import make_url
 
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
+from powercontext.builtin.runtime.config import BuiltinConfig
+from powercontext.builtin.runtime.processing_registry import canonical_processing_manifest
 
 from .bundle import MigrationBundle
 from .connections import MaintenanceConnections
@@ -43,6 +45,21 @@ def production_bundle() -> MigrationBundle:
 
 
 MigrationRunner = SQLiteMigrationRunner | MySQLMigrationRunner | TopicMemoryRecoveryMigrationRunner
+
+
+def _migration_configuration(settings: ServerSettings) -> dict[str, Any]:
+    config = BuiltinConfig(
+        code=settings.code,
+        runtime=settings.runtime,
+        database=settings.database,
+        handoff_report=settings.handoff_report,
+        inference=settings.inference,
+        external_skills=settings.external_skills,
+    )
+    return {
+        "database": settings.database.model_dump(mode="json", exclude={"url", "echo"}),
+        "processing_manifest": canonical_processing_manifest(config),
+    }
 
 
 def deployment_runner(
@@ -89,7 +106,7 @@ def deployment_runner(
             ),
             production_bundle(),
             evidence_directory=evidence_dir,
-            configuration=database.model_dump(mode="json", exclude={"url", "echo"}),
+            configuration=_migration_configuration(settings),
         )
     if not isinstance(database, SQLiteConfig):
         raise MigrationError("unsupported_backend", "The database has no registered migration adapter.")
@@ -103,6 +120,6 @@ def deployment_runner(
     return SQLiteMigrationRunner(
         target,
         production_bundle(),
-        configuration=database.model_dump(exclude={"url", "echo"}),
+        configuration=_migration_configuration(settings),
         evidence_directory=evidence_dir,
     )

@@ -161,6 +161,41 @@ def test_read_only_commands_never_create_missing_target(tmp_path, monkeypatch):
         assert not database.parent.exists()
 
 
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        """POWERCONTEXT_SERVER_RUNTIME_ARTIFACT_PROCESSING_FAMILIES='["memory"]'""",
+        "POWERCONTEXT_SERVER_RUNTIME_ARTIFACT_PROCESSING_SUPERVISOR_MODE=dedicated",
+    ],
+)
+def test_processing_ownership_changes_invalidate_an_accepted_migration_plan(tmp_path, monkeypatch, declaration):
+    database, command = _configure(tmp_path, monkeypatch)
+    original = _invoke(command, "plan", tmp_path)
+    assert original.exit_code == 0, original.output
+    reviewed = json.loads(original.output)
+    environment = tmp_path / "deployment.env"
+    environment.write_text(environment.read_text(encoding="utf-8") + declaration + "\n", encoding="utf-8")
+    changed = _invoke(command, "plan", tmp_path)
+    assert changed.exit_code == 0, changed.output
+    current = json.loads(changed.output)
+    assert current["configuration_digest"] != reviewed["configuration_digest"]
+    assert current["plan_id"] != reviewed["plan_id"]
+    rejected = _invoke(
+        command,
+        "apply",
+        tmp_path,
+        "--backup",
+        "auto",
+        "--plan-id",
+        reviewed["plan_id"],
+        "--yes",
+        "--maintenance-confirmed",
+    )
+    assert rejected.exit_code == 1, rejected.output
+    assert json.loads(rejected.output)["error"] == "plan_changed"
+    assert not database.parent.exists()
+
+
 def test_sqlite_url_authority_is_rejected_without_creating_a_local_target(tmp_path, monkeypatch):
     _database, command = _configure(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)

@@ -107,6 +107,10 @@ Plans bind target identity, source/target revisions, actual schema, frozen resou
 service scope, and migration coordination. Diagnostics do not print configuration or credential values. Expected failures return stable JSON
 categories and a nonzero exit status.
 
+Configuration binding includes the target's canonical Processing ownership mode, capabilities and declared automatic
+bindings. Changing those declarations requires a new plan; an accepted plan cannot be applied under a different
+Processing declaration. This binding does not validate or migrate the historical Processing state.
+
 Within the supported acceptance scope, interactive users can invoke `apply` directly. PC-managed backup is the default.
 The command displays the plan, backup method, maintenance impact, and stopped-write responsibility, then asks for one
 confirmation before execution. It does not ask about each SQL statement:
