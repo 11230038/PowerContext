@@ -56,7 +56,7 @@ LockCoordination = Annotated[
 ]
 ManageService = Annotated[
     bool,
-    typer.Option(help="Request local service maintenance; unavailable for the current partial acceptance bundle."),
+    typer.Option(help="Coordinate the owned local service through a full Server migration and readiness check."),
 ]
 SharedDatabase = Annotated[
     bool,
