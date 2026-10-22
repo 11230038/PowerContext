@@ -116,7 +116,8 @@ against a database created and populated by installed PowerContext 1.3.0. It use
 database per backend, sequential process ownership, and public HTTP writes/readback before testing target CLI behavior.
 The installed drivers inventory the actual tables and record each environment's engine, driver, and binding versions.
 OceanBase uses the container's dedicated `pc_upgrade_test` database and records its MySQL tenant mode and direct
-connection. The negative runner only accepts the local test database and verifies it is empty before starting the
+connection. Its public migration status command supplies `--evidence-dir` and `--lock-coordination single-host`,
+as required by OceanBase maintenance. The negative runner only accepts the local test database and verifies it is empty before starting the
 old Server; it refuses to overwrite existing data. No external service or credentials are needed. A missing embedded
 binding or unavailable OceanBase instance fails the job; neither backend is skipped.
 

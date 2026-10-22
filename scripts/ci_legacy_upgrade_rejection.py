@@ -226,8 +226,11 @@ def main() -> None:
         env_file = directory / "deployment.env"
         env_file.write_text("".join(f"{key}={value}\n" for key, value in database_configuration.items()))
         target = str(console(interpreters["target"]))
+        status_command = [target, "server", "db-migrate", "status", "--env-file", str(env_file)]
+        if args.backend == "oceanbase":
+            status_command.extend(["--evidence-dir", str(output / "maintenance"), "--lock-coordination", "single-host"])
         rejected(
-            [target, "server", "db-migrate", "status", "--env-file", str(env_file)],
+            status_command,
             environment,
             directory,
             output / "status.log",
