@@ -39,6 +39,7 @@ from .backup import BackupContext, BackupProvider, BackupRef, SQLiteBackupProvid
 from .bundle import ALEMBIC_CONTEXT_LOCK, MigrationBundle, sqlite_inventory
 from .locking import local_migration_lock
 from .models import MigrationError, MigrationPlan, MigrationResult, digest
+from .server_baselines import recognize_sqlite_server_baseline
 
 _VERSION_DDL = (
     "CREATE TABLE pc_schema_revision (version_num VARCHAR(32) NOT NULL, "
@@ -285,6 +286,13 @@ class SQLiteMigrationRunner:
         elif inventory:
             revision = self.bundle.baselines.get(fingerprint)
             if revision is None:
+                source = recognize_sqlite_server_baseline(connection)
+                if source is not None:
+                    raise MigrationError(
+                        "server_migration_unavailable",
+                        f"Complete Server {source.release} schema recognized; "
+                        "the installed bundle has no registered full Server upgrade path. No changes were made.",
+                    )
                 raise MigrationError("unknown_baseline", "Schema is not registered; no changes were made.")
             self._verify_retained(inventory, revision)
             self._verify_integrity(connection)
