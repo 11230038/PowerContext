@@ -147,6 +147,48 @@ def migrated(migration_backend: MigrationBackend) -> tuple[DatabaseConfig, bytes
     return config, asyncio.run(_seed_and_migrate(config))
 
 
+@pytest.mark.parametrize("failure", ["memory", "cancel"])
+def test_snapshot_read_failure_preserves_authority_and_allows_restart(
+    migration_backend: MigrationBackend, failure: str
+) -> None:
+    config = migration_backend.config
+
+    async def scenario():
+        await _seed(config)
+        async with migration_profile(config) as profile:
+            async with profile.database.transaction() as connection:
+                original = await _imported_snapshot(connection)
+            interrupted = False
+
+            def interrupt_snapshot(_connection, _cursor, statement, _parameters, _context, _executemany):
+                nonlocal interrupted
+                if interrupted or not statement.startswith("SELECT * FROM pc_sources"):
+                    return
+                interrupted = True
+                if failure == "memory":
+                    raise MemoryError
+                task = asyncio.current_task()
+                assert task is not None
+                task.cancel()
+
+            event.listen(profile.database.engine.sync_engine, "before_cursor_execute", interrupt_snapshot)
+            try:
+                with pytest.raises(MemoryError if failure == "memory" else asyncio.CancelledError):
+                    await apply_atomic_memory_migration(
+                        profile.database, migration_index(config), maintenance_confirmed=True
+                    )
+            finally:
+                event.remove(profile.database.engine.sync_engine, "before_cursor_execute", interrupt_snapshot)
+            assert interrupted
+            async with profile.database.transaction() as connection:
+                assert await _imported_snapshot(connection) == original
+                assert ARCHIVE_TABLE.name not in await table_names(connection)
+        retried = await _migrate(config)
+        assert retried.ready, retried.errors
+
+    asyncio.run(scenario())
+
+
 async def _public_collection_rows(connection) -> list[Any]:
     statement = select(ARTIFACTS_TABLE.c.revision).where(
         ARTIFACTS_TABLE.c.scope_id == SCOPE, ARTIFACTS_TABLE.c.family == "memory"
