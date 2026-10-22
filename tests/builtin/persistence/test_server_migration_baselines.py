@@ -130,23 +130,38 @@ def test_weakened_constraint_with_identical_columns_is_not_recognized(released_d
     assert released_database.read_bytes() == before
 
 
-def test_complete_seekdb_release_inventory_is_recognized_only_for_its_captured_backend() -> None:
-    resource = json.loads(RESOURCE.with_name("seekdb.json").read_text(encoding="utf-8"))
+@pytest.mark.parametrize("backend", ["seekdb", "oceanbase"])
+def test_complete_mysql_release_inventory_is_recognized_only_for_its_captured_backend(backend) -> None:
+    resource = json.loads(RESOURCE.with_name(f"{backend}.json").read_text(encoding="utf-8"))
     inventory = resource["inventory"]
     before = copy.deepcopy(inventory)
-    baseline = recognize_mysql_server_baseline(inventory, backend="seekdb")
+    baseline = recognize_mysql_server_baseline(inventory, backend=backend)
     assert baseline is not None
     assert baseline.release == "1.3.0"
     assert baseline.schema_fingerprint == resource["schema_fingerprint"]
-    assert recognize_mysql_server_baseline(inventory, backend="oceanbase") is None
+    other_backend = "oceanbase" if backend == "seekdb" else "seekdb"
+    assert recognize_mysql_server_baseline(inventory, backend=other_backend) is None
     assert inventory == before
 
 
+@pytest.mark.parametrize("backend", ["seekdb", "oceanbase"])
 @pytest.mark.parametrize(
-    "change", ["table", "control", "column", "constraint", "index", "parser", "properties", "view", "trigger", "subset"]
+    "change",
+    [
+        "table",
+        "control",
+        "column",
+        "constraint",
+        "index",
+        "parser",
+        "properties",
+        "view",
+        "trigger",
+        "subset",
+    ],
 )
-def test_incomplete_or_altered_seekdb_inventories_are_not_released_baselines(change: str) -> None:
-    inventory = json.loads(RESOURCE.with_name("seekdb.json").read_text(encoding="utf-8"))["inventory"]
+def test_incomplete_or_altered_mysql_inventories_are_not_released_baselines(change: str, backend) -> None:
+    inventory = json.loads(RESOURCE.with_name(f"{backend}.json").read_text(encoding="utf-8"))["inventory"]
     table = inventory["tables"]["pc_artifact_heads"]
     if change == "table":
         del inventory["tables"]["pc_sources"]
@@ -171,5 +186,11 @@ def test_incomplete_or_altered_seekdb_inventories_are_not_released_baselines(cha
             name: shape for name, shape in inventory["tables"].items() if name.startswith("pc_artifact")
         }
     before = copy.deepcopy(inventory)
-    assert recognize_mysql_server_baseline(inventory, backend="seekdb") is None
+    assert recognize_mysql_server_baseline(inventory, backend=backend) is None
     assert inventory == before
+
+
+def test_changed_audit_auto_increment_mode_is_not_a_released_oceanbase_baseline() -> None:
+    inventory = json.loads(RESOURCE.with_name("oceanbase.json").read_text(encoding="utf-8"))["inventory"]
+    inventory["tables"]["pc_access_audit"]["auto_increment_mode"] = "noorder"
+    assert recognize_mysql_server_baseline(inventory, backend="oceanbase") is None

@@ -419,6 +419,28 @@ def test_named_unique_constraints_and_native_keys_have_the_same_fingerprint(sche
         schema.identify(native)
 
 
+def test_native_oceanbase_auto_increment_mode_is_preserved_while_the_counter_can_advance() -> None:
+    path = Path(__file__).parents[2] / "fixtures/database_migrations/schemas/oceanbase_v1_3_0_audit.json"
+    statement = json.loads(path.read_text())["tables"]["pc_access_audit"]
+    original = _inventory(_ReflectedDatabase({"pc_access_audit": statement}))
+    assert original["tables"]["pc_access_audit"]["auto_increment_mode"] == "order"
+    advanced = _inventory(
+        _ReflectedDatabase({"pc_access_audit": statement.replace("AUTO_INCREMENT = 37", "AUTO_INCREMENT = 900")})
+    )
+    assert advanced == original
+    unordered = _inventory(_ReflectedDatabase({"pc_access_audit": statement.replace("'ORDER'", "'NOORDER'")}))
+    assert unordered["tables"]["pc_access_audit"]["auto_increment_mode"] == "noorder"
+    assert digest(unordered) != digest(original)
+
+
+@pytest.mark.parametrize("mode", ["'FUTURE'", "'ORDER' AUTO_INCREMENT_MODE='NOORDER'"])
+def test_unknown_or_duplicate_auto_increment_mode_is_not_silently_discarded(mode: str) -> None:
+    path = Path(__file__).parents[2] / "fixtures/database_migrations/schemas/oceanbase_v1_3_0_audit.json"
+    statement = json.loads(path.read_text())["tables"]["pc_access_audit"].replace("'ORDER'", mode)
+    with pytest.raises(MigrationError, match="incompatible_schema"):
+        _inventory(_ReflectedDatabase({"pc_access_audit": statement}))
+
+
 @pytest.mark.parametrize("applied", range(7))
 def test_baseline_recovery_accepts_only_the_completed_statement_prefix(schema: MySQLSchema, applied: int) -> None:
     inventory = _inventory(_ReflectedDatabase(_show_tables(baseline_prefix=applied)))

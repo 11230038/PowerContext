@@ -19,8 +19,11 @@ The default `--bundle artifacts` ships frozen resources for Phase A acceptance o
 `pc_artifact_candidate_versions`, and `pc_artifact_tags`. Only empty targets and registered historical layouts are accepted.
 A complete Server database containing unmanaged objects is rejected.
 
-The complete SQLite schema captured from the installed public 1.3.0 wheel is recognized separately, including its FTS
-shadow tables, indexes, and triggers. Maintenance reports `server_migration_unavailable` for this source because a complete
+Complete schemas captured from the installed public 1.3.0 wheel on SQLite, seekDB and OceanBase CE 4.3.5.6 are recognized
+separately. SQLite recognition includes its FTS shadow tables, indexes and triggers; the two MySQL-compatible captures
+each include 56 tables and four FULLTEXT indexes with parser settings. OceanBase also preserves its native
+`AUTO_INCREMENT_MODE`, independently of the changing counter. Each inventory is registered only for its captured backend.
+Maintenance reports `server_migration_unavailable` for these sources because a complete
 Server upgrade path is not registered. Recognition does not stamp a revision, validate domain data, or authorize writes.
 Other complete schemas remain unknown unless their exact shape is registered.
 

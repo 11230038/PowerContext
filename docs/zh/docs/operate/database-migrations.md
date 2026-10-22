@@ -12,7 +12,7 @@ description: 了解数据库迁移命令、备份策略、服务启停及当前�
 
 `powercontext server db-migrate status/plan/apply/verify` 使用部署配置中的持久 SQLite、嵌入式 seekdb 或 OceanBase MySQL 模式数据库，不接受任意测试 bundle 路径。维护命令以显式环境文件为准，应使用部署的环境文件，不依赖临时 shell 环境覆盖。随 wheel 发布的冻结资源用于阶段 A 的 Artifact 四表迁移：`pc_artifacts`、`pc_artifact_heads`、`pc_artifact_candidate_versions`、`pc_artifact_tags`。仅接受空目标和已登记的历史结构；完整 Server 数据库含有尚未纳管的对象时拒绝执行。
 
-维护入口可以单独识别由公开 1.3.0 wheel 实际初始化的完整 SQLite 结构，包括 FTS 影子表、索引和触发器。由于完整 Server 升级路径尚未注册，该来源返回 `server_migration_unavailable`。识别不会登记 revision、验证领域数据或允许写入；其他完整结构仍需登记精确形状。
+维护入口可以分别识别由公开 1.3.0 wheel 在 SQLite、seekDB 和 OceanBase CE 4.3.5.6 上实际初始化的完整结构。SQLite 包含 FTS 影子表、索引和触发器；两个 MySQL 兼容后端各有 56 张表、4 个保留解析器配置的全文索引。OceanBase 的原生 `AUTO_INCREMENT_MODE` 也参与结构校验，与不断变化的计数器分开处理。各清单仅适用于实际采集的后端。由于完整 Server 升级路径尚未注册，这些来源返回 `server_migration_unavailable`。识别不会登记 revision、验证领域数据或允许写入；其他完整结构仍需登记精确形状。
 
 输出中的 `ready` 仅表示当前迁移 bundle 已通过结构和数据验证；`readiness_scope=registered_bundle`、`server_ready=false` 明确区分它与完整 Server、索引、旧任务及集群可用。不要以此替代生产升级或完整业务库初始化。普通业务启动的全面版本门禁和完整历史基线尚未纳管。已通过 OceanBase AI 4.6.3 的 ODP 入口完成隔离四表验收，覆盖固定维护主机互斥、DDL 提交后中断的显式确认恢复、数据保留与重复执行。这不代表完整 Server 升级、崩溃后远端 DDL 自动判定或完整 Fork 恢复已通过验收。
 

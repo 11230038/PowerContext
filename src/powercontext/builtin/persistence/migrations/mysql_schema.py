@@ -373,6 +373,25 @@ def _validate_physical_value(option: str, value: str) -> None:
         raise MigrationError("incompatible_schema", "An unsupported table engine or index organization was discovered.")
 
 
+def _table_options(tokens: list[str]) -> tuple[dict[str, str | None], str | None]:
+    positions = [position for position, option in enumerate(tokens) if option == "auto_increment_mode"]
+    if not positions:
+        return _physical(tokens), None
+    if len(positions) != 1:
+        raise MigrationError("incompatible_schema", "Duplicate AUTO_INCREMENT_MODE declarations were discovered.")
+    start = positions[0]
+    position = start + 1
+    if tokens[position : position + 1] == ["="]:
+        position += 1
+    if position >= len(tokens):
+        raise MigrationError("incompatible_schema", "AUTO_INCREMENT_MODE has no value.")
+    value = tokens[position]
+    mode = (_literal(value) if value.startswith("'") else value).lower()
+    if mode not in {"order", "noorder"}:
+        raise MigrationError("incompatible_schema", "An unsupported AUTO_INCREMENT_MODE was discovered.")
+    return _physical(tokens[:start] + tokens[position + 1 :]), mode
+
+
 def _column(tokens: list[str], defaults: dict[str, str | None]) -> dict[str, Any]:
     if len(tokens) < 2:
         raise MigrationError("incompatible_schema", "A column definition is incomplete.")
@@ -526,8 +545,10 @@ def _parse_table(statement: str, *, database: str | None = None) -> tuple[str, d
     if schema is not None:
         raise MigrationError("incompatible_schema", "A table belongs to an unexpected database.")
     body, position = _group(tokens, position)
-    defaults = _physical(tokens[position:])
+    defaults, auto_increment_mode = _table_options(tokens[position:])
     table: dict[str, Any] = {"columns": {}, "primary_key": [], "foreign_keys": [], "checks": {}, "indexes": {}}
+    if auto_increment_mode is not None:
+        table["auto_increment_mode"] = auto_increment_mode
     for part in _parts(body):
         _table_clause(table, part, defaults, database)
     table["foreign_keys"].sort(key=digest)
