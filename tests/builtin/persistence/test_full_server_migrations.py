@@ -73,7 +73,8 @@ def dump(path):
 def test_complete_upgrade_preserves_history_backup_and_repeated_apply(source):
     before = dump(source.database)
     plan = source.plan()
-    assert plan.source_revision == "s1300" and plan.target_revision == "s1400"
+    assert plan.source_revision == "s1300" and plan.target_revision == "s1401"
+    assert plan.revisions == ("s1400", "s1401")
     assert dump(source.database) == before
     result = apply(source)
     assert result.readiness_scope == "server" and result.backup_state == "completed"
@@ -86,6 +87,32 @@ def test_complete_upgrade_preserves_history_backup_and_repeated_apply(source):
     assert not apply(source).changed
     assert source.verify().readiness_scope == "server"
     assert dump(source.database) == after
+
+
+def test_archived_memory_history_survives_repeat_apply_and_runtime_admission(source):
+    apply(source)
+    metadata = json.dumps({
+        "format": "powercontext.memory-artifact-archive.v1",
+        "lineage": {"sources": [], "artifacts": []},
+        "incoming_references": [],
+        "collection": {"head": None, "owners": [], "tags": [], "bindings": [], "idempotency": []},
+    }).encode()
+    archived = ("scope", "memory", "legacy", 2, b'{"history":"unchanged"}', b"[]", metadata)
+    with closing(sqlite3.connect(source.database)) as connection, connection:
+        connection.execute("INSERT INTO pc_memory_artifact_archive VALUES (?,?,?,?,?,?,?)", archived)
+    assert not apply(source).changed
+    assert source.verify().readiness_scope == "server"
+
+    async def read_archive():
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{source.database}")
+        async with (
+            SQLiteProfile.open(config, tables=()) as profile,
+            profile.database.transaction() as connection,
+        ):
+            rows = await connection.exec_driver_sql("SELECT * FROM pc_memory_artifact_archive")
+            assert [tuple(row) for row in rows] == [archived]
+
+    asyncio.run(read_archive())
 
 
 def test_migration_revokes_old_fence_and_allows_expiring_worker_lease(source):

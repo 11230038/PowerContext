@@ -3,8 +3,8 @@
   "target_version": "1.4.0",
   "mode": "upgrade-required",
   "schema_review": {
-    "persistence_sha256": "5ab61a61db3f66d2b9046e986f9b8af1149552f7abaf12c1c4f85e1c760af2b6",
-    "rationale": "Register the complete 1.3.0 no-vector, Code-disabled Server chain on all three backends, preserving history, existing Source references and pending intents with projection rebuilds and read-only startup admission. Review master 464cd152: the Atomic Memory snapshot budget changes admission and buffering, preserving the snapshot digest and frozen schema/revision resources. SQLite legacy tag maintenance creates the final table name directly to preserve canonical DDL, tag rows and transactional rollback; frozen schema/revision resources remain unchanged. Publication requires installed-release upgrade, repeat-apply, old-startup rejection, background Worker execution and fresh-schema equivalence. Optional vector/Code and older Memory layouts need separately registered profiles."
+    "persistence_sha256": "d67654098c4404726f70c7c262f0ecca969cf4691aa922ab59d099022de538e7",
+    "rationale": "Register the complete 1.3.0 no-vector, Code-disabled Server chain on all three backends, preserving history, existing Source references and pending intents with projection rebuilds and read-only startup admission. Review master 464cd152: the Atomic Memory snapshot budget changes admission and buffering, preserving the snapshot digest and frozen schema/revision resources. SQLite legacy tag maintenance creates the final table name directly to preserve canonical DDL, tag rows and transactional rollback. New revision s1401 registers the frozen offline Memory archive on all three backends through the shared chain; s1300/s1400 resources and checksums remain unchanged, and archived history is preserved. Publication requires installed-release upgrade, repeat-apply, old-startup rejection, background Worker execution and fresh-schema equivalence. Optional vector/Code and older Memory layouts need separately registered profiles."
   },
   "cases": [],
   "automatic_sources": {

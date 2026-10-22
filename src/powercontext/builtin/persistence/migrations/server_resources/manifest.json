@@ -12,6 +12,10 @@
       "dream/manifest.json",
       "mysql_operations.py",
       "schemas/mysql-s1400.json"
+    ],
+    "s1401": [
+      "schemas/sqlite-s1401.json",
+      "schemas/mysql-s1401.json"
     ]
   },
   "sqlite_baselines": {
@@ -23,6 +27,9 @@
     ],
     "s1400": [
       "9064ecb0c6233884e64312a1a9a48a6c52b7c379724fa83f9b77b90ed1ee0381"
+    ],
+    "s1401": [
+      "8752beed9acfb66e03d4360f8652661107b58067ae7a9c461f1035345edf4f27"
     ]
   },
   "affected_objects": [
@@ -114,7 +121,8 @@
     "pc_topic_memory_work_blocks",
     "pc_topic_memory_work_budgets",
     "pc_retained_dream_candidate_heads",
-    "pc_retained_dream_candidate_versions"
+    "pc_retained_dream_candidate_versions",
+    "pc_memory_artifact_archive"
   ],
   "readiness_scope": "server",
   "retained_objects": [
@@ -146,6 +154,9 @@
   "domain_readiness": {
     "s1400": [
       "server_upgrade"
+    ],
+    "s1401": [
+      "server_upgrade"
     ]
   },
   "retained_fingerprints": {
@@ -158,7 +169,8 @@
   },
   "mysql_state_layouts": [
     "schemas/mysql-s1300.json",
-    "schemas/mysql-s1400.json"
+    "schemas/mysql-s1400.json",
+    "schemas/mysql-s1401.json"
   ],
   "mysql_history": "mysql"
 }
