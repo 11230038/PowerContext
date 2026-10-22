@@ -312,6 +312,8 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
                 "--confcutdir",
                 str(root / "tests/release_upgrades"),
                 "--strict-markers",
+                "-p",
+                "no:cacheprovider",
                 "-o",
                 "xfail_strict=true",
                 "-ra",

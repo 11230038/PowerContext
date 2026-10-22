@@ -124,7 +124,7 @@ def environment_for(case, *, fresh=False):
         "POWERCONTEXT_SERVER_AUTH_TOKEN": TOKEN,
         "POWERCONTEXT_SERVER_ACCESS_MODE": "enforced",
         "POWERCONTEXT_SERVER_CURSOR_SIGNING_SECRET": "isolated-upgrade-cursor-signing-key-0001",
-        "POWERCONTEXT_SERVER_RUNTIME_ARTIFACT_PROCESSING_ROLE": "api",
+        "POWERCONTEXT_SERVER_RUNTIME_ARTIFACT_PROCESSING_ROLE": "all",
         "POWERCONTEXT_SERVER_MCP_ENABLED": "false",
         "NO_PROXY": "localhost,127.0.0.1",
         "no_proxy": "localhost,127.0.0.1",
