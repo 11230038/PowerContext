@@ -161,9 +161,26 @@ class SourceObservation(Source):
 
 
 def manifest_for_definition(definition: SourceDefinition[Any, Any, Any], /) -> SourceDefinitionManifest:
-    """Build the immutable declaration transported by a remote worker."""
+    """Build a declaration matching the canonical remote payload representation."""
 
-    source_schema = _json_object(definition.source_class.model_json_schema())
+    return _manifest_for_definition(definition, transport=True)
+
+
+def _manifest_for_definition(
+    definition: SourceDefinition[Any, Any, Any],
+    /,
+    *,
+    transport: bool,
+) -> SourceDefinitionManifest:
+    if transport:
+        source_schema = _json_object(
+            definition.source_class.model_json_schema(
+                mode="serialization",
+                by_alias=bool(definition.source_class.model_config.get("serialize_by_alias")),
+            )
+        )
+    else:
+        source_schema = _json_object(definition.source_class.model_json_schema(mode="serialization"))
     projections = tuple(
         SourceProjectionManifest(
             key=SourceProjectionKey(name=projection.name, version=projection.version),
