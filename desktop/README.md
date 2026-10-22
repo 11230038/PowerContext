@@ -21,6 +21,10 @@ Settings & diagnostics includes bilingual usage guidance, a locale-specific docu
 
 While a connection operation is pending, a global message remains visible across page changes. You can browse other pages, but Memory editing, saving, searching, exact reads and Scope switching pause until the operation and its native-state refresh finish. This prevents a late activation result from clearing text entered against the old Scope. Once the operation completes, explicitly select an exact Scope if needed. Existing draft confirmations and unknown-write protections continue to apply.
 
+Selecting a saved profile in the global connection menu opens that exact configuration in the editor, including when Connections is already open. Leaving an unsaved editor or Memory draft requires the existing discard confirmation; cancelling preserves the current editor and text. Selecting a configuration never checks or activates it. Explicitly reselecting the same profile after confirming discard reloads its saved values.
+
+Scope selection also keeps an application-wide pending state. Escape, the close button and the backdrop can close the dialog, but do not cancel an accepted native selection. Memory editing and further Scope switching stay paused until it finishes. Closing a dialog whose trigger is disabled returns focus to the page heading. A late result still updates authoritative native state, while it cannot clear a new connection editor's draft guard. Failures after the dialog has closed appear in the shared error feedback.
+
 ## Local Server preparation
 
 Overview remains the initial page. In disconnected Memories, **Set up locally** opens and focuses **Settings & diagnostics → Local Server**; **Connect an existing Server** opens the existing connection editor. Selecting either path does not install software, activate a connection, run diagnostics or probe readiness.

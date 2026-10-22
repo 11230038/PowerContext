@@ -16,6 +16,9 @@
 
 export const messages = {
   zh: {
+    contextUpdating: "正在更新连接或 Scope 状态…",
+    scopeUpdatingHint:
+      "Scope 选择仍在进行。关闭对话框不会取消已提交的选择；完成前记忆编辑、保存、搜索、精确读取及再次切换 Scope 暂不可用。",
     setUpLocally: "本地设置",
     connectExisting: "连接已有 Server",
     startPathsHint:
@@ -217,6 +220,9 @@ export const messages = {
       "连接已有的 PowerContext Server 并选择精确范围后，即可保存和查找记忆。",
   },
   en: {
+    contextUpdating: "Updating connection or Scope state…",
+    scopeUpdatingHint:
+      "Scope selection is still pending. Closing the dialog does not cancel a submitted selection. Memory editing, saving, searching, exact reads and further Scope changes pause until it finishes.",
     setUpLocally: "Set up locally",
     connectExisting: "Connect an existing Server",
     startPathsHint:

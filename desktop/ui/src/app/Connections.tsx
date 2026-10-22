@@ -35,6 +35,7 @@ type Props = {
   onState: (value: DesktopState) => void;
   onDirty: (value: boolean) => void;
   onPendingChange?: (pending: boolean) => void;
+  initialProfileId?: string;
 };
 export function Connections({
   state,
@@ -42,9 +43,12 @@ export function Connections({
   onState,
   onDirty,
   onPendingChange,
+  initialProfileId,
 }: Props) {
   const t = connectionMessages[language];
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(
+    initialProfileId ?? null,
+  );
   const profile = state?.profiles.find((p) => p.id === selected);
   const report = state?.reports.find((r) => r.connectionId === selected);
   const [name, setName] = useState("");

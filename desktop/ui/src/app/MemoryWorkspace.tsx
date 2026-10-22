@@ -158,7 +158,7 @@ export function NoteForm({
             <code>{active?.scope?.scope_id}</code>
           </>
         ) : contextPending ? (
-          messages[language].connectionUpdating
+          messages[language].contextUpdating
         ) : (
           t.noScope
         )}
@@ -417,7 +417,7 @@ export function MemoryWorkspace(props: Props) {
         </div>
         <p className="small search-meta">{t.searchSummary}</p>
         {!enabled && (
-          <p>{contextPending ? common.connectionUpdating : t.noScope}</p>
+          <p>{contextPending ? common.contextUpdating : t.noScope}</p>
         )}
         {busy && (
           <PageFeedback

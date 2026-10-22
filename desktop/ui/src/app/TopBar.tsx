@@ -25,7 +25,7 @@ type Props = {
   language: Language;
   loading?: boolean;
   contextPending?: boolean;
-  onManageConnections: () => void;
+  onManageConnections: (profileId?: string) => void;
   onOpenScopes: () => void;
   onDisconnect: () => void;
 };
@@ -199,7 +199,7 @@ export function TopBar({
                 tabIndex={-1}
                 onClick={() => {
                   closePopup();
-                  onManageConnections();
+                  onManageConnections(p.id);
                 }}
               >
                 <span>

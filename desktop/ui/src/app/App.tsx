@@ -56,8 +56,17 @@ export function App() {
   const [dirty, setDirty] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [connectionSelection, setConnectionSelection] = useState<{
+    id: string;
+    request: number;
+  } | null>(null);
   const [pendingConnections, setPendingConnections] = useState(0);
-  const contextPending = pendingConnections > 0;
+  const [pendingScopes, setPendingScopes] = useState(0);
+  const contextPending = pendingConnections > 0 || pendingScopes > 0;
+  function scopePending(pending: boolean) {
+    if (pending) setNativeError(null);
+    setPendingScopes((current) => current + (pending ? 1 : -1));
+  }
   function connectionPending(pending: boolean) {
     // Pending operations may finish after their editor has unmounted.
     setPendingConnections((current) => current + (pending ? 1 : -1));
@@ -111,7 +120,7 @@ export function App() {
     const target = localServer ? localServerHeading.current : heading.current;
     target?.focus();
     if (localServer) target?.scrollIntoView?.({ block: "start" });
-  }, [page]);
+  }, [page, connectionSelection]);
   function openScopes() {
     scopeReturnFocus.current = document.activeElement as HTMLElement;
     setScopeOpen(true);
@@ -160,16 +169,28 @@ export function App() {
         element.inert = inertValues[index];
       });
       if (scopeReturnFocus.current === null) return;
-      if (previous?.isConnected) previous.focus();
-      else
-        document
-          .querySelector<HTMLButtonElement>(".topbar-group button")
-          ?.focus();
+      const fallback = document.querySelector<HTMLButtonElement>(
+        ".topbar-group button:not(:disabled)",
+      );
+      const target =
+        previous?.isConnected && !previous.matches(":disabled")
+          ? previous
+          : (fallback ?? heading.current);
+      target?.focus();
     };
   }, [scopeOpen]);
-  function navigate(next: Page, section?: "local-server") {
-    if (next === page || !confirmSwitch()) return;
-    settingsSection.current = section;
+  function navigate(
+    next: Page,
+    target?: { section?: "local-server"; profileId?: string },
+  ) {
+    if ((next === page && target?.profileId === undefined) || !confirmSwitch())
+      return;
+    settingsSection.current = target?.section;
+    setConnectionSelection((current) =>
+      target?.profileId === undefined
+        ? null
+        : { id: target.profileId, request: (current?.request ?? 0) + 1 },
+    );
     setDirty(false);
     setPage(next);
     setMenu(false);
@@ -273,7 +294,9 @@ export function App() {
           language={language}
           loading={stateLoading}
           contextPending={contextPending}
-          onManageConnections={() => navigate("connections")}
+          onManageConnections={(profileId) =>
+            navigate("connections", { profileId })
+          }
           onOpenScopes={openScopes}
           onDisconnect={disconnect}
         />
@@ -282,8 +305,17 @@ export function App() {
             {t[page]}
           </h1>
           {contextPending && (
-            <PageFeedback kind="loading" title={t.connectionUpdating}>
-              <p>{t.connectionUpdatingHint}</p>
+            <PageFeedback
+              kind="loading"
+              title={
+                pendingScopes > 0 ? t.selectingScope : t.connectionUpdating
+              }
+            >
+              <p>
+                {pendingScopes > 0
+                  ? t.scopeUpdatingHint
+                  : t.connectionUpdatingHint}
+              </p>
             </PageFeedback>
           )}
           {stateLoading && (
@@ -343,12 +375,16 @@ export function App() {
               onDirty={setDirty}
               onManageConnections={() => navigate("connections")}
               onOpenScopes={openScopes}
-              onOpenLocalServer={() => navigate("settings", "local-server")}
+              onOpenLocalServer={() =>
+                navigate("settings", { section: "local-server" })
+              }
               contextPending={contextPending}
             />
           )}
           {page === "connections" && (
             <Connections
+              key={connectionSelection?.request ?? 0}
+              initialProfileId={connectionSelection?.id}
               state={desktop}
               language={language}
               onState={receiveState}
@@ -443,6 +479,8 @@ export function App() {
               language={language}
               onState={receiveState}
               confirmSwitch={confirmSwitch}
+              onPendingChange={scopePending}
+              onSelectionError={setNativeError}
               onSelected={() => {
                 setDirty(false);
                 setScopeOpen(false);

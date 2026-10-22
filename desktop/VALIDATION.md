@@ -118,6 +118,18 @@ The 400×300 viewport at device scale factor 2 checks layout equivalent to 800×
 
 Edge 合成 IPC 检查覆盖上述 72 组组合；定向焦点未被顶栏遮挡，键盘可继续进入连接编辑器，无横向溢出，并检查了离线强制高对比度视图及截图。200% 为等效布局验证。本次未执行真实 Server、安装包、平台 IME、屏幕阅读器或 macOS 验收。仓库钩子仍有既有 Windows Python 类型检查错误，其余通过。
 
+## Pending Scope selection and targeted profile navigation (#2102)
+
+On 2026-10-22, the pinned Windows tools above passed all 78 frontend tests, typecheck, lint and production build. Ten focused regressions cover closing pending Scope selection with Escape, the close button or backdrop; old-context editing remains paused, success updates the exact Scope, and a failure after closure appears in shared error feedback. A late Scope result cannot clear a new connection editor's draft guard. Tests also cover cancelling Scope selection before dispatch, opening the requested profile without activating it, cancelled cross-page/same-page profile navigation, repeated selection of the same profile ID, and a late save from a replaced editor.
+
+Headless Edge 155.0.4283.62 exercised 48 synthetic-IPC combinations: English/Chinese, light/dark/system, successful/failed delayed Scope selection, and CSS viewports 1180×800, 800×600, 400×400 and 400×300. After Escape, focus returned to the page heading and old-Scope editing stayed disabled. Navigation opened the requested configuration; pending Scope completion preserved the new editor's draft confirmation. Confirm/cancel, same-ID reselection, and Memory draft navigation were exercised. Profile selection triggered no connection check, activation or save. These paths had no horizontal overflow. Pending-Scope and forced-colors error/editor screenshots were inspected; evidence is under ignored `.artifacts/desktop-shell/scope-profile*` and `scope-pending-closed-800.png`.
+
+The 400×300 viewport at device scale factor 2 is layout equivalent to 800×600 at 200%, not installed WebView zoom. These UI checks use synthetic IPC and do not establish real native/backend, installed-package, IME, screen-reader or macOS qualification; those were not executed for this fix. Rust IPC and persistence formats remain unchanged. Repository hooks retain the previously documented Windows Python `ty check` failures; the other hooks passed.
+
+2026-10-22 使用固定工具版本，全部 78 项前端测试、typecheck、lint 和生产构建通过。新增 10 项回归覆盖 Scope 等待时通过 Escape／关闭按钮／遮罩关闭、旧上下文暂停编辑、成功与失败恢复、晚到结果不清除新连接草稿保护，以及指定配置导航、同页／跨页取消、同 ID 重选和旧编辑器晚到保存。
+
+Edge 合成 IPC 验证上述 48 组组合，检查焦点恢复、指定配置接入、Scope 晚到响应后的草稿保护、确认／取消、同 ID 重选及无隐式连接检查；页面无横向溢出，并检查了等待状态与强制高对比度错误视图截图。200% 为等效布局验证。本次未执行真实原生／后端、安装包、IME、屏幕阅读器或 macOS 验收。仓库钩子仍有既有 Windows Python 类型检查错误，其余通过。
+
 ## Remaining release qualification
 
 - Clean standard-user Windows 11, including absent/present WebView2 and bootstrap recovery.

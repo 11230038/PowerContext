@@ -28,6 +28,8 @@ export function Scopes({
   onSelected,
   hideHeading = false,
   onManageConnections,
+  onPendingChange,
+  onSelectionError,
 }: {
   state: DesktopState | null;
   language: Language;
@@ -36,6 +38,8 @@ export function Scopes({
   onSelected?: () => void;
   hideHeading?: boolean;
   onManageConnections?: () => void;
+  onPendingChange?: (pending: boolean) => void;
+  onSelectionError?: (error: unknown) => void;
 }) {
   const t = connectionMessages[language];
   const common = messages[language];
@@ -49,7 +53,15 @@ export function Scopes({
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [operation, setOperation] = useState<"list" | "select">("list");
+  const lifetime = useRef(0);
   const sequence = useRef(0);
+  useEffect(
+    () => () => {
+      lifetime.current++;
+      sequence.current++;
+    },
+    [],
+  );
   const pendingCancellation = useRef(Promise.resolve());
   const currentGeneration = useRef(active?.generation);
   currentGeneration.current = active?.generation;
@@ -101,21 +113,25 @@ export function Scopes({
   }
   async function select(id: string) {
     if (!active || !confirmSwitch()) return;
+    const ticket = lifetime.current;
     setOperation("select");
     setBusy(true);
     setError(null);
+    onPendingChange?.(true);
     try {
       onState(await desktopApi.selectScope(active.generation, id));
-      onSelected?.();
+      if (ticket === lifetime.current) onSelected?.();
     } catch (e) {
-      setError(e);
+      if (ticket === lifetime.current) setError(e);
+      else onSelectionError?.(e);
       try {
         onState(await desktopApi.state());
       } catch {
         /* Preserve the operation error. */
       }
     } finally {
-      setBusy(false);
+      onPendingChange?.(false);
+      if (ticket === lifetime.current) setBusy(false);
     }
   }
   return (
@@ -177,7 +193,12 @@ export function Scopes({
                 <p>{common.scopeIdleHint}</p>
               </PageFeedback>
             )}
-          <fieldset disabled={!active.report.compatibilityVerified}>
+          <fieldset
+            disabled={
+              !active.report.compatibilityVerified ||
+              (busy && operation === "select")
+            }
+          >
             <label>
               {t.scopeQuery}
               <input
