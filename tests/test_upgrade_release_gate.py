@@ -387,6 +387,9 @@ def test_repository_baseline_covers_all_three_databases():
     assert selection["strategy"] == "fixed-version"
     assert selection["source_version"] == "1.3.0"
     assert {profile["backend"] for profile in selection["profiles"]} == {"sqlite", "seekdb", "oceanbase"}
+    assert {
+        profile["backend"] for profile in selection["profiles"] if profile["configuration"] == "full-server-code"
+    } == {"sqlite", "oceanbase"}
 
 
 @pytest.mark.parametrize("workflow_name,job_name", [("master", "upgrade-release-gate"), ("release", "release-build")])

@@ -237,6 +237,63 @@ def test_optional_configuration_cannot_silently_extend_managed_database(source):
     assert dump(source.database) == before
 
 
+def test_code_with_separate_cache_upgrades_and_reopens_server(source, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from powercontext.builtin.code import CodeConfig
+    from powercontext.builtin.persistence.migrations.deployment import deployment_runner
+    from powercontext.server.factory import create_server_app
+    from powercontext.server.settings import McpConfig, ServerSettings
+
+    settings = ServerSettings(
+        database=SQLiteConfig(url=f"sqlite+aiosqlite:///{source.database}"),
+        code=CodeConfig(enabled=True, cache_dir=tmp_path / "code-cache"),
+        mcp=McpConfig(enabled=False),
+    )
+    runner = deployment_runner(settings)
+    assert runner.plan().source_revision == "s1300"
+    apply(runner)
+    assert runner.verify().readiness_scope == "server"
+    app = create_server_app(settings=settings, scheduler_path=tmp_path / "scheduler.db")
+    with TestClient(app) as client:
+        assert client.get("/health/ready").status_code == 200
+        response = client.get("/v1/scopes")
+        assert response.status_code == 200
+        assert any(scope["scope_id"] == "scope" for scope in response.json()["items"])
+        code = client.post("/v1/scopes/scope/code/query", json={"operation": {"kind": "status"}})
+        assert code.status_code == 200
+        assert code.json()["status"] == "disabled"
+        assert code.json()["reason"] == "code_repository_unconfigured"
+    assert not apply(deployment_runner(settings)).changed
+    with closing(sqlite3.connect(source.database)) as connection:
+        assert connection.execute("SELECT content FROM pc_artifacts WHERE artifact_id='historical'").fetchall() == [
+            (b'{"history":"unchanged"}',)
+        ]
+
+
+@pytest.mark.parametrize("bundle", ["server", "processing", "atomic-projection"])
+@pytest.mark.parametrize("configuration", ["vector", "embedded-code"])
+def test_unregistered_optional_storage_is_rejected_before_opening_database(tmp_path, bundle, configuration):
+    from powercontext.builtin.code import CodeConfig
+    from powercontext.builtin.persistence.migrations.deployment import deployment_runner
+    from powercontext.builtin.persistence.seekdb import SeekDBConfig
+    from powercontext.builtin.runtime.config import InferenceConfig
+    from powercontext.server.settings import ServerSettings
+
+    if configuration == "vector":
+        settings = ServerSettings(
+            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'server.db'}"),
+            inference=InferenceConfig(
+                embedding_model="openai:fixture", embedding_profile_id="fixture", embedding_dimension=3
+            ),
+        )
+    else:
+        settings = ServerSettings(database=SeekDBConfig(path=tmp_path / "embedded"), code=CodeConfig(enabled=True))
+    with pytest.raises(MigrationError, match="unsupported_upgrade_configuration"):
+        deployment_runner(settings, bundle=bundle)
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_captured_oceanbase_baseline_preserves_ordered_audit_cursor():
     import copy
 

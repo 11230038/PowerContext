@@ -12,7 +12,7 @@ description: 了解数据库迁移命令、备份策略、服务启停及当前�
 
 `powercontext server db-migrate status/plan/apply/verify` 默认选择 `--bundle server`，使用部署配置中的持久 SQLite、嵌入式 seekDB 或 OceanBase MySQL 模式数据库。维护命令以显式环境文件为准，不接受任意测试 bundle 路径。
 
-完整 Server 路径登记了真实 1.3.0 的无向量、Code 关闭配置，版本链为 `s1300 → s1400 → s1401`。它覆盖完整数据库结构、Candidate 改名与历史保留、Dream 任务格式、Processing 所有权声明、全文检索投影和既有 Source 引用。未知结构、额外对象、不同向量/Code 配置及未登记来源均在写入前拒绝。更早的 Memory 集合转换不属于此路径。
+完整 Server 路径登记了真实 1.3.0 的无向量配置，版本链为 `s1300 → s1400 → s1401`。SQLite、OceanBase 可以启用 Code：其本地缓存独立于 Server 数据库，数据库维护保留缓存文件。此路径覆盖完整数据库结构、Candidate 改名与历史保留、Dream 任务格式、Processing 所有权声明、全文检索投影和既有 Source 引用。未知结构、额外对象、向量配置、嵌入式 seekDB Code 存储及未登记来源均在写入前拒绝。更早的 Memory 集合转换不属于此路径。
 
 只有结构、领域数据、搜索投影和任务校验全部通过，才返回 `state=ready`、`readiness_scope=server`、`server_ready=true`。发布还必须通过真实安装包在三个后端上的完整验收；实现路径存在不等于某次发布已通过验收，支持状态以安装指南和发布门禁为准。
 
@@ -27,7 +27,7 @@ Candidate 旧表保留为 `pc_retained_dream_candidate_heads` 和 `pc_retained_d
 Server identity 初始化在受管库上只检查已登记的表，不执行 DDL。首次创建 identity 值以及显式轮换已停止副本的
 identity，仍使用原有事务语义。
 
-无向量、Code 关闭之外的既有新建部署仍使用原领域初始化和启动检查，不会自动纳入此版本链；这些配置不属于已登记升级范围。受管数据库不能通过切换配置绕过检查或隐式增加向量/Code 表。
+启用向量或嵌入式 seekDB Code 存储的既有新建部署仍使用原领域初始化和启动检查，不会自动纳入此版本链；这些配置不属于已登记升级范围。受管数据库不能通过切换配置绕过检查或隐式增加向量/Code 表。发布闸门分别验收 SQLite、OceanBase 的 Code 启用配置：用实际安装的 1.3.0 创建索引，保留缓存文件，并在升级后查询原指纹和符号。
 
 `--bundle artifacts` 保留 `p0001` 开始的局部 Artifact 原型链；`--bundle topic-memory-recovery` 只处理登记的 Topic 恢复布局。两者均报告 `server_ready=false`，不得用于证明完整 Server 就绪，也不能把其版本号直接 stamp 为完整 Server 版本。
 
@@ -56,7 +56,8 @@ MySQL 兼容后端的结构反射支持 CHECK 表达式中的二元 `+`、`-`、
 | `ServerIdentityRepository.initialize` | 检查 identity 表，不执行 DDL；创建 identity 值和显式轮换仍使用普通事务 | 保留支持并发的 identity 表初始化 |
 | 离线 Memory 归档 | Server 版本链在 `s1401` 登记结构，运行时准入检查该结构 | 旧 Memory 离线转换负责其归档和转换回执 |
 | `atomic-memory-migrate`、`processing-migrate` | 转发到共享 Server 或已登记的维护计划 | 保留领域独立行为；识别为历史完整 Server 的库必须先完成整库升级 |
-| 可选向量与 Code 对象 | 尚无已登记的配置转换，添加对象前拒绝 | 保留既有功能初始化，不宣称已登记升级支持 |
+| 向量与嵌入式 seekDB Code 对象 | 尚无已登记的配置转换，添加对象前拒绝 | 保留既有功能初始化，不宣称已登记升级支持 |
+| SQLite、OceanBase 的独立 Code 缓存 | 保留缓存文件，主数据库走共享版本链 | Code 服务负责本地缓存创建和索引构建 |
 
 这些辅助函数仍供所属 runtime 或维护操作使用；直接调用底层函数不能替代 Profile 准入、已确认的维护计划和
 备份恢复要求。未来受管对象的变化应加入已登记的 revision、领域步骤与校验器，不另建启动迁移入口。
@@ -64,7 +65,7 @@ MySQL 兼容后端的结构反射支持 CHECK 表达式中的二元 `+`、`-`、
 
 Code 的嵌入式 seekDB 存储在部署数据库中添加 `pc_code_generations`、`pc_code_nodes`、`pc_code_edges` 和
 `ix_code_search`；其他 Code 部署使用本地 SQLite 缓存。这些派生索引由 Code 服务负责，其存在不代表已经登记
-Code 启用的 Server 基线，也不允许隐式扩展受管结构。
+嵌入式 Code 的 Server 基线，也不允许隐式扩展受管结构。SQLite、OceanBase 的 Code 缓存不改变主库结构。
 
 ## Processing 配置维护
 
@@ -93,7 +94,7 @@ powercontext server db-migrate verify --bundle processing --env-file .env \
 ## Atomic Memory 投影维护
 
 `--bundle atomic-projection` 在当前受管 Server 数据库上修复 Atomic Memory current 行和 SQLite FTS
-辅助索引，适用于已登记的无向量、Code 关闭配置。它保留 Server revision、不可变正文与历史、生命周期、
+辅助索引，适用于已登记的无向量配置，包括 SQLite、OceanBase 使用独立缓存的 Code 配置。它保留 Server revision、不可变正文与历史、生命周期、
 正式标签、权限和 Source/Processing 状态。
 
 ```bash
@@ -110,7 +111,7 @@ apply 只修复派生行，完整 Server 校验通过后才提交。权威数据
 并在报告上次运行未结束时提供准确的确认 token。
 
 检查和修复扫描相关 Atomic 历史、head、标签、lineage 及 current 投影，通过键集分页限制行缓冲；
-这是停服执行的全投影操作，不登记向量 profile 切换或可选 Code 配置。
+这是停服执行的全投影操作，不登记向量 profile 切换或嵌入式 seekDB Code 配置。
 兼容命令 `server atomic-memory-rebuild-projection` 在受管数据库上转发到此 bundle，
 支持 `--action plan/apply/verify` 和同样的确认、备份选项。
 

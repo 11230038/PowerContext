@@ -59,7 +59,11 @@ def prepare_server_storage(settings, *, injected_embedding=False):
     database = settings.database
     if database.kind == "sqlite" and database.is_in_memory:
         return
-    if injected_embedding or settings.inference.embedding_model is not None or settings.code.enabled:
+    if (
+        injected_embedding
+        or settings.inference.embedding_model is not None
+        or (settings.code.enabled and database.kind == "seekdb")
+    ):
         _check_unmanaged_optional_profile(database)
         return
     if database.kind == "oceanbase":

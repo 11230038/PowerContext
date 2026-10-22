@@ -229,6 +229,15 @@ def environment_for(case, *, fresh=False):
         "NO_PROXY": "localhost,127.0.0.1",
         "no_proxy": "localhost,127.0.0.1",
     })
+    if case["configuration"] == "full-server-code":
+        environment["POWERCONTEXT_SERVER_CODE_ENABLED"] = "true"
+        environment["POWERCONTEXT_SERVER_CODE_CACHE_DIR"] = str(
+            case["work"] / ("fresh-code-cache" if fresh else "code-cache")
+        )
+        scope = case.get("code_scope")
+        environment["POWERCONTEXT_SERVER_CODE_REPOSITORIES"] = json.dumps(
+            {} if fresh or scope is None else {scope: {"root": str(case["work"] / "repository")}}
+        )
     database = case["work"] / ("fresh" if fresh else "database")
     backend = case["backend"]
     environment["POWERCONTEXT_SERVER_DATABASE_KIND"] = backend
@@ -243,6 +252,9 @@ def environment_for(case, *, fresh=False):
         expected = "/pc_upgrade_fresh" if fresh else "/pc_upgrade_test"
         assert parsed.scheme == "mysql+aoceanbase" and parsed.hostname in {"127.0.0.1", "localhost"}
         assert parsed.path == expected, "Only dedicated disposable OceanBase databases may be used"
+        if case["configuration"] == "full-server-code":
+            parsed = parsed._replace(path="/pc_upgrade_code_fresh" if fresh else "/pc_upgrade_code_test")
+            url = parsed.geturl()
         environment["POWERCONTEXT_SERVER_DATABASE_URL"] = url
         environment["PC_UPGRADE_OCEANBASE_URL"] = url
     return environment
@@ -374,6 +386,11 @@ def seed(client, *, candidate_prefix):
 def case(model_gateway):
     # Missing gate inputs are errors, never skips or an implicit local database.
     assert os.environ["PC_UPGRADE_SOURCE_VERSION"] == "1.3.0", "Add a reviewed adapter for another source release"
+    configuration = os.environ["PC_UPGRADE_CONFIGURATION"]
+    assert configuration in {"full-server-no-vector", "full-server-code"}, "Unregistered acceptance configuration"
+    assert configuration != "full-server-code" or os.environ["PC_UPGRADE_BACKEND"] != "seekdb", (
+        "Embedded Code storage requires its own registered migration"
+    )
     return {
         "source": Path(os.environ["PC_UPGRADE_SOURCE_PYTHON"]),
         "target": Path(os.environ["PC_UPGRADE_TARGET_PYTHON"]),
@@ -381,7 +398,53 @@ def case(model_gateway):
         "work": Path(os.environ["PC_UPGRADE_WORK"]),
         "report": Path(os.environ["PC_UPGRADE_REPORT_DIR"]),
         "model": model_gateway,
+        "configuration": configuration,
     }
+
+
+def code_cache_snapshot(case):
+    directory = case["work"] / "code-cache"
+    return {
+        path.relative_to(directory).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(directory.rglob("*"))
+        if path.is_file() and path.suffix in {".json", ".sqlite"}
+    }
+
+
+def historical_code(case, scope):
+    repository = case["work"] / "repository"
+    repository.mkdir()
+    (repository / "evidence.py").write_text("def upgrade_code_evidence():\n    return 2084\n", encoding="utf-8")
+    for arguments in (("init",), ("add", ".")):
+        command(
+            ["git", "-C", str(repository), *arguments],
+            environment_for(case),
+            case["work"],
+            case["report"] / f"code-git-{arguments[0]}.log",
+        )
+    case["code_scope"] = scope
+    indexed = json.loads(
+        command(
+            [console(case["source"]), "code", "index", "--scope", scope],
+            environment_for(case),
+            case["work"],
+            case["report"] / "source-code-index.log",
+        )
+    )
+    with server(
+        case["source"], environment_for(case), case["work"], case["report"] / "source-code-server.log"
+    ) as client:
+        result = post(
+            client,
+            f"/v1/scopes/{scope}/code/query",
+            {"operation": {"kind": "symbols", "query": "upgrade_code_evidence"}},
+        )
+        assert result["status"] == "ready" and result["fingerprint"] == indexed["fingerprint"]
+        symbols = [item for item in result["items"] if item["name"] == "upgrade_code_evidence"]
+        assert symbols and all(item["path"] == "evidence.py" for item in symbols)
+    cache = code_cache_snapshot(case)
+    assert any(name.endswith("/graph.sqlite") for name in cache)
+    return {"fingerprint": result["fingerprint"], "symbols": symbols, "cache_sha256": cache}
 
 
 @pytest.fixture(scope="session")
@@ -391,6 +454,8 @@ def historical(case):
         assert not snapshot(case, "target", "fresh-empty", fresh=True)["tables"]
     with server(case["source"], environment_for(case), case["work"], case["report"] / "source-server.log") as client:
         value = seed(client, candidate_prefix="/v1/artifact-candidates")
+    if case["configuration"] == "full-server-code":
+        value["code"] = historical_code(case, value["scope"])
     value["task"] = task_state(case, "source", "seed", value["scope"])
     value["schema"] = snapshot(case, "source", "source")
     assert {"pc_artifact_candidate_heads", "pc_artifact_candidate_versions", "pc_scopes", "pc_artifacts"} <= set(
@@ -491,9 +556,36 @@ def migrated(case, historical, rejected_legacy_startup):
 
 
 @pytest.fixture
-def target(case, migrated):
+def target(case, migrated, preserved_code):
     with server(case["target"], environment_for(case), case["work"], case["report"] / "target-server.log") as client:
         yield client
+
+
+@pytest.fixture(scope="session")
+def preserved_code(case, migrated):
+    if case["configuration"] != "full-server-code":
+        return None
+    historical = migrated["historical"]
+    source = historical["code"]
+    assert code_cache_snapshot(case) == source["cache_sha256"]
+    with server(
+        case["target"], environment_for(case), case["work"], case["report"] / "target-code-server.log"
+    ) as client:
+        result = post(
+            client,
+            f"/v1/scopes/{historical['scope']}/code/query",
+            {"operation": {"kind": "symbols", "query": "upgrade_code_evidence"}},
+        )
+        assert result["status"] == "ready" and result["fingerprint"] == source["fingerprint"]
+        symbols = [item for item in result["items"] if item["name"] == "upgrade_code_evidence"]
+        assert symbols == source["symbols"]
+    assert code_cache_snapshot(case) == source["cache_sha256"]
+    return {
+        "fingerprint": source["fingerprint"],
+        "immutable_cache_files_preserved": True,
+        "symbol_ids_preserved": True,
+        "server_query_ready": True,
+    }
 
 
 @pytest.fixture(scope="session")
@@ -665,7 +757,7 @@ def canonical_schema(snapshot):
     }
 
 
-def test_fresh_upgrade_equivalence(case, migrated, processed_background):
+def test_fresh_upgrade_equivalence(case, migrated, processed_background, preserved_code):
     if case["backend"] == "oceanbase":
         environment = environment_for(case, fresh=True)
         env_file = case["work"] / "fresh.env"
@@ -731,6 +823,8 @@ def test_fresh_upgrade_equivalence(case, migrated, processed_background):
         "target_schema": digest(actual),
         "fresh_schema": digest(expected),
         "background_processing": processed_background,
+        "configuration": case["configuration"],
+        "code": preserved_code,
     }
     if case["backend"] == "oceanbase":
         evidence.update(tenant_mode=inventory["tenant_mode"], proxy_version=inventory["proxy_version"])

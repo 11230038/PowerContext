@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -458,6 +458,38 @@ def _full_server_runner(
             "embedding_enabled": False,
         },
     )
+
+
+@pytest.mark.parametrize("backend", ("oceanbase",), indirect=True)
+def test_oceanbase_server_upgrade_with_separate_code_cache_preserves_history(
+    backend: _BackendTarget, tmp_path: Path
+) -> None:
+    from powercontext.builtin.code import CodeConfig
+    from powercontext.builtin.persistence.migrations.server_readiness import prepare_server_storage
+
+    _load_full_server_baseline(backend)
+    settings = ServerSettings(
+        database=backend.config,
+        code=CodeConfig(enabled=True, cache_dir=tmp_path / "code-cache"),
+    )
+    runner = cast(
+        MySQLMigrationRunner,
+        deployment_runner(settings, evidence_dir=backend.evidence_directory, lock_coordination="single-host"),
+    )
+    assert runner.plan(backup_policy="manual").source_revision == "s1300"
+    result = _apply(runner, policy="manual")
+    assert result.readiness_scope == "server" and result.revision == "s1401"
+    assert runner.verify().state == "ready"
+    prepare_server_storage(settings)
+    assert not _apply(runner, policy="manual").changed
+
+    def history(connection, identity, guard):
+        guard()
+        return connection.exec_driver_sql(
+            "SELECT content FROM pc_artifacts WHERE scope_id='historical' AND artifact_id='preserved'"
+        ).scalar_one()
+
+    assert backend.connections().run(history) == b'{"history":"unchanged"}'
 
 
 def test_mysql_registered_processing_mode_switch_preserves_revision_and_history(backend: _BackendTarget) -> None:

@@ -323,6 +323,8 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
     }
     with case_workspace(case["backend"], output) as directory:
         extras = "cli,server,seekdb" if case["backend"] == "seekdb" else "cli,server"
+        if case["configuration"] == "full-server-code":
+            extras += ",code"
         interpreters = {}
         artifact = case["source_artifact"]
         packages = {
@@ -385,6 +387,19 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
         )
         validate_junit(report)
         backend = validate_backend_evidence(output / "backend.json", case["backend"])
+        require(backend.get("configuration") == case["configuration"], "Configuration evidence differs from the case")
+        if case["configuration"] == "full-server-code":
+            code = backend.get("code")
+            if not isinstance(code, dict):
+                raise GateError("Installed Code acceptance evidence required")  # noqa: TRY003 -- operator diagnostic
+            require(
+                re.fullmatch(r"[0-9a-f]{64}", str(code.get("fingerprint", "")))
+                and all(
+                    code.get(field) is True
+                    for field in ("immutable_cache_files_preserved", "symbol_ids_preserved", "server_query_ready")
+                ),
+                "The installed Code index must remain queryable with its original immutable identity",
+            )
         return {"case": case, "installed": metadata, "database": backend, "status": "passed"}
 
 
