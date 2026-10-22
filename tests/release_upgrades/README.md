@@ -1,13 +1,39 @@
 # Installed-release upgrade acceptance
 
 `release/upgrade-support.json` is the explicit upgrade support policy. Currently it declares
-`fresh-install-only`: **no production database upgrade combination is supported**. An empty matrix in this mode
-does not prove a migration works. Full migration integration is tracked in #2154.
+`fresh-install-only`: **no production database upgrade combination is supported**. Discovered candidates in this mode
+are not accepted upgrades. Full migration integration is tracked in #2154.
 
-To advertise an upgrade, add a reviewed case with `source_version` (an exact published package version), `backend`
-(`sqlite`, `seekdb`, or `oceanbase`), a stable `configuration` identifier, and a `suite` path under this directory.
-Set `mode` to `supported-upgrades`. Optional features that change persistent objects need explicit cases/configurations.
-No ranges, moving refs, silent backend fallback, or implicit combinations are supported.
+## Automatic source versions
+
+The default `automatic_sources` policy uses `all-stable-since`, with `minimum_version: "1.3.0"` and SQLite/seekDB
+backend profiles. Every gate run reads the public PowerContext PyPI release catalog and selects all stable `X.Y.Z`
+versions at or above the minimum and strictly below the **actual target wheel version**. It excludes prereleases,
+the target itself, and newer versions. The next run automatically includes newly published stable source versions;
+no new test file or per-version matrix entry is needed. The target is the local build, so it need not be on PyPI yet.
+
+Each selected source is expanded across every configured backend/profile. A missing or yanked required wheel,
+discovery outage, missing minimum version, or empty source window fails the gate instead of reducing coverage.
+Source wheels are installed by their discovered public URL and SHA-256. The evidence records the catalog digest,
+exact selected artifacts, and expanded matrix. Unrelated package indexes cannot substitute a source wheel.
+
+For example, with a minimum of `1.4.0`, a target of `1.4.1` tests `1.4.0`; after `1.4.1` is published, target `1.5.0`
+tests both `1.4.0` and `1.4.1` on every backend. Other stable patches in the same interval are included too. This is
+a promise to test **all** versions in the configured window, not just the latest patch. Change the minimum only
+through a reviewed change to the support policy. The resolver currently requires universal `py3-none-any` wheels;
+a future distribution format change must extend it explicitly, not silently omit a release.
+
+Currently the profiles have `suite: null` and the mode remains `fresh-install-only`. Discovery records candidate
+cases, but executes and accepts **zero** positive upgrades. To activate supported upgrades, implement the complete
+suite contract below for every profile, replace every null with a real suite path, set `mode` to `supported-upgrades`,
+and regenerate the installation notices. The gate rejects supported mode with a missing suite. Future source releases
+then use those same suites, with version adapters added where historical public interfaces differ. Tests must fail
+when migration support is missing; the runner never changes expected success into a rejection automatically.
+
+`cases` remains available for exact source versions/configurations outside the automatic profiles. Each case needs
+`source_version`, `backend`, `configuration`, and `suite`. Overlapping resolved cases fail rather than running twice.
+Optional features that create persistent objects require additional backend profiles. OceanBase can be included by
+adding its real environment/suite; embedded seekDB evidence does not establish OceanBase compatibility.
 
 The runner creates separate source/target environments, installs the exact published source package and the built
 target wheel, verifies their versions, then executes the reviewed suite in an isolated working directory. Repository
@@ -17,6 +43,7 @@ processes, not import the current checkout's runtime in place of either version.
 The suite receives:
 
 - `PC_UPGRADE_SOURCE_PYTHON`, `PC_UPGRADE_TARGET_PYTHON`: isolated installed interpreters.
+- `PC_UPGRADE_SOURCE_VERSION`: the exact source release selected for this case.
 - `PC_UPGRADE_BACKEND`, `PC_UPGRADE_CONFIGURATION`: the declared case.
 - `PC_UPGRADE_WORK`: disposable workspace for both databases, controlled inference fixtures, and environment files.
 - `PC_UPGRADE_EVIDENCE`: destination for backend evidence JSON.
@@ -50,18 +77,20 @@ Test names and metadata do not themselves prove correctness: reviewers must insp
 they follow the public operations and compare actual persisted data. This contract is intended to host the real
 upgrade acceptance added with #2154, without claiming that it already exists.
 
-For example, after implementing and reviewing an actual suite, a case would have this shape:
+For example, after implementing and reviewing actual suites, automatic selection would have this shape:
 
 ```json
 {
-  "source_version": "1.3.0",
-  "backend": "sqlite",
-  "configuration": "full-server-no-vector",
-  "suite": "tests/release_upgrades/test_sqlite_130.py"
+  "strategy": "all-stable-since",
+  "minimum_version": "1.3.0",
+  "profiles": [
+    {"backend": "sqlite", "configuration": "full-server-no-vector", "suite": "tests/release_upgrades/test_sqlite.py"},
+    {"backend": "seekdb", "configuration": "full-server-no-vector", "suite": "tests/release_upgrades/test_seekdb.py"}
+  ]
 }
 ```
 
-This example is not an existing supported case. Regenerate installation support regions with
+These suite paths illustrate the contract; they do not exist yet. Regenerate installation support regions with
 `uv run python scripts/upgrade_release_gate.py --write-docs` and run `make upgrade-policy-check`. When persistence
 inputs change, calculate `managed_digest(ROOT)` from `upgrade_release_gate`, review the compatibility impact, and
 update both the digest and rationale in `schema_review`. The inputs include persistence, optional code storage,
@@ -77,3 +106,20 @@ against the GitHub event's notes and gates both PyPI publication and release ass
 Repository administrators must require **Upgrade release gate** in branch protection. Workflow code cannot configure
 that setting. Because the release workflow starts on `release.published`, it can block package/asset publication,
 not the earlier manual creation of a GitHub Release; run the prepublication command before publishing that page.
+
+## Actual historical rejection regressions
+
+The PR/master job runs `ci_legacy_upgrade_rejection.py` for **both SQLite and embedded seekDB** against a database
+created and populated by installed PowerContext 1.3.0. It uses separate source/target environments, one disposable
+database directory, sequential process ownership, and public HTTP writes/readback before testing target CLI behavior.
+The installed drivers inventory the actual tables and record each environment's engine, driver, and binding versions.
+No external seekDB service or credentials are needed. A missing embedded binding fails the job; it is never skipped.
+
+The regressions require historical startup rejection, full-baseline migration rejection, and rejection after adding
+only the prototype revision table to the disposable fixture. The last operation is deliberately **not a migration**.
+SeekDB permits either the known CHECK-reflection rejection or unknown-baseline rejection, so fixing #2160 does not
+require retaining the parser defect. These tests do not certify that an upgrade succeeds.
+
+CI invokes them with `--respect-policy` after the main gate. Once supported-path acceptance is activated, these
+historical rejection assertions are recorded as `not-applicable` instead of failing because migration was fixed.
+The preceding positive gate must still execute all required version/backend cases and accept no skips.

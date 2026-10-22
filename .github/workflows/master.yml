@@ -41,11 +41,14 @@ jobs:
         run: >-
           uv run python scripts/run_upgrade_release_gate.py
           --output "$RUNNER_TEMP/upgrade-release-evidence"
-      - name: Reproduce unsupported full 1.3.0 database upgrade
+      - name: Reproduce unsupported SQLite and embedded seekDB upgrades
         run: |
           wheel=$(find dist -name '*.whl' -print -quit)
-          uv run python scripts/ci_legacy_upgrade_rejection.py \
-            --wheel "$wheel" --output "$RUNNER_TEMP/upgrade-release-evidence/legacy-rejection"
+          for backend in sqlite seekdb; do
+            uv run python scripts/ci_legacy_upgrade_rejection.py \
+              --backend "$backend" --respect-policy --wheel "$wheel" \
+              --output "$RUNNER_TEMP/upgrade-release-evidence/legacy-$backend"
+          done
       - name: Preserve upgrade acceptance evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

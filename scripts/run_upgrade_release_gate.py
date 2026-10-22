@@ -43,7 +43,9 @@ def main() -> None:
         gate(ROOT, wheels[0].resolve(), output.resolve(), release=args.release, release_notes=release_notes)
         result = json.loads((output / "result.json").read_text(encoding="utf-8"))
         print(
-            f"Upgrade gate passed: {result['mode']}; {len(result['cases'])} accepted upgrade combinations. "
+            f"Upgrade gate passed: {result['mode']}; "
+            f"{len(result['resolved_matrix']['candidate_cases'])} discovered candidates; "
+            f"{len(result['cases'])} accepted upgrade combinations. "
             f"Evidence: {output / 'result.json'}"
         )
     except (GateError, OSError, ValueError) as error:

@@ -129,8 +129,12 @@ installation pins are synchronized.
 
 ### Database upgrade support
 
-`release/upgrade-support.json` declares the target version and every supported source version, backend, and
-configuration. The current policy is `fresh-install-only`; existing Server database upgrades are unsupported.
+`release/upgrade-support.json` declares the target version, source-version selection policy, backends, and
+configurations. `automatic_sources` selects every stable PyPI release from `minimum_version` up to, but excluding,
+the actual target wheel. Newly published stable versions become source cases on subsequent runs without adding
+per-version tests. The runner expands every source across all backend profiles and records source wheel SHA-256s.
+The current policy is `fresh-install-only`; existing Server database upgrades are unsupported. Its null suite paths
+record candidates only, not accepted upgrades. Supported mode requires implemented suites for every backend profile.
 Do not advertise a supported upgrade until its installed-release acceptance suite is implemented and passes.
 The suite contract and evidence requirements are in `tests/release_upgrades/README.md` in the repository.
 
@@ -152,9 +156,10 @@ in separate environments. Missing tests, skipped backends, failures, and missing
 `fresh-install-only` policy check does not establish an upgrade path. Ordinary PR builds may have a development
 version; the `--release` check must run against the final tagged wheel without overriding its version.
 
-The **Upgrade release gate** CI job also reproduces the known unsupported upgrade rejections using a real 1.3.0
-SQLite Server database. Replace that negative fixture with supported-path acceptance when implementing the full
-migration chain. Repository administrators must make this job required in branch protection.
+The **Upgrade release gate** CI job also reproduces the known unsupported upgrade rejections using real 1.3.0
+SQLite and embedded seekDB Server databases. It installs and starts seekDB inside the runner with a disposable
+directory; no external service is needed. Once supported mode is activated, these negative assertions retire and
+the full discovered upgrade matrix must pass. Repository administrators must make this job required in branch protection.
 The release workflow gates distribution upload, PyPI publication, and release assets on the acceptance result and
 archives its evidence. It runs after `release.published`, so it cannot prevent the earlier manual publication of
 the GitHub Release page: run the command above before that action. `make publish` requires

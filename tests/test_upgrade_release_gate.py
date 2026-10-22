@@ -21,11 +21,12 @@ from xml.etree import ElementTree
 
 import pytest
 import upgrade_release_gate as gate
+import upgrade_release_matrix as matrix
 import yaml
 
 
 @pytest.fixture
-def release(tmp_path):
+def release(tmp_path, monkeypatch):
     persistence = tmp_path / "src/powercontext/builtin/persistence/tables.py"
     persistence.parent.mkdir(parents=True)
     persistence.write_text("# disposable persistence input\n")
@@ -34,13 +35,30 @@ def release(tmp_path):
     contract.write_text("info:\n  version: 2.0.0\n")
     (tmp_path / "release").mkdir()
     policy = {
-        "format": 1,
+        "format": 2,
         "target_version": "2.0.0",
         "mode": "fresh-install-only",
         "schema_review": {"persistence_sha256": gate.managed_digest(tmp_path), "rationale": "No upgrades supported"},
         "cases": [],
+        "automatic_sources": None,
     }
     (tmp_path / gate.MANIFEST).write_text(json.dumps(policy))
+    monkeypatch.setattr(
+        matrix,
+        "fetch_catalog",
+        lambda: {
+            "releases": {
+                "1.3.0": [
+                    {
+                        "filename": "powercontext-1.3.0-py3-none-any.whl",
+                        "packagetype": "bdist_wheel",
+                        "url": "https://files.pythonhosted.org/packages/test.whl",
+                        "digests": {"sha256": "a" * 64},
+                    }
+                ]
+            }
+        },
+    )
     for language in ("en", "zh"):
         page = tmp_path / f"docs/{language}/docs/get-started/install-and-run.md"
         page.parent.mkdir(parents=True)
@@ -194,6 +212,142 @@ def test_old_evidence_directory_cannot_be_reused(release):
     gate.gate(root, wheel, root / "evidence")
     with pytest.raises(FileExistsError):
         gate.gate(root, wheel, root / "evidence")
+
+
+def catalog_for(*versions):
+    return {
+        "releases": {
+            version: [
+                {
+                    "filename": f"powercontext-{version}-py3-none-any.whl",
+                    "packagetype": "bdist_wheel",
+                    "yanked": False,
+                    "url": f"https://files.pythonhosted.org/packages/powercontext-{version}-py3-none-any.whl",
+                    "digests": {"sha256": "a" * 64},
+                }
+            ]
+            for version in versions
+        }
+    }
+
+
+def automatic_policy(policy, *, minimum="1.4.0"):
+    policy["automatic_sources"] = {
+        "strategy": "all-stable-since",
+        "minimum_version": minimum,
+        "profiles": [
+            {"backend": backend, "configuration": "full-server-no-vector", "suite": None}
+            for backend in ("sqlite", "seekdb")
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "target,expected",
+    [
+        ("1.4.1", ["1.4.0"]),
+        ("1.5.0", ["1.4.0", "1.4.1"]),
+        ("1.5.1", ["1.4.0", "1.4.1", "1.5.0"]),
+        ("1.5.1.dev2", ["1.4.0", "1.4.1", "1.5.0"]),
+    ],
+)
+def test_release_window_expands_for_each_target_without_new_test_scripts(release, monkeypatch, target, expected):
+    _, _, policy = release
+    automatic_policy(policy)
+    monkeypatch.setattr(
+        matrix, "fetch_catalog", lambda: catalog_for("1.3.0", "1.4.0", "1.4.1", "1.5.0rc1", "1.5.0", "1.5.1", "1.6.0")
+    )
+    resolved = matrix.resolve_matrix(policy, target)
+    assert [(case["source_version"], case["backend"]) for case in resolved["candidate_cases"]] == [
+        (version, backend) for version in expected for backend in ("sqlite", "seekdb")
+    ]
+    assert resolved["required_cases"] == []  # Discovery does not establish upgrade support.
+    assert all(case["source_artifact"]["sha256"] == "a" * 64 for case in resolved["candidate_cases"])
+
+
+def test_newly_published_source_is_automatically_added_on_next_run(release, monkeypatch):
+    _, _, policy = release
+    automatic_policy(policy)
+    catalog = catalog_for("1.4.0")
+    monkeypatch.setattr(matrix, "fetch_catalog", lambda: catalog)
+    first = matrix.resolve_matrix(policy, "1.5.0")
+    catalog["releases"].update(catalog_for("1.4.1")["releases"])
+    second = matrix.resolve_matrix(policy, "1.5.0")
+    assert len(first["candidate_cases"]) == 2
+    assert len(second["candidate_cases"]) == 4
+    assert first["catalog_sha256"] != second["catalog_sha256"]
+
+
+@pytest.mark.parametrize(
+    "broken", ["empty", "missing-minimum", "yanked", "missing-wheel", "bad-hash", "foreign-origin"]
+)
+def test_unavailable_source_cannot_silently_shrink_matrix(release, monkeypatch, broken):
+    _, _, policy = release
+    automatic_policy(policy)
+    catalog = catalog_for("1.4.0", "1.4.1")
+    wheel = catalog["releases"]["1.4.0"][0]
+    if broken == "empty":
+        catalog["releases"] = {}
+    elif broken == "missing-minimum":
+        del catalog["releases"]["1.4.0"]
+    elif broken == "yanked":
+        wheel["yanked"] = True
+    elif broken == "missing-wheel":
+        catalog["releases"]["1.4.1"] = []
+    elif broken == "bad-hash":
+        wheel["digests"]["sha256"] = "invalid"
+    else:
+        wheel["url"] = "https://untrusted.invalid/package.whl"
+    monkeypatch.setattr(matrix, "fetch_catalog", lambda: catalog)
+    with pytest.raises(ValueError):
+        matrix.resolve_matrix(policy, "1.5.0")
+
+
+def test_catalog_outage_records_a_failed_gate(release, monkeypatch):
+    root, wheel, policy = release
+    automatic_policy(policy)
+    (root / gate.MANIFEST).write_text(json.dumps(policy))
+
+    def unavailable():
+        raise OSError("Catalog unavailable")  # noqa: TRY003 -- exercise a distinct discovery outage
+
+    monkeypatch.setattr(matrix, "fetch_catalog", unavailable)
+    with pytest.raises(OSError, match="Catalog unavailable"):
+        gate.gate(root, wheel, root / "evidence")
+    assert json.loads((root / "evidence/result.json").read_text())["status"] == "failed"
+
+
+def test_switching_to_supported_upgrades_requires_all_backend_suites(release):
+    root, _, policy = release
+    automatic_policy(policy)
+    policy["mode"] = "supported-upgrades"
+    (root / gate.MANIFEST).write_text(json.dumps(policy))
+    with pytest.raises(gate.GateError, match="every backend profile"):
+        gate.load_policy(root)
+
+
+def test_supported_window_executes_every_discovered_version_on_every_backend(release, monkeypatch):
+    root, wheel, policy = release
+    supported_case(root, policy)
+    suite = policy["cases"][0]["suite"]
+    policy["cases"] = []
+    automatic_policy(policy)
+    for profile in policy["automatic_sources"]["profiles"]:
+        profile["suite"] = suite
+    (root / gate.MANIFEST).write_text(json.dumps(policy))
+    gate.check_docs(root, policy, write=True)
+    monkeypatch.setattr(matrix, "fetch_catalog", lambda: catalog_for("1.4.0", "1.4.1"))
+    executed = []
+
+    def execute(_root, _wheel, case, _output):
+        executed.append((case["source_version"], case["backend"]))
+        return {"case": case, "status": "passed"}
+
+    monkeypatch.setattr(gate, "run_case", execute)
+    gate.gate(root, wheel, root / "evidence")
+    assert executed == [(version, backend) for version in ("1.4.0", "1.4.1") for backend in ("sqlite", "seekdb")]
+    result = json.loads((root / "evidence/result.json").read_text())
+    assert len(result["cases"]) == len(result["resolved_matrix"]["required_cases"]) == 4
 
 
 def test_publishing_jobs_depend_on_nonoptional_preupload_upgrade_gate():

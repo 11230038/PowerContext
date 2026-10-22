@@ -30,6 +30,8 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
+from upgrade_release_matrix import STABLE, resolve_matrix
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = Path("release/upgrade-support.json")
 MANAGED_INPUTS = (
@@ -88,8 +90,11 @@ def managed_digest(root: Path) -> str:
 
 def load_policy(root: Path) -> dict[str, Any]:
     policy = json.loads((root / MANIFEST).read_text(encoding="utf-8"))
-    require(set(policy) == {"format", "target_version", "mode", "schema_review", "cases"}, "Invalid policy fields")
-    require(policy["format"] == 1, "Unsupported upgrade policy format")
+    require(
+        set(policy) == {"format", "target_version", "mode", "schema_review", "cases", "automatic_sources"},
+        "Invalid policy fields",
+    )
+    require(policy["format"] == 2, "Unsupported upgrade policy format")
     contract = (root / "openapi/powercontext.yaml").read_text(encoding="utf-8")
     match = re.search(rf"^  version: ({VERSION})$", contract, re.MULTILINE)
     require(
@@ -106,7 +111,21 @@ def load_policy(root: Path) -> dict[str, Any]:
     )
     cases = policy["cases"]
     require(isinstance(cases, list), "Upgrade cases must be a list")
-    require(bool(cases) == (policy["mode"] == "supported-upgrades"), "Upgrade mode and support matrix disagree")
+    automatic = policy["automatic_sources"]
+    profiles = []
+    if automatic is not None:
+        require(set(automatic) == {"strategy", "minimum_version", "profiles"}, "Invalid automatic source policy")
+        require(automatic["strategy"] == "all-stable-since", "Unknown source selection strategy")
+        require(
+            isinstance(automatic["minimum_version"], str) and re.fullmatch(STABLE, automatic["minimum_version"]),
+            "Minimum source must be a stable version",
+        )
+        profiles = automatic["profiles"]
+        require(isinstance(profiles, list) and profiles, "Automatic sources require backend profiles")
+        for profile in profiles:
+            require(set(profile) == {"backend", "configuration", "suite"}, "Invalid automatic backend profile")
+    supported = policy["mode"] == "supported-upgrades"
+    require(bool(cases or profiles) if supported else not cases, "Upgrade mode and support matrix disagree")
     identities: set[tuple[str, str, str]] = set()
     for case in cases:
         require(set(case) == {"source_version", "backend", "configuration", "suite"}, "Invalid upgrade case fields")
@@ -114,11 +133,15 @@ def load_policy(root: Path) -> dict[str, Any]:
             isinstance(case["source_version"], str) and re.fullmatch(VERSION, case["source_version"]),
             "Pin a source release",
         )
+    for case in [*cases, *profiles]:
         require(case["backend"] in {"sqlite", "seekdb", "oceanbase"}, "Unknown backend")
         require(re.fullmatch(r"[a-z][a-z0-9-]*", case["configuration"]), "Configuration needs a stable identifier")
-        identity = (case["source_version"], case["backend"], case["configuration"])
+        identity = (case.get("source_version", "automatic"), case["backend"], case["configuration"])
         require(identity not in identities, "Duplicate upgrade combination")
         identities.add(identity)
+        if case["suite"] is None:
+            require(not supported, "Supported upgrades require a real acceptance suite for every backend profile")
+            continue
         suite = (root / case["suite"]).resolve()
         require(
             suite.is_relative_to((root / "tests/release_upgrades").resolve()),
@@ -143,6 +166,11 @@ def support_text(policy: dict[str, Any], language: str) -> str:
         f"| {case['source_version']} | {policy['target_version']} | {case['backend']} | {case['configuration']} |"
         for case in policy["cases"]
     )
+    if automatic := policy["automatic_sources"]:
+        lines.extend(
+            f"| stable >= {automatic['minimum_version']}, < target | {policy['target_version']} | {profile['backend']} | {profile['configuration']} |"
+            for profile in automatic["profiles"]
+        )
     return "\n".join(lines)
 
 
@@ -232,7 +260,11 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
         directory = Path(temporary)
         extras = "cli,server,seekdb" if case["backend"] == "seekdb" else "cli,server"
         interpreters = {}
-        packages = {"source": f"powercontext[{extras}]=={case['source_version']}", "target": f"{wheel}[{extras}]"}
+        artifact = case["source_artifact"]
+        packages = {
+            "source": f"powercontext[{extras}] @ {artifact['url']}#sha256={artifact['sha256']}",
+            "target": f"{wheel}[{extras}]",
+        }
         for role, package in packages.items():
             venv = directory / role
             run(
@@ -255,6 +287,7 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
         environment.update({
             "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
             "PC_UPGRADE_SOURCE_PYTHON": str(interpreters["source"]),
+            "PC_UPGRADE_SOURCE_VERSION": case["source_version"],
             "PC_UPGRADE_TARGET_PYTHON": str(interpreters["target"]),
             "PC_UPGRADE_BACKEND": case["backend"],
             "PC_UPGRADE_CONFIGURATION": case["configuration"],
@@ -309,7 +342,9 @@ def gate(root: Path, wheel: Path, output: Path, *, release: bool = False, releas
         "status": "failed",
     }
     try:
-        for index, case in enumerate(policy["cases"]):
+        matrix = resolve_matrix(policy, actual_version)
+        evidence["resolved_matrix"] = matrix
+        for index, case in enumerate(matrix["required_cases"]):
             evidence["cases"].append(run_case(root, wheel, case, output / f"case-{index}"))
         evidence["status"] = "passed"
     finally:
@@ -338,7 +373,7 @@ def main() -> int:
             )
         else:
             require(not args.release, "--release requires the actual release wheel")
-        print(f"Upgrade policy: {policy['mode']}; {len(policy['cases'])} supported combinations")
+        print(f"Upgrade policy: {policy['mode']}; source/backend combinations are resolved against the target wheel")
     except (GateError, OSError, ValueError, subprocess.SubprocessError, ElementTree.ParseError) as error:
         print(f"Upgrade release gate failed: {error}", file=sys.stderr)
         return 1
