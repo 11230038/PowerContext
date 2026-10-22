@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import plistlib
@@ -25,8 +26,8 @@ import sys
 import time
 import uuid
 import xml.etree.ElementTree as ET
-from collections.abc import Callable
-from contextlib import closing, suppress
+from collections.abc import Callable, Iterator
+from contextlib import closing, contextmanager, suppress
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
@@ -268,10 +269,13 @@ def test_native_public_migration_of_ready_storage_restores_a_running_service(
         _cleanup(adapter)
 
 
-@pytest.mark.parametrize("originally_running", [True, False], ids=["running", "stopped"])
-@pytest.mark.parametrize("backup_blocked", [False, True], ids=["healthy-backup", "backup-retry"])
+@pytest.mark.parametrize(
+    ("originally_running", "failure"),
+    [(True, None), (False, None), (True, "backup"), (False, "backup"), (True, "startup"), (True, "switch")],
+    ids=["running", "stopped", "backup-retry-running", "backup-retry-stopped", "startup-retry", "switch-retry"],
+)
 def test_native_public_migration_switches_an_installed_130_service(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, originally_running: bool, backup_blocked: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, originally_running: bool, failure: str | None
 ) -> None:
     """Upgrade storage populated by the released service through its actual native manager."""
 
@@ -336,8 +340,8 @@ def test_native_public_migration_switches_an_installed_130_service(
             assert reviewed["service"]["originally_running"] is originally_running
             assert reviewed["service"]["definition"]["python_executable"] == definition.python_executable
             assert reviewed["service"]["target_definition"]["python_executable"] == service_python_executable()
-            if backup_blocked:
-                database = tmp_path / "data" / "powercontext.db"
+            database = tmp_path / "data" / "powercontext.db"
+            if failure == "backup":
                 blocked_directory = database.with_name(database.name + ".pc-migration-backups")
                 blocked_directory.write_text("Backup storage is unavailable.", encoding="utf-8")
                 failed = CliRunner().invoke(
@@ -373,20 +377,50 @@ def test_native_public_migration_switches_an_installed_130_service(
                 blocked_directory.unlink()
                 reviewed = _native_migration_command(cli, environment, "plan")
                 assert reviewed["service"]["originally_running"] is originally_running
-            result = _native_migration_command(
-                cli,
-                environment,
-                "apply",
-                "--backup",
-                "auto",
-                "--plan-id",
-                reviewed["plan_id"],
-                "--yes",
-                "--maintenance-confirmed",
-            )
-            assert result["server_ready"] is True
-            assert result["backup_state"] == "completed"
-            assert result["backup_ref"] and Path(result["backup_ref"]).is_file()
+            with _native_upgrade_fault(adapter, port, failure, monkeypatch):
+                applied = CliRunner().invoke(
+                    cli,
+                    [
+                        "server",
+                        "db-migrate",
+                        "apply",
+                        "--env-file",
+                        str(environment),
+                        "--manage-service",
+                        "--backup",
+                        "auto",
+                        "--plan-id",
+                        reviewed["plan_id"],
+                        "--yes",
+                        "--maintenance-confirmed",
+                    ],
+                )
+                result = json.loads(applied.output)
+                if failure in {"startup", "switch"}:
+                    assert applied.exit_code == 1, applied.output
+                    assert result["error"] == "service_start_failed"
+                    assert result["database_state"] == "ready" and result["revision"] == "s1401"
+                    assert adapter.manager_state() in {ManagerState.INACTIVE, ManagerState.FAILED}
+                    phase = "switching" if failure == "switch" else "start_failed"
+                    assert json.loads(controller.maintenance_path.read_text())["phase"] == phase
+                    if failure == "switch":
+                        assert adapter.inspect().definition == definition
+                    else:
+                        with socket.create_connection(("127.0.0.1", port), timeout=2):
+                            pass
+                else:
+                    assert applied.exit_code == 0, f"{applied.output}\n{applied.exception!r}"
+                    assert result["server_ready"] is True
+                    assert result["backup_state"] == "completed"
+                    assert result["backup_ref"] and Path(result["backup_ref"]).is_file()
+            if failure in {"startup", "switch"}:
+                before = database.read_bytes()
+                with server_settings_context(env_file=environment) as settings:
+                    assert deployment_runner(settings).verify().state == "ready"
+                assert database.read_bytes() == before
+                # Recovery starts the verified registration without another
+                # migration apply or backup.
+                assert controller.start().ok, _failure_diagnostics(adapter, tmp_path)
             installed = adapter.inspect().definition
             assert installed is not None
             assert installed.python_executable == service_python_executable()
@@ -406,6 +440,34 @@ def test_native_public_migration_switches_an_installed_130_service(
         with suppress(Exception):
             controller.uninstall()
         _cleanup(adapter)
+
+
+@contextmanager
+def _native_upgrade_fault(
+    adapter: NativeServiceAdapter, port: int, failure: str | None, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    with closing(socket.socket()) as listener, monkeypatch.context() as fault:
+        if failure == "startup":
+            native_start = adapter.start
+
+            def occupy_then_start(*, reload_definition: bool) -> None:
+                # Bind after migration and stopped checks, then let the actual
+                # native manager attempt to start the registered executable.
+                listener.bind(("127.0.0.1", port))
+                listener.listen(16)
+                native_start(reload_definition=reload_definition)
+
+            fault.setattr(adapter, "start", occupy_then_start)
+        elif failure == "switch":
+            native_replace = os.replace
+
+            def fail_definition_replace(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+                if Path(destination) == adapter.artifact_path:
+                    raise OSError(errno.ENOSPC, "Test registration storage is full")
+                native_replace(source, destination)
+
+            fault.setattr(os, "replace", fail_definition_replace)
+        yield
 
 
 def _native_migration_command(cli, environment: Path, action: str, *options: str) -> dict[str, Any]:
