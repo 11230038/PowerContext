@@ -31,6 +31,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from alembic import command
 from sqlalchemy import create_engine
@@ -260,6 +261,108 @@ def test_native_public_migration_of_ready_storage_restores_a_running_service(
         assert controller.status().ok, _failure_diagnostics(adapter, tmp_path)
         assert adapter.manager_state() is ManagerState.ACTIVE
         assert not controller.maintenance_path.exists()
+    finally:
+        _capture_native_failure(adapter, tmp_path)
+        with suppress(Exception):
+            controller.uninstall()
+        _cleanup(adapter)
+
+
+@pytest.mark.parametrize("originally_running", [True, False], ids=["running", "stopped"])
+def test_native_public_migration_switches_an_installed_130_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, originally_running: bool
+) -> None:
+    """Upgrade storage populated by the released service through its actual native manager."""
+
+    source = Path(os.environ["POWERCONTEXT_NATIVE_UPGRADE_SOURCE_PYTHON"])
+    source_version = _run(
+        str(source), "-I", "-c", 'from importlib.metadata import version; print(version("powercontext"))'
+    ).stdout.strip()
+    assert source_version == "1.3.0"
+    source_launcher = source.with_name("pythonw.exe") if os.name == "nt" else source
+    assert source_launcher.is_file()
+    adapter = _native_adapter(suffix=f"installed-upgrade-{'running' if originally_running else 'stopped'}")
+    controller = ServiceController(adapter)
+    environment = _environment_file(tmp_path)
+    with environment.open("a", encoding="utf-8") as output:
+        output.write(
+            "POWERCONTEXT_SERVER_AUTH_TOKEN=native-upgrade-fixture-token\nPOWERCONTEXT_SERVER_ACCESS_MODE=enforced\n"
+        )
+    port = _service_port(tmp_path)
+    assert port is not None
+    definition = ServiceDefinition(
+        ownership=OWNERSHIP_MARKER,
+        definition_version=DEFINITION_VERSION,
+        package_version=source_version,
+        python_executable=str(source_launcher.absolute()),
+        endpoint=f"http://127.0.0.1:{port}",
+        data_dir=str(tmp_path / "data"),
+        env_file=load_protected_environment_file(environment).identity,
+    )
+    try:
+        adapter.write(adapter.render(definition))
+        adapter.update_suspended()
+        # Starting a valid older executable intentionally leaves a stale-version
+        # status until migration switches the registration to this environment.
+        try:
+            controller.start()
+        except ServiceError as error:
+            pytest.fail(f"{error}\n\n{_failure_diagnostics(adapter, tmp_path)}")
+        assert adapter.manager_state() is ManagerState.ACTIVE, _failure_diagnostics(adapter, tmp_path)
+        with httpx.Client(
+            base_url=definition.endpoint,
+            headers={"Authorization": "Bearer native-upgrade-fixture-token"},
+            timeout=30,
+            trust_env=False,
+        ) as client:
+            created = client.post(
+                "/v1/scopes",
+                json={
+                    "title": "Installed service upgrade",
+                    "summary": "Preserve data across the native executable switch.",
+                    "idempotency_key": "native-installed-upgrade",
+                },
+            )
+            assert created.is_success, created.text
+            scope_id = created.json()["scope_id"]
+            if not originally_running:
+                controller.stop()
+            # Select this isolated registration; the manager and migration remain real.
+            monkeypatch.setattr(database_migration, "ServiceController", lambda: controller)
+            cli = create_cli([server_app])
+            reviewed = _native_migration_command(cli, environment, "plan")
+            assert reviewed["state"] == "migration_required"
+            assert reviewed["service"]["originally_running"] is originally_running
+            assert reviewed["service"]["definition"]["python_executable"] == definition.python_executable
+            assert reviewed["service"]["target_definition"]["python_executable"] == service_python_executable()
+            result = _native_migration_command(
+                cli,
+                environment,
+                "apply",
+                "--backup",
+                "auto",
+                "--plan-id",
+                reviewed["plan_id"],
+                "--yes",
+                "--maintenance-confirmed",
+            )
+            assert result["server_ready"] is True
+            assert result["backup_state"] == "completed"
+            assert result["backup_ref"] and Path(result["backup_ref"]).is_file()
+            installed = adapter.inspect().definition
+            assert installed is not None
+            assert installed.python_executable == service_python_executable()
+            assert installed.package_version == version("powercontext")
+            if not originally_running:
+                assert adapter.manager_state() in {ManagerState.INACTIVE, ManagerState.FAILED}
+                assert controller.maintenance_path.exists()
+                assert controller.start().ok, _failure_diagnostics(adapter, tmp_path)
+            assert controller.status().ok, _failure_diagnostics(adapter, tmp_path)
+            assert not controller.maintenance_path.exists()
+            retained = client.get(f"/v1/scopes/{scope_id}")
+            assert retained.is_success, retained.text
+            assert retained.json()["title"] == "Installed service upgrade"
+            assert client.get("/health/ready").status_code == 200
     finally:
         _capture_native_failure(adapter, tmp_path)
         with suppress(Exception):

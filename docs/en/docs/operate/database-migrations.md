@@ -414,6 +414,14 @@ that it stays stopped until an explicit start, and completes service maintenance
 Each operating system requires its own native run. A frozen baseline fixture is distinct from upgrading a database
 populated by an installed historical release.
 
+The suite also installs the actual 1.3.0 wheel in a separate environment, starts it through the native manager and
+populates a Scope through HTTP. Both running and stopped service cases use the public maintenance command, verify the
+backup and retained data, and confirm that registration switches to the target executable while preserving the intended
+running state. The CI setup verifies the source wheel's SHA-256 and supplies
+`POWERCONTEXT_NATIVE_UPGRADE_SOURCE_PYTHON`; local native runs need the same installed-source interpreter. These cases
+cover SQLite service switching. Backend crash recovery and the full installed-release domain suite remain separate
+acceptance requirements.
+
 For manual deployment, stop the old service first. After a supported complete migration succeeds, ensure the launch
 definition points to the new environment before starting it. For foreground deployment, exit the old process and use the
 existing command from the new environment:
