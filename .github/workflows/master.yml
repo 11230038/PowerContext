@@ -345,7 +345,9 @@ jobs:
         run: make code-seekdb-test
 
       - name: Test unified migrations with embedded seekdb
-        timeout-minutes: 10
+        # The isolated full-Server cases exceed ten minutes in aggregate;
+        # each runner case retains its separate 180-second deadline below.
+        timeout-minutes: 15
         env:
           POWERCONTEXT_TEST_MIGRATION_SEEKDB: "1"
           POWERCONTEXT_TEST_MIGRATION_SQL_LOG: "1"
