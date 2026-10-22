@@ -293,6 +293,39 @@ def test_mysql_topic_bundle_refuses_managed_server_storage(backend: _BackendTarg
     assert not list(backend.evidence_directory.rglob("topic-memory-recovery.json"))
 
 
+def test_mysql_managed_identity_initialization_requires_no_ddl(backend: _BackendTarget) -> None:
+    from powercontext.builtin.persistence.oceanbase import OceanBaseProfile
+    from powercontext.builtin.persistence.seekdb import SeekDBProfile
+    from powercontext.server.identity import ServerIdentityRepository
+
+    _load_full_server_baseline(backend)
+    _apply(_full_server_runner(backend), policy="manual")
+
+    async def scenario():
+        opened = (
+            OceanBaseProfile.open(backend.config, tables=())
+            if isinstance(backend.config, OceanBaseConfig)
+            else SeekDBProfile.open(backend.config, tables=())
+        )
+        async with opened as profile:
+
+            @event.listens_for(profile.database.engine.sync_engine, "before_cursor_execute")
+            def reject_ddl(_connection, _cursor, statement, _parameters, _context, _executemany):
+                assert not statement.lstrip().upper().startswith(("CREATE ", "ALTER ", "DROP ")), (
+                    "Managed identity initialization must not issue DDL"
+                )
+
+            repository = ServerIdentityRepository(profile.database)
+            await repository.initialize()
+            original = await repository.load_or_create()
+            assert await repository.load_or_create() == original
+            rotated = await repository.rotate()
+            assert rotated != original and await repository.load_or_create() == rotated
+
+    asyncio.run(scenario())
+    assert _full_server_runner(backend).verify().state == "ready"
+
+
 def test_mysql_maintenance_commits_rolls_back_and_reopens_for_ddl(backend: _BackendTarget) -> None:
     def create(connection: Connection | None, _identity: BackendIdentity, _guard: Callable[[], None]) -> None:
         assert connection is not None

@@ -24,6 +24,9 @@ Candidate 旧表保留为 `pc_retained_dream_candidate_heads` 和 `pc_retained_d
 
 普通 Server 启动先做只读就绪检查，不修补已有库。空的本地持久 SQLite/seekDB 可通过同一版本链初始化；OceanBase 必须先执行显式维护命令初始化。内存 SQLite 仍为临时运行时存储。迁移后发现结构或投影被篡改，必须停写维护，不能靠重启修复。
 
+Server identity 初始化在受管库上只检查已登记的表，不执行 DDL。首次创建 identity 值以及显式轮换已停止副本的
+identity，仍使用原有事务语义。
+
 无向量、Code 关闭之外的既有新建部署仍使用原领域初始化和启动检查，不会自动纳入此版本链；这些配置不属于已登记升级范围。受管数据库不能通过切换配置绕过检查或隐式增加向量/Code 表。
 
 `--bundle artifacts` 保留 `p0001` 开始的局部 Artifact 原型链；`--bundle topic-memory-recovery` 只处理登记的 Topic 恢复布局。两者均报告 `server_ready=false`，不得用于证明完整 Server 就绪，也不能把其版本号直接 stamp 为完整 Server 版本。

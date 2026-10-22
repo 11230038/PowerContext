@@ -26,6 +26,9 @@ Revision `s1401` registers `pc_memory_artifact_archive` in the managed target sc
 
 Ordinary Server startup checks readiness without repairing an existing database. Empty local persistent SQLite/seekDB storage initializes through the same revision chain; OceanBase requires an explicit maintenance job first. In-memory SQLite remains transient runtime storage. A changed schema or inconsistent projection requires maintenance, not restart-based repair.
 
+Server identity initialization checks registered tables without issuing DDL on managed storage. Creating the initial
+identity value and explicitly rotating a stopped clone's identity retain their existing transactional behavior.
+
 Existing fresh deployments outside the no-vector, Code-disabled profile retain domain bootstrap and startup checks; they are not automatically adopted into this chain or covered by its upgrade support. Changing configuration cannot bypass admission or implicitly add vector/Code objects to managed storage.
 
 `--bundle artifacts` retains the partial Artifact prototype chain starting at `p0001`; `--bundle topic-memory-recovery` covers only registered Topic recovery layouts. Both report `server_ready=false`. Neither establishes full Server readiness, and their revisions cannot be stamped as full Server revisions.
