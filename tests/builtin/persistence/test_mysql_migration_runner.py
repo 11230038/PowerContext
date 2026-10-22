@@ -437,7 +437,9 @@ def test_mysql_registered_processing_mode_switch_preserves_revision_and_history(
     assert backend.connections().run(inspect_history) == ("s1401", "dedicated", b'{"history":"unchanged"}')
 
 
-def test_mysql_atomic_compatibility_command_uses_shared_server_upgrade(backend: _BackendTarget, monkeypatch) -> None:
+def test_mysql_atomic_compatibility_command_uses_shared_server_upgrade(
+    backend: _BackendTarget, monkeypatch, capsys
+) -> None:
     _load_full_server_baseline(backend)
     monkeypatch.setenv("POWERCONTEXT_SERVER_DATABASE_KIND", backend.config.kind)
     if isinstance(backend.config, SeekDBConfig):
@@ -453,14 +455,18 @@ def test_mysql_atomic_compatibility_command_uses_shared_server_upgrade(backend: 
         "--lock-coordination",
         "single-host",
     ]
-    inspected = CliRunner().invoke(cli, [*arguments, "--action", "plan", "--backup", "manual"])
+    def invoke(options):
+        # Pytest live SQL logging suspends capture during emit. Keep its
+        # stream switching outside Typer's independent stdout isolation.
+        with capsys.disabled():
+            return CliRunner().invoke(cli, [*arguments, *options])
+
+    inspected = invoke(["--action", "plan", "--backup", "manual"])
     assert inspected.exit_code == 0, inspected.output
     plan = json.loads(inspected.output)
     assert plan["source_revision"] == "s1300" and plan["readiness_scope"] == "server"
-    applied = CliRunner().invoke(
-        cli,
+    applied = invoke(
         [
-            *arguments,
             "--action",
             "apply",
             "--plan-id",
@@ -476,10 +482,10 @@ def test_mysql_atomic_compatibility_command_uses_shared_server_upgrade(backend: 
     )
     assert applied.exit_code == 0, applied.output
     assert json.loads(applied.output)["backup_ref"] == "operator://native-atomic-backup"
-    verified = CliRunner().invoke(cli, [*arguments, "--action", "verify"])
+    verified = invoke(["--action", "verify"])
     assert verified.exit_code == 0, verified.output
     assert json.loads(verified.output)["readiness_scope"] == "server"
-    repeated = CliRunner().invoke(cli, [*arguments, "--action", "apply", "--maintenance-confirmed"])
+    repeated = invoke(["--action", "apply", "--maintenance-confirmed"])
     assert repeated.exit_code == 0, repeated.output
     assert json.loads(repeated.output)["changed"] is False
 
