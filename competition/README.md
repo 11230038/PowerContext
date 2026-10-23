@@ -7,19 +7,19 @@
 | 赛题 | 分值 | 题面 | 本地自测 |
 | --- | ---: | --- | --- |
 | 一：准备 PowerContext 参赛仓库 | 10 | [仓库准备](challenges/setup-00-repository-fork/instruction.md) | `make check-baseline` |
-| 二：CSV 行级采集与原始记录回查 | 10 | [CSV](challenges/source-01-table-evidence/instruction.md) | `make test-csv` |
+| 二：CSV 行级采集与原始记录回查 | 20 | [CSV](challenges/source-01-table-evidence/instruction.md) | `make test-csv` |
 | 三：Pi 会话分支采集与断点恢复 | 20 | [Pi](challenges/source-02-pi-history/instruction.md) | `make test-pi` |
 | 四：财报 PDF 全文解析与证据页检索 | 50 | [PDF](challenges/source-03-pdf-retrieval/instruction.md) | `make test-pdf` |
-| 五：HTTP 重排服务接入与跨批次排序 | 10 | [HTTP 重排](challenges/retrieval-01-reranking/instruction.md) | `make test-rerank` |
-| 六：上下文增量传输与完整重建 | 10 | [增量上下文](challenges/context-02-incremental-pack/instruction.md) | `make test-incremental` |
-| 七：按新增来源条目数触发记忆处理 | 10 | [数量触发](challenges/processing-01-count-trigger/instruction.md) | `make test-count-trigger` |
+| 五：HTTP 重排服务接入与跨批次排序 | 20 | [HTTP 重排](challenges/retrieval-01-reranking/instruction.md) | `make test-rerank` |
+| 六：上下文增量传输与完整重建 | 20 | [增量上下文](challenges/context-02-incremental-pack/instruction.md) | `make test-incremental` |
+| 七：按新增来源条目数触发记忆处理 | 20 | [数量触发](challenges/processing-01-count-trigger/instruction.md) | `make test-count-trigger` |
 | 八：Embedding 并发请求合并与向量缓存 | 20 | [Embedding](challenges/memory-02-embedding-batches/instruction.md) | `make test-embedding` |
 | 九：来源撤回后的记忆停用与恢复 | 20 | [来源生命周期](challenges/memory-01-source-lifecycle/instruction.md) | `make test-lifecycle` |
 | 十：按查询和预算选择原文证据 | 20 | [证据选择](challenges/context-01-evidence-selection/instruction.md) | `make test-evidence` |
 | 十一：seekdb 混合检索的单 SQL 候选查询 | 20 | [混合检索](challenges/retrieval-02-hybrid-search/instruction.md) | `make test-hybrid` |
-| 合计 | **200** | | |
+| 合计 | **240** | | |
 
-表中的命令在 `competition/` 运行。Pi 题采用当前平台的 20 分配置；每道代码题按完整验收是否通过计分。本地命令只给出公开测试结果，不生成或上报比赛成绩，公开测试通过也不代表已经满足题面全部质量与性能要求。
+表中的命令在 `competition/` 运行。每道代码题按完整验收是否通过计分。本地命令只给出公开测试结果，不生成或上报比赛成绩，公开测试通过也不代表已经满足题面全部质量与性能要求。
 
 ## 在本机运行公开测试
 

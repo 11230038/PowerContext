@@ -4,7 +4,7 @@
 | --- | --- |
 | 项目 | PowerContext |
 | 编号 | `source-01-table-evidence` |
-| 总分 | 10 分 |
+| 总分 | 20 分 |
 | 任务 | 按主键逐行采集离线 CSV，使检索引用能够回查完整原始记录 |
 | 提交产物 | 产品仓库 HTTPS URL 和完整 commit SHA |
 | 冻结版本 | [PowerContext v1.2.0](https://github.com/oceanbase/powercontext/tree/9db1753434162c0aa7c9f1189a1722e617880a52)，commit `9db1753434162c0aa7c9f1189a1722e617880a52` |
@@ -87,7 +87,7 @@ Source 须能通过真实 `SourceDefinitionRegistry` resolve/read、生成 manif
 
 ## 四、评分标准
 
-本题共 10 分。全部必测行为通过得 10 分，任一失败得 0 分，不按子项计部分分。
+本题共 20 分。全部必测行为通过得 20 分，任一失败得 0 分，不按子项计部分分。
 
 | 必测组 | 通过条件 |
 | --- | --- |

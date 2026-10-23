@@ -4,7 +4,7 @@
 | --- | --- |
 | 项目 | PowerContext |
 | 编号 | `processing-01-count-trigger` |
-| 总分 | 10 分 |
+| 总分 | 20 分 |
 | 任务 | 按待处理 Source 条目数自动启动 Memory 与 Topic Memory |
 | 提交产物 | 产品仓库 HTTPS URL 和完整 commit SHA |
 | 冻结版本 | [PowerContext v1.2.0](https://github.com/oceanbase/powercontext/tree/9db1753434162c0aa7c9f1189a1722e617880a52)，commit `9db1753434162c0aa7c9f1189a1722e617880a52` |
@@ -56,7 +56,7 @@ topic_memory_source_count_threshold: int | None = None
 
 ## 四、评分标准
 
-公开测试和平台必测组全部通过得 10 分；任一必测项失败得 0 分，不按子项计部分分。
+公开测试和平台必测组全部通过得 20 分；任一必测项失败得 0 分，不按子项计部分分。
 
 | 必测行为 | 通过要求 |
 | --- | --- |
