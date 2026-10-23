@@ -1134,11 +1134,16 @@ async def open_builtin_contexts(  # noqa: C901 -- Backend admission and resource
             load_vector_extension=embedding_model is not None,
         ) as profile:
             async with profile.database.transaction() as connection:
-                # This block is SQLite-only. Reserve SQLite's single-writer slot
-                # before startup schema reads, so concurrent Runtime openings cannot
-                # both establish a read snapshot and fail while upgrading to a write.
-                await connection.exec_driver_sql("BEGIN IMMEDIATE")
                 managed = await connection.run_sync(lambda sync: inspect(sync).has_table("pc_schema_revision"))
+                if managed:
+                    # Managed startup only validates; keep one read snapshot
+                    # without reserving SQLite's writer slot.
+                    await connection.exec_driver_sql("BEGIN")
+                else:
+                    # Unmanaged bootstrap may write. Recheck after taking the
+                    # writer slot in case a concurrent initializer registered it.
+                    await connection.exec_driver_sql("BEGIN IMMEDIATE")
+                    managed = await connection.run_sync(lambda sync: inspect(sync).has_table("pc_schema_revision"))
                 if managed:
                     await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
                     await atomic_index.validate_current(connection)
