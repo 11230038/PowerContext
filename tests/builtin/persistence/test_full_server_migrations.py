@@ -272,23 +272,17 @@ def test_code_with_separate_cache_upgrades_and_reopens_server(source, tmp_path):
 
 
 @pytest.mark.parametrize("bundle", ["server", "processing", "atomic-projection"])
-@pytest.mark.parametrize("configuration", ["vector", "embedded-code"])
-def test_unregistered_optional_storage_is_rejected_before_opening_database(tmp_path, bundle, configuration):
-    from powercontext.builtin.code import CodeConfig
+def test_unregistered_vector_storage_is_rejected_before_opening_database(tmp_path, bundle):
     from powercontext.builtin.persistence.migrations.deployment import deployment_runner
-    from powercontext.builtin.persistence.seekdb import SeekDBConfig
     from powercontext.builtin.runtime.config import InferenceConfig
     from powercontext.server.settings import ServerSettings
 
-    if configuration == "vector":
-        settings = ServerSettings(
-            database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'server.db'}"),
-            inference=InferenceConfig(
-                embedding_model="openai:fixture", embedding_profile_id="fixture", embedding_dimension=3
-            ),
-        )
-    else:
-        settings = ServerSettings(database=SeekDBConfig(path=tmp_path / "embedded"), code=CodeConfig(enabled=True))
+    settings = ServerSettings(
+        database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'server.db'}"),
+        inference=InferenceConfig(
+            embedding_model="openai:fixture", embedding_profile_id="fixture", embedding_dimension=3
+        ),
+    )
     with pytest.raises(MigrationError, match="unsupported_upgrade_configuration"):
         deployment_runner(settings, bundle=bundle)
     assert list(tmp_path.iterdir()) == []

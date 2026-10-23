@@ -3,8 +3,8 @@
   "target_version": "1.4.0",
   "mode": "upgrade-required",
   "schema_review": {
-    "persistence_sha256": "e7312f2ea747900b9eb99fbcce68618e783baf50fd4e2f7f4ffa7d0b88ceac85",
-    "rationale": "The shared s1300 -> s1400 -> s1401 chain registers the complete installed 1.3.0 no-vector Server database on SQLite, seekDB and OceanBase. SQLite and OceanBase may enable Code because its local cache is separate from this database; exact installed source inventories match the existing no-vector baselines. Admission preserves that ownership boundary instead of rejecting the flag. The installed-release matrix includes both Code-enabled backends and requires the source-built index to retain its fingerprint, symbols and immutable cache files through target Server queries. Vector profiles and embedded seekDB Code storage still require their own registered transitions. Frozen migration schemas, domain resources and released revision checksums remain unchanged. The chain preserves historical bytes, Source references, Candidate history and pending intents, fences old workers, and validates projections, Dream tasks, Processing ownership and live readiness. Registered maintenance shares the target lock, backup providers and durable recovery evidence; managed startup and identity admission do not perform schema changes. Processing mode changes and Atomic current projection repairs preserve revision and immutable authority, and resume from the original recovery point. Publication requires complete installed-release acceptance, repeated apply, old-startup rejection, background Worker execution and fresh-schema equivalence. Optional profile and complete native failure recovery acceptance remain incomplete."
+    "persistence_sha256": "120c6d0ebd99b90ee594603d3fed45d416e7b1af6a54d5b2344cd87a61f6de59",
+    "rationale": "The shared s1300 -> s1400 -> s1401 chain covers installed 1.3.0 no-vector Server storage on SQLite, seekDB and OceanBase with Code disabled or enabled. SQLite/OceanBase Code caches remain separate. The seekDB Code extension freezes three exact tables and their indexes captured from the installed source wheel. The same core chain preserves these rows and initializes this extension for a new Code-enabled database; all existing revision checksums remain unchanged. Complete source/target and DDL-prefix validation include the extension. Startup and standalone Code initialization cannot add or repair managed Code objects. Existing managed storage without Code tables cannot enable the feature by changing a flag. Code-enabled installed acceptance on all three backends checks original fingerprints, symbols and immutable cache files; embedded acceptance additionally compares exact graph-table row digests and fresh/upgraded schemas. Strict Server admission remains intact; Server test fixtures initialize through a Server before SDK writes. Target locks, original recovery points, acknowledgements, historical authority and backup policies remain shared. Vector configurations and complete recovery/restore acceptance remain unfinished; release policy stays upgrade-required."
   },
   "cases": [],
   "automatic_sources": {
@@ -33,6 +33,11 @@
       },
       {
         "backend": "oceanbase",
+        "configuration": "full-server-code",
+        "suite": "tests/release_upgrades/test_full_server.py"
+      },
+      {
+        "backend": "seekdb",
         "configuration": "full-server-code",
         "suite": "tests/release_upgrades/test_full_server.py"
       }

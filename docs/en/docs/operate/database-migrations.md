@@ -14,7 +14,7 @@ The design follows [RFC #1771](https://github.com/oceanbase/powercontext/pull/17
 
 `powercontext server db-migrate status/plan/apply/verify` default to `--bundle server` and use the configured persistent SQLite, embedded seekDB, or OceanBase MySQL database. Explicit environment files are authoritative; arbitrary bundle paths are not accepted.
 
-The full Server path registers the actual 1.3.0 no-vector configuration as `s1300 → s1400 → s1401`. Code may be enabled on SQLite and OceanBase: its local cache is separate from the Server database and remains unchanged by database maintenance. It covers the complete schema, Candidate renaming and retained history, Dream task formats, Processing ownership, full-text projections, and existing Source references. Unknown layouts, extra objects, vector configurations, embedded seekDB Code storage, and unregistered sources fail before writes. Older Memory collection conversion is outside this path.
+The full Server path registers the actual 1.3.0 no-vector configuration as `s1300 → s1400 → s1401`, with Code enabled or disabled on all three backends. SQLite and OceanBase keep Code in a separate local cache. Embedded seekDB Code adds three tables through a frozen schema extension captured from installed 1.3.0; maintenance preserves existing graph rows and creates the registered tables for a new Code-enabled database. The path covers the complete schema, Candidate renaming and retained history, Dream task formats, Processing ownership, full-text projections, and existing Source references. Unknown layouts, extra objects, vector configurations and unregistered sources fail before writes. Older Memory collection conversion is outside this path.
 
 Only successful schema, domain, projection, and task validation returns `state=ready`, `readiness_scope=server`, and `server_ready=true`. Publication also requires installed-artifact acceptance on all three backends. An implemented path is not evidence that a release passed acceptance; consult the installation guide and release gate for support status.
 
@@ -29,7 +29,7 @@ Ordinary Server startup checks readiness without repairing an existing database.
 Server identity initialization checks registered tables without issuing DDL on managed storage. Creating the initial
 identity value and explicitly rotating a stopped clone's identity retain their existing transactional behavior.
 
-Existing fresh deployments with vectors or embedded seekDB Code storage retain domain bootstrap and startup checks; they are not automatically adopted into this chain or covered by its upgrade support. Changing configuration cannot bypass admission or implicitly add vector/Code objects to managed storage. The release gate includes separate SQLite and OceanBase Code-enabled cases that build an index with installed 1.3.0, preserve the cache files, and query its original fingerprint and symbols after the upgrade.
+Existing fresh deployments with vectors retain domain bootstrap and startup checks; they are not automatically adopted into this chain or covered by its upgrade support. Changing configuration cannot bypass admission or implicitly add vector/Code objects to managed storage. Enabling embedded Code on an already managed database without its tables requires a separately registered configuration transition; startup and the standalone Code CLI reject it. The release gate includes separate Code-enabled cases on all three backends: build an index with installed 1.3.0, preserve its cache files and embedded graph rows, and query the original fingerprint and symbols after the upgrade.
 
 `--bundle artifacts` retains the partial Artifact prototype chain starting at `p0001`; `--bundle topic-memory-recovery` covers only registered Topic recovery layouts. Both report `server_ready=false`. Neither establishes full Server readiness, and their revisions cannot be stamped as full Server revisions.
 
@@ -67,7 +67,8 @@ that database for Server use. Full profile admission checks the registered Serve
 | `ServerIdentityRepository.initialize` | Check the identity table without DDL; identity value creation and explicit rotation are ordinary transactions | Retain concurrent-safe identity table initialization |
 | Offline Memory archive | The Server chain registers its structure at `s1401`; runtime admission checks it | Legacy offline Memory conversion owns its archive and conversion receipts |
 | `atomic-memory-migrate` and `processing-migrate` | Delegate to the shared Server or registered maintenance plan | Retain their domain-only behavior; recognized historical Server storage must use the full upgrade first |
-| Vector and embedded seekDB Code objects | No registered configuration transition; reject before adding objects | Retain existing feature bootstrap without claiming registered upgrade support |
+| Vector objects | No registered configuration transition; reject before adding objects | Retain existing feature bootstrap without claiming registered upgrade support |
+| Embedded seekDB Code objects | The registered Code profile creates and validates the three tables and full-text index; Code startup never repairs missing managed objects | Recognize the complete released Code-enabled layout for explicit migration; retain standalone unmanaged Code bootstrap |
 | Separate Code cache on SQLite/OceanBase | Preserve existing cache files; main database follows the shared chain | Code service owns local cache creation and indexing |
 
 These helpers remain available to their owning runtime or maintenance operations; calling a low-level helper directly
@@ -78,7 +79,8 @@ initialization; successfully opening an inspection connection does not establish
 
 Code's embedded seekDB store adds `pc_code_generations`, `pc_code_nodes`, `pc_code_edges` and `ix_code_search` to the
 deployment database. Other Code deployments use a local SQLite cache. These are derived indexes owned by the Code
-service; their existence does not register an embedded Code Server baseline or permit implicit managed-schema expansion.
+service; the frozen extension registers their schema for maintenance and full Server admission. A partial or changed
+extension fails validation. Its existence does not permit implicit managed-schema expansion.
 Code caches on SQLite/OceanBase do not change the main database layout.
 
 ## Processing configuration maintenance

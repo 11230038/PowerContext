@@ -172,5 +172,8 @@
     "schemas/mysql-s1400.json",
     "schemas/mysql-s1401.json"
   ],
-  "mysql_history": "mysql"
+  "mysql_history": "mysql",
+  "mysql_schema_extensions": {
+    "seekdb_code": "profiles/seekdb-code.json"
+  }
 }

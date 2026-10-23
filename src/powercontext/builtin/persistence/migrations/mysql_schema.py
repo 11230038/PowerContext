@@ -140,14 +140,19 @@ def read_revision(
 class MySQLSchema:
     """Validate source, intermediate and post-DDL shapes from frozen resources."""
 
-    def __init__(self, bundle: MigrationBundle) -> None:  # noqa: C901 -- Keep ordered admission checks with their operation.
+    def __init__(self, bundle: MigrationBundle, *, embedded_code: bool = False) -> None:  # noqa: C901 -- Keep ordered admission checks with their operation.
         self.bundle = bundle
         self.revisions = bundle.revisions
         manifest = json.loads((bundle.snapshot_directory / "manifest.json").read_text())
         self.optional_table_options = {}
+        self.affected_objects = bundle.affected_objects
         if "mysql_state_layouts" in manifest:
             self._load_state_layouts(manifest["mysql_state_layouts"])
+            if embedded_code:
+                self._extend_embedded_code(manifest)
             return
+        if embedded_code:
+            raise MigrationError("invalid_bundle", "Embedded Code needs a registered complete Server layout.")
         self.bundle = bundle
         if not bundle.mysql_layouts:
             raise MigrationError("invalid_bundle", "MySQL layout steps are not registered in this bundle.")
@@ -251,6 +256,38 @@ class MySQLSchema:
             operation(connection, "@" + name, configuration)
         else:
             connection.exec_driver_sql(statement, execution_options={"no_parameters": True})
+
+    def _extend_embedded_code(self, manifest: dict[str, Any]) -> None:
+        resource = manifest.get("mysql_schema_extensions", {}).get("seekdb_code")
+        if resource not in self.bundle.resources:
+            raise MigrationError("invalid_bundle", "Embedded Code has no frozen schema registration.")
+        profile = json.loads((self.bundle.snapshot_directory / resource).read_text(encoding="utf-8"))
+        revision = profile["source_revision"]
+        statements = profile["statements"]
+        tables = profile["tables"]
+        if (
+            profile.get("format") != "powercontext.mysql-schema-extension.v1"
+            or profile.get("backend") != "seekdb"
+            or revision != self.revisions[0]
+            or not statements
+            or dict(_parse_table(sql) for sql in statements) != tables
+            or any(set(tables) & set(state["tables"]) for state in self._schemas.values())
+        ):
+            raise MigrationError("invalid_bundle", "The embedded Code schema registration is inconsistent.")
+        # Preserve the released Code tables through every core transition. A new
+        # database creates the same registered extension in the baseline revision.
+        state = copy.deepcopy(self._schemas[revision])
+        for statement in statements:
+            name, table = _parse_table(statement)
+            state["tables"][name] = table
+            self._prefixes[revision].append(copy.deepcopy(state))
+        self._statements[revision] += tuple(statements)
+        self._schemas[revision] = state
+        for later in self.revisions[1:]:
+            for prefix in self._prefixes[later]:
+                prefix["tables"].update(copy.deepcopy(tables))
+            self._schemas[later]["tables"].update(copy.deepcopy(tables))
+        self.affected_objects = (*self.affected_objects, *tables)
 
     @staticmethod
     def fingerprint(inventory: dict[str, Any]) -> str:

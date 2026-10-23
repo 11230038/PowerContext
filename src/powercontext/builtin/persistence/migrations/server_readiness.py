@@ -48,8 +48,12 @@ def check_server_layout(connection):
         if connection.exec_driver_sql("PRAGMA foreign_key_check").first():
             raise MigrationError("verification_failed", "A live foreign key is invalid.")
     else:
-        schema = MySQLSchema(bundle)
-        schema.verify(mysql_inventory(connection), bundle.head)
+        inventory = mysql_inventory(connection)
+        embedded_code = connection.engine.url.drivername == "mysql+aseekdb" and any(
+            name.startswith("pc_code_") for name in inventory["tables"]
+        )
+        schema = MySQLSchema(bundle, embedded_code=embedded_code)
+        schema.verify(inventory, bundle.head)
     return bundle
 
 
@@ -59,11 +63,7 @@ def prepare_server_storage(settings, *, injected_embedding=False):
     database = settings.database
     if database.kind == "sqlite" and database.is_in_memory:
         return
-    if (
-        injected_embedding
-        or settings.inference.embedding_model is not None
-        or (settings.code.enabled and database.kind == "seekdb")
-    ):
+    if injected_embedding or settings.inference.embedding_model is not None:
         _check_unmanaged_optional_profile(database)
         return
     if database.kind == "oceanbase":

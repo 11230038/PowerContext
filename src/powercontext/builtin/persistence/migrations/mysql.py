@@ -155,9 +155,12 @@ class MySQLMigrationRunner:
     ) -> None:
         self.connections = connections
         self.bundle = bundle
-        self.schema = MySQLSchema(bundle)
         self.evidence_directory = evidence_directory.expanduser().resolve()
         self.configuration = json.loads(json.dumps(configuration or {}))
+        embedded_code = self.configuration.get("embedded_code_enabled", False)
+        if embedded_code and connections.config.kind != "seekdb":
+            raise MigrationError("unsupported_upgrade_configuration", "Embedded Code storage requires seekDB.")
+        self.schema = MySQLSchema(bundle, embedded_code=embedded_code)
         self.configuration_digest = digest(self.configuration)
         if connections.config.kind == "oceanbase":
             if (
@@ -693,7 +696,7 @@ class MySQLMigrationRunner:
             source_revision=revision,
             bundle_checksum=self.checksum,
             maintenance_window_id=window,
-            objects=self.bundle.affected_objects,
+            objects=self.schema.affected_objects,
             writers_stopped=True,
         )
 

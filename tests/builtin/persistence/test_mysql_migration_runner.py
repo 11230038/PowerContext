@@ -492,6 +492,82 @@ def test_oceanbase_server_upgrade_with_separate_code_cache_preserves_history(
     assert backend.connections().run(history) == b'{"history":"unchanged"}'
 
 
+@pytest.mark.parametrize("backend", ("seekdb",), indirect=True)
+@pytest.mark.parametrize("origin", ("empty", "released"))
+def test_embedded_code_migration_preserves_registered_tables_and_reopens_server(
+    backend: _BackendTarget, tmp_path: Path, origin: str
+) -> None:
+    from powercontext.builtin.code import CodeConfig
+    from powercontext.builtin.persistence.dream_schema import check_dream_schema
+    from powercontext.builtin.persistence.migrations.server_readiness import prepare_server_storage
+
+    bundle = server_bundle()
+    profile = json.loads((bundle.snapshot_directory / "profiles/seekdb-code.json").read_text())
+    names = tuple(profile["tables"])
+    if origin == "released":
+        _load_full_server_baseline(backend)
+
+        def populate(connection, _identity, _guard):
+            for statement in profile["statements"]:
+                connection.exec_driver_sql(statement, execution_options={"no_parameters": True})
+            connection.exec_driver_sql(
+                "INSERT INTO pc_code_generations VALUES (%s,%s,%s,0,0,0)",
+                ("a" * 32, "b" * 64, "c" * 64),
+            )
+            connection.commit()
+
+        backend.connections().run(populate)
+    settings = ServerSettings(
+        database=backend.config,
+        code=CodeConfig(enabled=True, cache_dir=tmp_path / "code-cache"),
+    )
+    runner = cast(MySQLMigrationRunner, deployment_runner(settings, evidence_dir=backend.evidence_directory))
+    plan = runner.plan(backup_policy="manual")
+    assert plan.source_revision == ("s1300" if origin == "released" else None)
+    result = _apply(runner, policy="manual")
+    assert result.state == "ready" and result.revision == bundle.head and result.readiness_scope == "server"
+    assert runner.verify().state == "ready"
+    prepare_server_storage(settings)
+
+    def read(connection, _identity, _guard):
+        check_dream_schema(connection)
+        inventory = mysql_inventory(connection)
+        assert {name: inventory["tables"][name] for name in names} == profile["tables"]
+        return connection.exec_driver_sql("SELECT * FROM pc_code_generations").all()
+
+    assert backend.connections().run(read) == (
+        [("a" * 32, "b" * 64, "c" * 64, 0, 0, 0)] if origin == "released" else []
+    )
+    assert not _apply(runner, policy="manual").changed
+
+    def damage(connection, _identity, _guard):
+        connection.exec_driver_sql("DROP INDEX ix_code_name ON pc_code_nodes")
+
+    backend.connections().run(damage)
+    with pytest.raises(MigrationError):
+        prepare_server_storage(settings)
+    with pytest.raises(MigrationError):
+        backend.connections().run(read)
+
+
+@pytest.mark.parametrize("backend", ("seekdb",), indirect=True)
+def test_code_service_cannot_add_unregistered_tables_to_managed_storage(
+    backend: _BackendTarget, tmp_path: Path
+) -> None:
+    from powercontext.builtin.code import CodeConfig, CodeError
+    from powercontext.builtin.code.configuration import open_code_service
+
+    _apply(_full_server_runner(backend), policy="manual")
+
+    async def open_service():
+        async with open_code_service(CodeConfig(enabled=True, cache_dir=tmp_path / "code-cache"), backend.config):
+            pytest.fail("Code cannot implicitly expand the managed Server schema")
+
+    with pytest.raises(CodeError, match="code_storage_unavailable"):
+        asyncio.run(open_service())
+    assert _full_server_runner(backend).verify().state == "ready"
+
+
 def test_mysql_registered_processing_mode_switch_preserves_revision_and_history(backend: _BackendTarget) -> None:
     _load_full_server_baseline(backend)
     _apply(_full_server_runner(backend), policy="manual")

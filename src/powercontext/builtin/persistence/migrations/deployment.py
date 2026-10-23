@@ -89,14 +89,14 @@ def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
     database = settings.database
     configuration = _migration_configuration(settings)
     if bundle in {"server", "processing", "atomic-projection"}:
-        if settings.inference.embedding_model is not None or (
-            settings.code.enabled and isinstance(database, SeekDBConfig)
-        ):
+        if settings.inference.embedding_model is not None:
             raise MigrationError(
                 "unsupported_upgrade_configuration",
-                "The registered 1.3.0 Server path requires no vector provider or embedded Code storage.",
+                "The registered 1.3.0 Server path requires no vector provider.",
             )
         configuration["embedding_enabled"] = False
+        if settings.code.enabled and isinstance(database, SeekDBConfig):
+            configuration["embedded_code_enabled"] = True
     selected = server_bundle() if bundle in {"server", "processing", "atomic-projection"} else production_bundle()
     maintenance_runner = (
         AtomicProjectionMigrationRunner if bundle == "atomic-projection" else ProcessingConfigurationMigrationRunner

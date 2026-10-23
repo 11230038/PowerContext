@@ -393,9 +393,6 @@ def case(model_gateway):
     assert os.environ["PC_UPGRADE_SOURCE_VERSION"] == "1.3.0", "Add a reviewed adapter for another source release"
     configuration = os.environ["PC_UPGRADE_CONFIGURATION"]
     assert configuration in {"full-server-no-vector", "full-server-code"}, "Unregistered acceptance configuration"
-    assert configuration != "full-server-code" or os.environ["PC_UPGRADE_BACKEND"] != "seekdb", (
-        "Embedded Code storage requires its own registered migration"
-    )
     return {
         "source": Path(os.environ["PC_UPGRADE_SOURCE_PYTHON"]),
         "target": Path(os.environ["PC_UPGRADE_TARGET_PYTHON"]),
@@ -448,7 +445,8 @@ def historical_code(case, scope):
         symbols = [item for item in result["items"] if item["name"] == "upgrade_code_evidence"]
         assert symbols and all(item["path"] == "evidence.py" for item in symbols)
     cache = code_cache_snapshot(case)
-    assert any(name.endswith("/graph.sqlite") for name in cache)
+    graph_file = "/graph.json" if case["backend"] == "seekdb" else "/graph.sqlite"
+    assert any(name.endswith(graph_file) for name in cache)
     return {"fingerprint": result["fingerprint"], "symbols": symbols, "cache_sha256": cache}
 
 
@@ -573,6 +571,11 @@ def preserved_code(case, migrated):
     historical = migrated["historical"]
     source = historical["code"]
     assert code_cache_snapshot(case) == source["cache_sha256"]
+    if case["backend"] == "seekdb":
+        names = ("pc_code_generations", "pc_code_nodes", "pc_code_edges")
+        before = historical["schema"]["data_sha256"]
+        after = migrated["schema"]["data_sha256"]
+        assert {name: before[name] for name in names} == {name: after[name] for name in names}
     with server(
         case["target"], environment_for(case), case["work"], case["report"] / "target-code-server.log"
     ) as client:

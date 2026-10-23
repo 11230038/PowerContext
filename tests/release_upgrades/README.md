@@ -19,7 +19,10 @@ source wheels, invalid artifact metadata, catalog outages, and a target at or be
 Evidence records the catalog digest, exact source artifact, target artifact digest, and expanded matrix. The resolver
 requires universal `py3-none-any` wheels; a distribution format change must extend it explicitly.
 
-All three profiles use `test_full_server.py`. It starts the installed 1.3.0 Server, writes data through HTTP,
+All six profiles use `test_full_server.py`: Code enabled or disabled on SQLite, seekDB and OceanBase.
+Code cases preserve immutable cache files and original fingerprint/symbol identities. Embedded seekDB additionally
+preserves the exact graph-table row digests through maintenance; its frozen extension creates the same schema for fresh storage.
+The suite starts the installed 1.3.0 Server, writes data through HTTP,
 stops it, seeds a pending processing intent using the installed SDK, and runs the target wheel's public
 `server db-migrate status/plan/apply/verify` commands. Verification must report `state=ready` and `server_ready=true`.
 The target Server must then start, preserve data and permissions, accept new writes, and support retrieval.
