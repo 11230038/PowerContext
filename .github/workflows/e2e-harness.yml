@@ -242,7 +242,7 @@ jobs:
       ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite != 'recall-effort') &&
           (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.suites || '{}').database) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 100
     env:
       OCEANBASE_IMAGE: ghcr.io/oceanbase/oceanbase-ce:4.3.5.6-106000012026040916
       POWERCONTEXT_TEST_MIGRATION_OCEANBASE_URL: >-
@@ -330,7 +330,7 @@ jobs:
             tests/e2e/test_background_metrics.py
 
       - name: Run clean migration evidence, grants and vectors without skips
-        timeout-minutes: 45
+        timeout-minutes: 60
         run: |
           uv run --locked python scripts/run_atomic_memory_clean_migration.py \
             oceanbase --output "$MIGRATION_REPORTS/clean-migration"

@@ -16,15 +16,22 @@
 
 from pathlib import Path
 
+from powercontext.builtin.artifacts.memory import EmbeddingProfile
 from powercontext.builtin.persistence.migrations.deployment import deployment_runner
 from powercontext.server.settings import ServerSettings
 
 
-def prepare_server_database(settings: ServerSettings, *, evidence_dir: Path | None = None) -> None:
+def prepare_server_database(
+    settings: ServerSettings,
+    *,
+    evidence_dir: Path | None = None,
+    embedding_profile: EmbeddingProfile | None = None,
+) -> None:
     runner = deployment_runner(
         settings,
         evidence_dir=evidence_dir,
         lock_coordination="single-host" if settings.database.kind == "oceanbase" else None,
+        embedding_profile=embedding_profile,
     )
     plan = runner.plan(backup_policy="skip")
     assert plan.state in {"uninitialized", "ready"}

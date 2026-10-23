@@ -202,10 +202,17 @@ def _server_settings(
     )
 
 
-def _initialize_remote_server_storage(settings: ServerSettings, tmp_path: Path) -> None:
+def _initialize_remote_server_storage(
+    settings: ServerSettings, tmp_path: Path, *, embedding_profile: EmbeddingProfile | None = None
+) -> None:
     if not isinstance(settings.database, OceanBaseConfig):
         return
-    runner = deployment_runner(settings, evidence_dir=tmp_path / "migration-evidence", lock_coordination="single-host")
+    runner = deployment_runner(
+        settings,
+        evidence_dir=tmp_path / "migration-evidence",
+        lock_coordination="single-host",
+        embedding_profile=embedding_profile,
+    )
     plan = runner.plan(backup_policy="skip")
     result = runner.apply(
         plan_id=plan.plan_id,
@@ -821,12 +828,12 @@ def test_sdk_closes_the_delegation_handoff_and_outcome_loop(tmp_path: Path) -> N
 @pytest.mark.parametrize("database_kind", ["sqlite", "oceanbase"])
 def test_server_databases_share_vector_and_hybrid_search_behavior(
     database: SQLiteConfig | OceanBaseConfig,
+    tmp_path: Path,
 ) -> None:
+    settings = ServerSettings(database=database, mcp=McpConfig(enabled=False))
+    _initialize_remote_server_storage(settings, tmp_path, embedding_profile=EMBEDDING_PROFILE)
     app = create_server_app(
-        settings=ServerSettings(
-            database=database,
-            mcp=McpConfig(enabled=False),
-        ),
+        settings=settings,
         candidate_pipeline=atomic_memory_pipeline(ContentCandidatePipeline()),
         embedding_model=KeywordEmbeddingModel(),
     )
