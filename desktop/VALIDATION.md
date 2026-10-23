@@ -22,7 +22,7 @@ cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
 
 ## Compatibility scope
 
-[compatibility.json](src-tauri/src/connections/compatibility.json) preserves the recorded Server sources, normalized OpenAPI contract digests and qualification-wheel digests for the historical profiles below. The current contract is qualified by `sqlite-atomic-d9a78567-v1` below; ordinary builds require explicitly selecting it and checking the connection before business operations become available. The `sqlite-atomic-caf2a35a-v1`, `sqlite-atomic-683e2db0-v1` and `sqlite-atomic-cab054db-v1` records qualify their corresponding Server source deployments and do not match this bundled contract. Historical records are disabled in the selector, and saved unavailable selections remain visible until explicitly replaced. CI builds have their own artifact identities and do not change product qualification.
+[compatibility.json](src-tauri/src/connections/compatibility.json) preserves the recorded Server sources, normalized OpenAPI contract digests and qualification-wheel digests for the historical profiles below. The current contract is qualified by `sqlite-atomic-1da99747-v1` below; ordinary builds require explicitly selecting it and checking the connection before business operations become available. The `sqlite-atomic-d9a78567-v1`, `sqlite-atomic-caf2a35a-v1`, `sqlite-atomic-683e2db0-v1` and `sqlite-atomic-cab054db-v1` records qualify their corresponding Server source deployments and do not match this bundled contract. Historical records are disabled in the selector, and saved unavailable selections remain visible until explicitly replaced. CI builds have their own artifact identities and do not change product qualification.
 
 The real Server harness covers SQLite with anonymous loopback, static Bearer, HTTPS with explicit CA/base path, and injected-provider/enforced access. It exercises save/search/exact reads, identity changes, binding revocation, ambiguous writes without replay and Scope pagination. Installed UI checks cover repeated launches preserving the existing editor, late committed-save responses preserving a new Scope draft, explicit connection/Scope selection, clipboard copies, connection isolation, draft cancellation, byte limits and independent Server survival after Desktop exit.
 
@@ -30,9 +30,64 @@ Selecting a compatibility profile does not attest the remote binary identity. Ex
 
 ### Current Server protocol qualification
 
+#### Server 1da99747 protocol qualification
+
+`sqlite-atomic-1da99747-v1` qualifies Server sources at
+`1da997476651c2850ff7141e2b7cd512d0152a90` for the bundled OpenAPI digest
+`5878999ce9e239d6642e4da858074b281ed465629432c578b3584eec47cbce6c`. The qualification wheel is
+`powercontext-0.1.dev1120+g2066de01d-py3-none-any.whl`, SHA-256
+`f87da56c813fe0e994ba60c29e8ba99eb48567dc561ac9f19ac2979e0599c1a6`. It was built from clean Desktop commit
+`2066de01dbd27d08eb01a192b5b22be01c688235`; Server sources, OpenAPI, project configuration
+and lock match the recorded Server commit after LF normalization. All 542 packaged
+runtime files in `powercontext/` and `powercontext_service_bootstrap/` were compared with
+that commit. The manifest digest is `716896e084dbaac6a6ea159c7d4e1a47bb741a27afbc8be5b56f548d7ef72ce0`
+(sorted `wheel/path sha256` lines over the wheel's original bytes, with a final newline).
+Windows checkout CRLF differences were normalized for the source comparison only.
+
+On 2026-10-23, Windows x64 with Python 3.12.4 and Rust 1.95.0 ran the
+existing native `ConnectionManager` / `server_probe` against the extracted wheel and
+independent SQLite Server processes. All four modes passed: anonymous loopback, static
+Bearer, HTTPS with explicit CA/base path, and injected-provider/enforced access. The ten
+operations cover Atomic Memory save/search/exact revision reads, Scope selection and
+pagination, identity changes, same-identity revocation, committed writes with lost responses
+without replay, and independent Server survival after client exit.
+
+Reproduce the protocol check from a clean checkout with the pinned tools:
+
+```powershell
+uv build --wheel --out-dir desktop/.artifacts/server-wheel
+cargo build --locked --manifest-path desktop/src-tauri/Cargo.toml --example server_probe
+uv run --locked python desktop/tests/fixture_qualification.py --server-commit 1da997476651c2850ff7141e2b7cd512d0152a90
+uv run --locked python desktop/tests/real_server.py
+```
+
+Use an empty wheel output directory. The harness supplies a separate candidate fixture profile;
+the bundled product record above is backed by its completed four-mode results and the verified
+source/artifact identities. Ordinary builds require explicit profile selection and a connection
+check; historical profiles remain unchanged. Local evidence is under ignored
+`desktop/.artifacts/real-server.json` and `.artifacts/desktop-shell/current-contract-wheel-identity.json`.
+This establishes protocol compatibility for the recorded sources and wheel, without qualifying
+installed UI, credential-store prompts, signing, macOS execution, IME or screen-reader behavior.
+
+2026-10-23，Windows x64 的原生连接管理器对独立 wheel／SQLite Server 完成四种真实协议验收，
+覆盖匿名、Bearer、HTTPS／反向代理路径及注入认证／权限控制。新资格记录绑定上述源码、
+合同和 wheel 摘要；542 个运行时文件与指定提交在统一换行符后逐一核对，历史记录保持不变。
+普通构建需明确选择新配置并检查连接。该记录验证协议兼容性，不代表安装包、凭据库提示、
+签名、macOS、IME 或屏幕阅读器验收通过。
+
+The qualification regression `bundled_qualification_allows_explicit_scope_browsing` and the
+complete default-feature Rust test suite passed with this record. All 86 frontend tests,
+typecheck, lint, production build, generated-contract/icon checks, IPC export checking,
+Rust fmt/all-target clippy and five fixture qualification regressions passed. Native test
+output is under ignored `.artifacts/desktop-shell/current-contract-native-tests.log`.
+新记录下原失败用例与完整 Rust 测试通过，86 项前端测试及相关构建、静态和生成检查通过。
+Repository hooks passed except the existing Windows Python type errors in unchanged code;
+see ignored `.artifacts/desktop-shell/current-contract-prek.log`.
+仓库全量钩子仍有未修改代码的既存 Windows Python 类型错误，其余钩子通过。
+
 #### Server d9a78567 protocol qualification
 
-The bundled contract is qualified by `sqlite-atomic-d9a78567-v1`. The record identifies Server
+The corresponding historical preview contract is qualified by `sqlite-atomic-d9a78567-v1`. The record identifies Server
 sources at `d9a785675dedb72cd72a386b346e590f4c067ac0` and normalized OpenAPI digest
 `a6758fd35296abefb55ab86b152584a369d5f2deedfee7a3f9822e16ad1edc25`.
 The qualification wheel is `powercontext-1.4.1.dev69+ga200d6094.d20261022-py3-none-any.whl`,
@@ -139,7 +194,7 @@ matching `sqlite-atomic-caf2a35a-v1`. The observed app is identified by the exec
 this record does not identify its exact build source revision. This is historical evidence, not a
 procedure or native UI qualification for the current bundled contract.
 
-The current `sqlite-atomic-d9a78567-v1` record has non-GUI protocol evidence on Linux x86_64 only.
+The `sqlite-atomic-d9a78567-v1` record has non-GUI protocol evidence on Linux x86_64 only.
 Native macOS save/search/exact-read and clipboard acceptance against that record remains unverified.
 
 The normal release app (without `ci-fixtures`) was operated on macOS 26.5.2 ARM64 against the
@@ -318,11 +373,11 @@ On 2026-10-23, Windows x64 integration checks used Node 24.14.1, pnpm 11.13.1 an
 
 All 86 frontend tests, typecheck, lint, production build, generated-contract/icon checks and IPC export checking passed. Rust fmt, all-target clippy, all four IPC tests and all nine transport tests passed. All six installed-harness Python files passed Ruff lint/format and Windows/Linux type checks; all five fixture qualification regressions passed. Repository hooks passed except the existing Windows Python type errors in unchanged code; see ignored `.artifacts/desktop-shell/merge-master-prek.log`.
 
-The complete Rust test run fails at `bundled_qualification_allows_explicit_scope_browsing`: the current bundled contract digest is `5878999ce9e239d6642e4da858074b281ed465629432c578b3584eec47cbce6c`, with no matching bundled qualification. The test, connection manager, operations manifest and qualification records are identical to master `1da99747`; qualification evidence was not altered. This run does not establish installed Windows, macOS or real-Server acceptance.
+The bundled contract digest `5878999ce9e239d6642e4da858074b281ed465629432c578b3584eec47cbce6c` is qualified by [Server 1da99747](#server-1da99747-protocol-qualification). The complete Rust test suite, including `bundled_qualification_allows_explicit_scope_browsing`, passes with this record. Installed Windows and macOS workflows require their separate acceptance checks.
 
 2026-10-23，合入 master `1da99747` 后，Windows x64 的全量 86 项前端测试、类型检查、lint、构建、生成合同／图标与 IPC 导出检查通过；Rust fmt、全目标 clippy、四项 IPC 测试及六个验收 Python 文件的静态检查、五项 fixture 回归通过。导航测试同时保留 master 的平台策略与本分支的端口、跨平台来源和应用路径保护，原生凭据支持及草稿／焦点修复均保留。
 
-九项传输测试全部通过。完整 Rust 测试在随包兼容资格用例失败：当前合同摘要没有匹配的随包资格记录。涉及的测试、连接管理器、合同清单和资格记录均与 master 完全一致，未修改资格证据绕过检查。仓库全量钩子仍有未修改代码的既存 Windows Python 类型错误，其余钩子通过。上述结果不代表安装包、macOS 或真实 Server 验收通过。
+九项传输测试全部通过。当前合同由上述 Server 1da99747 真实协议验收记录资格化，完整 Rust 测试（含随包兼容资格用例）通过。仓库全量钩子仍有未修改代码的既存 Windows Python 类型错误，其余钩子通过。上述结果不代表安装包或 macOS 验收通过。
 
 ## Remaining release qualification
 
