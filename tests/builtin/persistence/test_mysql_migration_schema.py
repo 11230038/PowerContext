@@ -566,6 +566,68 @@ def test_version_table_is_validated_before_reading_and_is_not_a_business_table(s
         read_revision(cast(Connection, database), _inventory(database), revisions=schema.bundle.revisions)
 
 
+_VECTOR_TABLE = (
+    "CREATE TABLE pc_vector_projection ("
+    "id BIGINT NOT NULL, embedding VECTOR(3) NOT NULL, PRIMARY KEY (id), "
+    "VECTOR KEY ix_embedding (embedding) WITH "
+    "(DISTANCE=L2, TYPE=HNSW, LIB=VSAG, M=16, EF_CONSTRUCTION=200, EF_SEARCH=64) BLOCK_SIZE 16384"
+    ") DEFAULT CHARSET=utf8mb4"
+)
+
+
+def test_vector_index_reflection_preserves_parameters_without_inventing_a_column() -> None:
+    # VECTOR KEY comes from the actual installed 1.3.0 optional-profile captures.
+    table = _inventory(_ReflectedDatabase({"pc_vector_projection": _VECTOR_TABLE}))["tables"]["pc_vector_projection"]
+    assert set(table["columns"]) == {"id", "embedding"}
+    assert table["columns"]["embedding"]["type"] == ["vector", ["3"]]
+    assert table["indexes"]["ix_embedding"] == {
+        "columns": [["embedding", None, "asc"]],
+        "unique": False,
+        "kind": "vector",
+        "parameters": {
+            "distance": "l2",
+            "type": "hnsw",
+            "lib": "vsag",
+            "m": 16,
+            "ef_construction": 200,
+            "ef_search": 64,
+        },
+    }
+    changed = _VECTOR_TABLE.replace("EF_SEARCH=64", "EF_SEARCH=128")
+    actual = _inventory(_ReflectedDatabase({"pc_vector_projection": changed}))["tables"]["pc_vector_projection"]
+    assert actual["columns"] == table["columns"]
+    assert actual["indexes"] != table["indexes"]
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    ["M=16, M=32", "M=-1", "M=0", "M=anything", "UNKNOWN_OPTION=16"],
+)
+def test_unprovable_vector_index_options_fail_schema_reflection(replacement: str) -> None:
+    definition = _VECTOR_TABLE.replace("M=16", replacement)
+    with pytest.raises(MigrationError, match="VECTOR"):
+        _inventory(_ReflectedDatabase({"pc_vector_projection": definition}))
+
+
+@pytest.mark.skipif(os.environ.get("POWERCONTEXT_TEST_MIGRATION_SEEKDB") != "1", reason="real seekdb probe not enabled")
+def test_real_seekdb_vector_index_is_reflected_as_an_index(short_tmp_path: Path) -> None:
+    def inspect_vector(connection, _identity, _guard):
+        assert connection is not None
+        connection.exec_driver_sql(_VECTOR_TABLE)
+        connection.commit()
+        table = mysql_inventory(connection)["tables"]["pc_vector_projection"]
+        assert set(table["columns"]) == {"id", "embedding"}
+        index = table["indexes"]["ix_embedding"]
+        assert index["kind"] == "vector"
+        assert index["columns"] == [["embedding", None, "asc"]]
+        assert index["parameters"]["distance"] == "l2"
+        assert index["parameters"]["m"] == 16
+        assert index["parameters"]["ef_construction"] == 200
+        assert index["parameters"]["ef_search"] == 64
+
+    MaintenanceConnections(SeekDBConfig(path=short_tmp_path / "seekdb")).run(inspect_vector, writable=True)
+
+
 @pytest.mark.parametrize("violation", ["foreign_key", "check"])
 def test_portable_integrity_queries_reject_preexisting_invalid_rows(schema: MySQLSchema, violation: str) -> None:
     # Execute the portable existence queries on real SQLite, without claiming

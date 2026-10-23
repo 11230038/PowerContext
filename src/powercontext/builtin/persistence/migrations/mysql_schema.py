@@ -741,6 +741,33 @@ def _fulltext_definition(part: list[str]) -> tuple[str, dict[str, Any]]:
     }
 
 
+def _vector_definition(part: list[str]) -> tuple[str, dict[str, Any]]:
+    columns, end = _group(part, 3)
+    if part[end : end + 1] != ["with"]:
+        raise MigrationError("incompatible_schema", "A VECTOR index is missing its parameter declaration.")
+    arguments, end = _group(part, end + 1)
+    parameters: dict[str, str | int] = {}
+    for option in _parts(arguments):
+        if len(option) != 3 or option[1] != "=" or option[0] in parameters:
+            raise MigrationError("incompatible_schema", "A VECTOR index parameter is invalid or duplicated.")
+        name, _, value = option
+        if name in {"distance", "type", "lib"} and re.fullmatch(r"[a-z][a-z_0-9]*", value):
+            parameters[name] = value
+        elif name in {"m", "ef_construction", "ef_search"} and value.isdigit() and int(value) > 0:
+            parameters[name] = int(value)
+        else:
+            raise MigrationError("incompatible_schema", "An unsupported VECTOR index parameter was discovered.")
+    if not {"distance", "type"} <= parameters.keys():
+        raise MigrationError("incompatible_schema", "A VECTOR index has no complete algorithm declaration.")
+    _physical(part[end:])
+    return part[2], {
+        "columns": _key_columns(columns),
+        "unique": False,
+        "kind": "vector",
+        "parameters": parameters,
+    }
+
+
 def _table_clause(
     table: dict[str, Any], part: list[str], defaults: dict[str, str | None], database: str | None
 ) -> None:
@@ -764,6 +791,9 @@ def _table_clause(
         _put_named(table["indexes"], index_name, definition)
     elif part[0] == "fulltext":
         index_name, definition = _fulltext_definition(part)
+        _put_named(table["indexes"], index_name, definition)
+    elif part[0] == "vector" and part[1:2] in (["key"], ["index"]):
+        index_name, definition = _vector_definition(part)
         _put_named(table["indexes"], index_name, definition)
     elif constraint is None:
         _put_named(table["columns"], part[0], _column(part, defaults))
