@@ -52,7 +52,7 @@ keyring = { version = "=3.6.3", default-features = false, features = ["windows-n
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
-libc = "0.2"
+libc = "=0.2.189"
 
 [dev-dependencies]
 tauri = { version = "=2.11.0", features = ["test"] }

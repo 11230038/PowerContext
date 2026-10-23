@@ -131,10 +131,20 @@ Reproduce with `uv build --wheel --out-dir desktop/.artifacts/server-wheel`,
 `cargo build --locked --manifest-path desktop/src-tauri/Cargo.toml --example server_probe`,
 and `uv run python desktop/tests/real_server.py`. New builds have their own wheel identities.
 
-### macOS installed application workflow
+### Historical macOS installed application workflow
+
+This observation was recorded in Desktop commit `984e8c60fed262f60e1054c17c8b7d84489af999`,
+whose bundled OpenAPI digest was `e43c7034b6930688c350c68af5e7bd6083b123783b92d0a50eebbebd45aa7da7`,
+matching `sqlite-atomic-caf2a35a-v1`. The observed app is identified by the executable SHA-256 below;
+this record does not identify its exact build source revision. This is historical evidence, not a
+procedure or native UI qualification for the current bundled contract.
+
+The current `sqlite-atomic-d9a78567-v1` record has non-GUI protocol evidence on Linux x86_64 only.
+Native macOS save/search/exact-read and clipboard acceptance against that record remains unverified.
 
 The normal release app (without `ci-fixtures`) was operated on macOS 26.5.2 ARM64 against the
-qualified wheel above on a dedicated loopback Server and SQLite workspace. The UI saved its
+wheel recorded under [Server caf2a35a protocol qualification](#server-caf2a35a-protocol-qualification)
+on a dedicated loopback Server and SQLite workspace. The UI saved its
 connection profile, explicitly selected `sqlite-atomic-caf2a35a-v1`, checked/activated the connection,
 searched by Scope title and selected its exact ID. It saved a multiline Chinese/English note,
 found that note through FTS, and read its exact Atomic Memory revision. Both copy buttons were
@@ -197,7 +207,10 @@ Hosted Windows CI and developer-machine checks do not replace these platform and
 
 ## macOS native validation
 
-Run on each target architecture with the pinned tools:
+Run on each target architecture with the pinned tools listed in the [macOS build prerequisites](README.md#build-on-macos),
+including JDK 11 or newer with `java` on `PATH`. Both `lint` and `build` invoke the Java OpenAPI
+Generator through `generate:check`; its first run may require downloading the pinned JAR from
+Maven Central. A preinstalled JDK on a CI image does not replace this local prerequisite.
 
 ```sh
 cd desktop

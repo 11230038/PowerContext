@@ -24,7 +24,7 @@ use std::{
         unix::process::CommandExt,
     },
     path::Path,
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -125,6 +125,27 @@ fn receive(
             mpsc::RecvTimeoutError::Disconnected => SafeError::Storage,
         })?
 }
+// Observe completion without surrendering the process identity used by Group.
+fn has_exited(child: &Child) -> std::io::Result<bool> {
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            child.id(),
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result == 0 {
+        return Ok(info.si_pid != 0);
+    }
+    let error = std::io::Error::last_os_error();
+    if error.kind() == std::io::ErrorKind::Interrupted {
+        return Ok(false);
+    }
+    Err(error)
+}
+
 pub(crate) fn run(
     executable: &Path,
     arguments: &[&str],
@@ -168,17 +189,18 @@ pub(crate) fn run(
         if Instant::now() >= deadline {
             break Err(SafeError::Timeout);
         }
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(status.code().unwrap_or(-1)),
-            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+        match has_exited(&child) {
+            Ok(true) => break Ok(()),
+            Ok(false) => std::thread::sleep(Duration::from_millis(10)),
             Err(_) => break Err(SafeError::Storage),
         }
     };
     drop(group);
-    let _ = child.wait();
+    let status = child.wait().map_err(|_| SafeError::Storage);
     // A writer may survive outside the killed group. Process failure must not
     // wait for its pipes; collection threads still honor cancellation/deadline.
-    let exit_code = result?;
+    result?;
+    let exit_code = status?.code().unwrap_or(-1);
     let output = receive(stdout, deadline);
     let errors = receive(stderr, deadline);
     if cancelled.load(Ordering::Relaxed) {
@@ -204,6 +226,41 @@ mod tests {
     ) -> Result<Output, SafeError> {
         run(Path::new("/bin/sh"), &["-c", script], timeout, cancelled)
     }
+    #[test]
+    fn exit_observation_preserves_process_identity_until_group_cleanup() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "exit 7"])
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let group = Group(child.id() as i32);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !has_exited(&child).unwrap() {
+            assert!(Instant::now() < deadline, "launcher did not exit");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // A waitable zombie still owns its PID. Observing exit must leave that
+        // identity reserved until we have finished signalling the process group.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let observed = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id(),
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        let error = std::io::Error::last_os_error();
+        drop(group);
+        let status = child.wait().unwrap();
+        assert_eq!(
+            observed, 0,
+            "child identity was released before cleanup: {error}"
+        );
+        assert_eq!(info.si_pid, child.id() as i32);
+        assert_eq!(status.code(), Some(7));
+    }
+
     #[test]
     fn captures_output_and_nonzero_exit() {
         let result = shell(

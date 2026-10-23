@@ -106,7 +106,9 @@ Windows GitHub Actions 会构建未签名安装包，安装到临时中文路径
 
 ## 在 macOS 上构建
 
-使用 macOS 12 或更高版本、Xcode 命令行工具（`xcode-select --install`）、Node **24.14.1**、pnpm **11.13.1** 和 Rust **1.95.0**。请在目标架构（Apple Silicon 或 Intel）上构建。
+使用 macOS 12 或更高版本、Xcode 命令行工具（`xcode-select --install`）、Node **24.14.1**、pnpm **11.13.1**、Rust **1.95.0** 和 **JDK 11 或更高版本（确保 `java` 位于 `PATH` 中）**。请在目标架构（Apple Silicon 或 Intel）上构建。
+
+`lint` 和 `build` 包含 `generate:check`，会启动 Java OpenAPI Generator。首次运行可能从 Maven Central 下载固定版本的 JAR，因此需要网络访问；后续运行可以复用已下载的 JAR。
 
 ```sh
 cd desktop

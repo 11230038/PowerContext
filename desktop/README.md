@@ -124,7 +124,11 @@ Historical profiles appear as disabled records. A saved incompatible or unavaila
 ## Build on macOS
 
 Use macOS 12 or later, Xcode Command Line Tools (`xcode-select --install`), Node **24.14.1**,
-pnpm **11.13.1**, and Rust **1.95.0**. Build on the target architecture (Apple Silicon or Intel).
+pnpm **11.13.1**, Rust **1.95.0**, and **JDK 11 or newer with `java` available on `PATH`**.
+Build on the target architecture (Apple Silicon or Intel).
+
+`generate:check`, included in `lint` and `build`, runs the Java OpenAPI Generator. The first run
+may download its pinned JAR from Maven Central and requires network access; later runs can reuse it.
 
 ```sh
 cd desktop
