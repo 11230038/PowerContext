@@ -26,8 +26,13 @@ The suite starts the installed 1.3.0 Server, writes data through HTTP,
 stops it, seeds a pending processing intent using the installed SDK, and runs the target wheel's public
 `server db-migrate status/plan/apply/verify` commands. Verification must report `state=ready` and `server_ready=true`.
 The target Server must then start, preserve data and permissions, accept new writes, and support retrieval.
-Partial migration success, missing framework/baseline support, and startup rejection all fail. These disposable
-fixtures explicitly accept no backup; this is not a production upgrade procedure.
+Partial migration success, missing framework/baseline support, and startup rejection all fail. SQLite profiles use
+automatic backup and restore that recovery point into a separate database. The suite compares the complete
+restored source schema and row digests, reads historical Memory, Candidates, grants and cursors with installed
+1.3.0, upgrades the restored database again, then verifies target reads, FTS and new writes. Code-enabled SQLite
+also preserves its separate immutable cache files. The original backup checksum must remain unchanged.
+seekDB and OceanBase fixtures explicitly accept no backup; these cases do not establish backup restoration.
+This is not a production upgrade procedure.
 
 `cases` remains available for additional exact source versions/configurations. Each case needs `source_version`,
 `backend`, `configuration`, and `suite`; overlapping cases fail. Optional features that create persistent objects
@@ -62,7 +67,7 @@ Provide these behavioral tests (additional tests are allowed):
 | `test_source_release_database` | Start the actual source Server to create its complete database. Populate representative Memory history, references, permissions, Candidates, tasks and cursors through that version's public interfaces; verify the data before shutdown. Do not create a minimal schema by hand. |
 | `test_legacy_startup_is_rejected` | Target startup on the old database must fail without changing schema or row digests. |
 | `test_repeated_migration` | A second plan/apply/verify returns unchanged and preserves every table row digest. |
-| `test_public_migration_commands` | Stop writers, run the target artifact's public maintenance commands, and validate full readiness. A limited bundle verification does not pass. |
+| `test_public_migration_commands` | Stop writers, run the target artifact's public maintenance commands, and validate full readiness. SQLite additionally restores the actual automatic recovery point, reads it with the source Server, upgrades it and verifies target use. A limited bundle verification does not pass. |
 | `test_target_startup` | Start the target Server against the migrated database and verify readiness. |
 | `test_read_write_and_retrieval` | Read the old records, write new ones, and retrieve both through public interfaces. |
 | `test_authorization` | Verify permitted and denied access and preservation of relevant grants. |

@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import socket
 import subprocess
@@ -509,19 +510,20 @@ def migrated(case, historical, rejected_legacy_startup):
         return result
 
     migration("status")
-    plan = migration("plan", "--backup", "skip")
+    backup_policy = "auto" if case["backend"] == "sqlite" else "skip"
+    plan = migration("plan", "--backup", backup_policy)
     assert plan.get("plan_id"), "The public plan must identify exactly what will be applied"
-    # These are disposable fixtures; all Server processes are stopped. This
-    # explicit no-backup choice is never a recommendation for production.
-    migration(
+    # SQLite exercises its supported automatic recovery point. The other
+    # disposable backend fixtures explicitly accept no backup.
+    applied = migration(
         "apply",
         "--backup",
-        "skip",
+        backup_policy,
         "--plan-id",
         plan["plan_id"],
         "--yes",
         "--maintenance-confirmed",
-        "--accept-no-backup",
+        *(["--accept-no-backup"] if backup_policy == "skip" else []),
     )
     verified = migration("verify")
     assert verified.get("state") == "ready" and verified.get("server_ready") is True, (
@@ -550,11 +552,101 @@ def migrated(case, historical, rejected_legacy_startup):
     # same scope by publishing new Artifacts. Compare exact old counters here.
     processing = task_state(case, "target", "verify", historical["scope"])
     return {
+        "applied": applied,
         "verified": verified,
         "repeated": repeated,
         "schema": snapshot(case, "target", "migrated"),
         "historical": historical,
         "processing": processing,
+    }
+
+
+@pytest.fixture(scope="session")
+def restored_backup(case, migrated):
+    if case["backend"] != "sqlite":
+        return None
+    backup = Path(migrated["applied"].get("backup_ref") or "")
+    assert backup.is_file(), "SQLite installed-release acceptance requires an actual automatic backup"
+    before = hashlib.sha256(backup.read_bytes()).hexdigest()
+    restored = {
+        **case,
+        "work": case["work"] / "restored",
+        "report": case["report"] / "restored",
+    }
+    restored["work"].mkdir()
+    restored["report"].mkdir()
+    shutil.copyfile(backup, restored["work"] / "database")
+    historical = migrated["historical"]
+    if case["configuration"] == "full-server-code":
+        # Code caches are separate from the database recovery point. The
+        # operator must preserve those immutable files as well.
+        for name in ("code-cache", "repository"):
+            shutil.copytree(case["work"] / name, restored["work"] / name)
+        assert code_cache_snapshot(restored) == historical["code"]["cache_sha256"]
+    source = snapshot(restored, "source", "restored-source")
+    assert canonical_schema(source) == canonical_schema(historical["schema"])
+    assert source["data_sha256"] == historical["schema"]["data_sha256"]
+    with server(
+        restored["source"], environment_for(restored), restored["work"], restored["report"] / "source-server.log"
+    ) as client:
+        records = post(client, "/v1/memory/entries/list", {"scope_id": historical["scope"]})["entries"]
+        assert {digest(item) for item in records} == {digest(item) for item in historical["memory"]}
+        candidate = post(
+            client,
+            "/v1/artifact-candidates/get",
+            {"scope_id": historical["scope"], "candidate_id": historical["candidate"]["candidate_id"]},
+        )
+        assert candidate == historical["candidate"]
+        assert post(client, "/v1/access/bindings/create", historical["grant"]) == historical["binding"]
+        continuation = client.get("/v1/scopes", params={"limit": 1, "cursor": historical["cursor"]})
+        assert continuation.status_code == 200
+        assert continuation.json()["items"] == historical["continuation"]["items"]
+    environment = environment_for(restored)
+
+    def migration(operation, *options):
+        return json.loads(
+            command(
+                [console(restored["target"]), "server", "db-migrate", operation, *options],
+                environment,
+                restored["work"],
+                restored["report"] / f"migration-{operation}.log",
+            )
+        )
+
+    plan = migration("plan", "--backup", "auto")
+    assert plan["source_revision"] == "s1300"
+    applied = migration("apply", "--backup", "auto", "--plan-id", plan["plan_id"], "--yes", "--maintenance-confirmed")
+    assert applied["changed"] is True and applied["backup_state"] == "completed"
+    assert migration("verify")["server_ready"] is True
+    with server(restored["target"], environment, restored["work"], restored["report"] / "target-server.log") as client:
+        records = post(client, "/v1/memory/entries/list", {"scope_id": historical["scope"]})["entries"]
+        assert {digest(item) for item in records} == {digest(item) for item in historical["memory"]}
+        found = post(
+            client, "/v1/memory/search", {"scope_id": historical["scope"], "query": "Upgrade fixture", "mode": "fts"}
+        )["hits"]
+        assert {item["memory"]["text"] for item in found} >= {item["text"] for item in historical["memory"]}
+        candidate = post(
+            client,
+            "/v1/candidates/get",
+            {"scope_id": historical["scope"], "candidate_id": historical["candidate"]["candidate_id"]},
+        )
+        assert candidate["proposal"] == historical["candidate"]["proposal"]
+        assert candidate["version"] == historical["candidate"]["version"]
+        text = "A restored backup accepts writes after its registered upgrade."
+        written = post(client, "/v1/memory/remember", {"scope_id": historical["scope"], "kind": "fact", "text": text})[
+            "records"
+        ]
+        assert written and written[0]["text"] == text
+    assert hashlib.sha256(backup.read_bytes()).hexdigest() == before
+    if case["configuration"] == "full-server-code":
+        assert code_cache_snapshot(restored) == historical["code"]["cache_sha256"]
+    return {
+        "method": "sqlite_online",
+        "source_schema_and_rows_preserved": True,
+        "source_server_readback": True,
+        "target_upgrade_and_read_write": True,
+        "backup_sha256_unchanged": before,
+        "separate_code_cache_preserved": case["configuration"] == "full-server-code",
     }
 
 
@@ -659,7 +751,7 @@ def test_repeated_migration(migrated):
     assert migrated["repeated"]["changed"] is False
 
 
-def test_public_migration_commands(migrated):
+def test_public_migration_commands(migrated, restored_backup):
     assert migrated["verified"]["server_ready"] is True
 
 
@@ -765,7 +857,7 @@ def canonical_schema(snapshot):
     }
 
 
-def test_fresh_upgrade_equivalence(case, migrated, processed_background, preserved_code):
+def test_fresh_upgrade_equivalence(case, migrated, processed_background, preserved_code, restored_backup):
     if case["backend"] == "oceanbase":
         environment = environment_for(case, fresh=True)
         env_file = case["work"] / "fresh.env"
@@ -824,6 +916,7 @@ def test_fresh_upgrade_equivalence(case, migrated, processed_background, preserv
         "Upgraded and fresh database objects differ; no blanket table/constraint exclusions allowed"
     )
     evidence = {
+        "backup_restore": restored_backup,
         "backend": case["backend"],
         "engine_version": inventory["engine_version"],
         "driver_version": inventory["driver_version"],

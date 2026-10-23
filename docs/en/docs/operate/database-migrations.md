@@ -350,6 +350,12 @@ initialization reports `not_required`. Unsupported, failed, or incomplete auto b
 It returns `backup_unsupported` or a backup failure category and never silently skips. Changing policy requires a new plan
 confirmation.
 
+The installed-release SQLite acceptance suite restores the generated automatic backup to a separate database.
+It compares the complete source schema and row digests, reads historical records with the installed source Server,
+then upgrades the restored copy and verifies target reads, retrieval and new writes. Code-enabled cases preserve
+their separate immutable caches as well. This exercise is specific to SQLite; it does not verify seekDB or
+OceanBase backup restoration. Keep the original recovery point until your own restored deployment is verified.
+
 A separate `BackupProvider` reuses backend settings and maintenance connections. SQLite uses Online Backup API to create
 an independent file, including committed WAL, and checks integrity. seekdb and OceanBase executors reuse
 `ForkBackupProvider`, preferring native `FORK DATABASE`. The current executor rejects automatic `FORK TABLE`: enabling

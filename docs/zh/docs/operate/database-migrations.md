@@ -269,6 +269,11 @@ powercontext server db-migrate verify --env-file oceanbase.env \
 
 自动备份报告 `completed`，手动备份报告 `user_confirmed`，跳过报告 `skipped`；真正空库初始化报告 `not_required`。自动备份不支持、失败或未完成时停在迁移写入之前，返回 `backup_unsupported` 或备份失败类别，不能自动改成跳过。选择其他策略后需要重新确认计划。
 
+SQLite 安装版本验收套件将自动备份还原到独立数据库，比较完整来源结构和逐表数据摘要，
+使用已安装的旧版 Server 读回历史记录，再升级还原副本并验证新版读取、检索和新写入。
+启用 Code 的用例还保留独立的不可变缓存。这项演练仅覆盖 SQLite，不证明 seekDB 或 OceanBase 备份可以还原。
+在确认自己的还原部署可用前，应保留原始恢复点。
+
 独立 `BackupProvider` 复用后端配置和维护连接。SQLite 使用 Online Backup API 创建独立文件，包含已提交 WAL，并检查文件完整性。seekdb 和 OceanBase 执行器复用 `ForkBackupProvider`，优先采用原生 `FORK DATABASE`。当前执行器拒绝自动 `FORK TABLE`；启用前须单独登记同库备份对象，并完成受影响依赖、跨表一致性和恢复路径的验收。对于需要备份的升级，实际引擎和结构缺少通过验收的恢复证据时，`--backup auto` 在迁移写入前返回 `backup_unsupported`。用户手动备份与明确接受风险的不备份路径不依赖 Fork 支持。PC 不替用户声明已完成验收，也不自动改为物理备份或其他策略。
 
 | 产品 | `FORK TABLE` 起始版本 | `FORK DATABASE` 起始版本 |
