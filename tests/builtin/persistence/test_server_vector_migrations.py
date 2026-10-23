@@ -223,3 +223,42 @@ def test_configured_vector_plan_is_read_only_for_a_missing_database(tmp_path):
     plan = deployment_runner(settings).plan()
     assert plan.state == "uninitialized" and plan.readiness_scope == "server"
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("damage", ["missing_current", "helper_identity"])
+def test_vector_readiness_rejects_incomplete_atomic_projections(tmp_path, damage):
+    database = tmp_path / "managed.db"
+    embedding = profile(3)
+    source(database, embedding)
+    runner = SQLiteMigrationRunner(
+        database, server_bundle(embedding_profile=embedding), configuration=configuration(embedding)
+    )
+    apply(runner)
+    settings = ServerSettings(
+        database=SQLiteConfig(url=f"sqlite+aiosqlite:///{database}"), mcp=McpConfig(enabled=False)
+    )
+    app = create_server_app(
+        settings=settings, embedding_model=ControlledEmbedding(embedding), scheduler_path=tmp_path / "scheduler"
+    )
+    with TestClient(app) as client:
+        remembered = client.post(
+            "/v1/memory/remember",
+            json={"scope_id": "scope", "kind": "fact", "text": "Keep this vector-backed memory searchable."},
+        )
+        assert remembered.status_code == 200
+    assert runner.verify().state == "ready"
+    with closing(connect(database)) as connection, connection:
+        if damage == "missing_current":
+            connection.execute("DELETE FROM pc_atomic_memory_current")
+        else:
+            connection.execute("UPDATE pc_atomic_memory_current_fts SET identity_token='broken'")
+    original = database.read_bytes()
+    for inspect_state in (runner.plan, runner.verify):
+        with pytest.raises(MigrationError, match="projection_verification_failed"):
+            inspect_state()
+    app = create_server_app(
+        settings=settings, embedding_model=ControlledEmbedding(embedding), scheduler_path=tmp_path / "scheduler"
+    )
+    with pytest.raises(MigrationError, match="projection_verification_failed"), TestClient(app):
+        pytest.fail("Incomplete projections must block vector Server startup")
+    assert database.read_bytes() == original

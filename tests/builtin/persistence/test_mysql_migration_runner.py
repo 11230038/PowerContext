@@ -772,6 +772,9 @@ def test_mysql_registered_projection_repair_preserves_authority_and_revision(bac
         connection.commit()
 
     backend.connections().run(seed, writable=True)
+    for inspect_state in (full.plan, full.verify):
+        with pytest.raises(MigrationError, match="projection_verification_failed"):
+            inspect_state()
     runner = AtomicProjectionMigrationRunner(
         backend.connections(),
         full.bundle,

@@ -176,13 +176,18 @@ def validate(connection, *, configuration):
         "SELECT scope_id,binding_name FROM pc_artifact_processing_intents"
     ):
         finish(ArtifactProcessingIntentRepository().load(pinned(connection), scope, binding))
-    # Check exact current projection identities without comparing mutable heads
-    # to retained pre-upgrade Candidate snapshots.
-    if connection.exec_driver_sql(
-        "SELECT 1 FROM pc_atomic_memory_current p WHERE NOT EXISTS (SELECT 1 FROM pc_artifact_heads h WHERE h.scope_id=p.scope_id AND h.family='atomic-memory' AND h.artifact_id=p.artifact_id AND h.revision=p.revision) LIMIT 1"
-    ).first():
+    from powercontext.builtin.persistence.oceanbase.atomic_memory_index import OceanBaseAtomicMemoryIndex
+    from powercontext.builtin.persistence.sqlite.atomic_memory_index import SQLiteAtomicMemoryIndex
+    from powercontext.builtin.runtime.atomic_memory_rebuild import verify_atomic_memory_current
+
+    profile = _profile(configuration)
+    atomic_index = (
+        SQLiteAtomicMemoryIndex(profile) if connection.dialect.name == "sqlite" else OceanBaseAtomicMemoryIndex(profile)
+    )
+    report = finish(verify_atomic_memory_current(pinned(connection), atomic_index))
+    if not report.ready:
         raise MigrationError(
-            "projection_verification_failed", "An Atomic Memory projection references a missing current head."
+            "projection_verification_failed", "Atomic Memory projections differ from their authoritative records."
         )
 
     from powercontext.builtin.persistence.topic_memory import TopicMemoryRepository
@@ -198,14 +203,14 @@ def validate(connection, *, configuration):
 
 
 def _validate_sqlite_fts(connection):
+    from powercontext.builtin.persistence.sqlite.atomic_memory_index import SQLiteAtomicMemoryIndex
+
+    if not finish(SQLiteAtomicMemoryIndex().fts_matches_current(pinned(connection))):
+        raise MigrationError(
+            "projection_verification_failed", "The Atomic Memory full-text helper differs from its current rows."
+        )
     # Read-only multiset comparison also catches duplicate/stale helper rows.
     projections = (
-        (
-            "pc_atomic_memory_current",
-            "pc_atomic_memory_current_fts",
-            "scope_id,artifact_id,revision,state_version,content_hash,projection_format,kind,text,searchable_text,tag_keys",
-            "",
-        ),
         (
             "pc_artifact_heads",
             "pc_artifact_fts",

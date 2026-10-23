@@ -24,15 +24,18 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from powercontext.builtin.artifacts.atomic_memory.models import AtomicMemoryContent
 from powercontext.builtin.persistence.migrations.deployment import deployment_runner
 from powercontext.builtin.persistence.migrations.locking import local_migration_lock
+from powercontext.builtin.persistence.migrations.models import MigrationError
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 from powercontext.builtin.runtime import BuiltinConfig, open_builtin_contexts
 from powercontext.cli.app import create_cli
 from powercontext.server.cli import app
+from powercontext.server.factory import create_server_app
 from powercontext.server.settings import ServerSettings
 
 
@@ -103,6 +106,21 @@ def test_managed_repair_uses_shared_plan_backup_and_lock_without_changing_author
                 connection.execute("UPDATE pc_atomic_memory_current_fts SET identity_token='broken'")
     original_authority = authority(path)
     original = path.read_bytes()
+    for operation in ("status", "plan", "verify"):
+        rejected = CliRunner().invoke(cli, ["server", "db-migrate", operation])
+        assert rejected.exit_code != 0, rejected.output
+        assert json.loads(rejected.output)["error"] == "projection_verification_failed"
+
+    async def reject_runtime():
+        with pytest.raises(MigrationError, match="projection_verification_failed"):
+            async with open_builtin_contexts(BuiltinConfig(database=settings.database)):
+                pytest.fail("Incomplete projections must block runtime admission")
+
+    asyncio.run(reject_runtime())
+    server = create_server_app(settings=settings, scheduler_path=path.parent / "scheduler.db")
+    with pytest.raises(MigrationError, match="projection_verification_failed"), TestClient(server):
+        pytest.fail("Incomplete projections must block Server startup")
+    assert path.read_bytes() == original
     inspected = CliRunner().invoke(cli, [*arguments, "--action", "plan"])
     assert inspected.exit_code == 0, inspected.output
     plan = json.loads(inspected.output)
