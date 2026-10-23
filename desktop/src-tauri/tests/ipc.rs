@@ -21,7 +21,7 @@ use tauri::{
     webview::InvokeRequest,
 };
 
-// Tauri uses the host platform's local protocol for both mock IPC and packaged navigation.
+// Mock IPC origins follow Tauri's runtime, independently of packaged navigation.
 const LOCAL_ORIGIN: &str = if cfg!(any(windows, target_os = "android")) {
     "http://tauri.localhost"
 } else {
@@ -38,7 +38,7 @@ fn permissions_reject_untrusted_window_origin_and_arbitrary_commands() {
     let dir = tempfile::tempdir().unwrap();
     let repository = powercontext_desktop::connections::profiles::ProfileRepository::open(
         dir.path().join("profiles.json"),
-        std::sync::Arc::new(powercontext_desktop::credentials::WindowsVault),
+        std::sync::Arc::new(powercontext_desktop::credentials::NativeVault),
     )
     .unwrap();
     let app = mock_builder()
@@ -107,17 +107,25 @@ fn blocks_remote_navigation_and_userinfo() {
         "tauri://localhost.evil",
         "https://tauri.localhost",
         "tauri://remote-host",
+        "tauri://localhost:1234",
+        "tauri://remote",
     ] {
         assert!(!allowed_navigation(&url.parse().unwrap()), "{url}");
     }
-    assert!(allowed_navigation(&LOCAL_ORIGIN.parse().unwrap()));
-    assert!(allowed_navigation(
-        &format!("{LOCAL_ORIGIN}/index.html").parse().unwrap()
-    ));
-    let other_platform = if cfg!(any(windows, target_os = "android")) {
-        "tauri://localhost"
+    // The product ships macOS and Windows origins; mock origins also cover other hosts.
+    let packaged = if cfg!(target_os = "macos") {
+        "tauri://localhost/"
     } else {
+        "http://tauri.localhost/"
+    };
+    assert!(allowed_navigation(&packaged.parse().unwrap()));
+    assert!(allowed_navigation(
+        &format!("{packaged}index.html").parse().unwrap()
+    ));
+    let other_platform = if cfg!(target_os = "macos") {
         "http://tauri.localhost"
+    } else {
+        "tauri://localhost"
     };
     assert!(!allowed_navigation(&other_platform.parse().unwrap()));
 }
@@ -194,8 +202,8 @@ fn memory_commands_reject_untrusted_callers_before_accessing_the_connection() {
         "cancel_memory_reads",
     ] {
         for (label, origin) in [
-            ("main", "http://tauri.localhost"),
-            ("other", "http://tauri.localhost"),
+            ("main", LOCAL_ORIGIN),
+            ("other", LOCAL_ORIGIN),
             ("main", "https://evil.example"),
         ] {
             let window = app.get_webview_window(label).unwrap_or_else(|| {
