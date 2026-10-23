@@ -252,9 +252,20 @@ class SQLiteMigrationRunner:
     @contextmanager
     def _connect(self, *, read_only: bool) -> Iterator[Connection]:
         uri = self.database.as_uri() + ("?mode=ro" if read_only else "?mode=rwc")
-        engine = create_engine(
-            "sqlite://", creator=lambda: sqlite3.connect(uri, uri=True, isolation_level=None, timeout=0)
-        )
+
+        def connect() -> sqlite3.Connection:
+            driver = sqlite3.connect(uri, uri=True, isolation_level=None, timeout=0)
+            if self.bundle.vector_profile is not None:
+                import sqlite_vec
+
+                driver.enable_load_extension(True)
+                try:
+                    sqlite_vec.load(driver)
+                finally:
+                    driver.enable_load_extension(False)
+            return driver
+
+        engine = create_engine("sqlite://", creator=connect)
         try:
             with engine.connect() as connection:
                 if read_only:
@@ -535,12 +546,16 @@ class SQLiteMigrationRunner:
             self._verify_schema(connection, current)
             with ALEMBIC_CONTEXT_LOCK:
                 command.upgrade(self._config(connection), revision)
+            if self.bundle.vector_profile is not None:
+                self.bundle.vector_profile.sqlite_upgrade(connection, revision)
             self.bundle.domains.apply(connection, revision, backend="sqlite", configuration=self.configuration)
             self._verify_schema(connection, revision)
             connection.commit()
             current = revision
 
     def _verify_schema(self, connection: Connection, revision: str | None) -> None:
+        if self.bundle.vector_profile is not None:
+            self.bundle.vector_profile.verify_declaration(connection, required=False)
         excluded = _CONTROL_NAMES | frozenset(self.bundle.retained_objects)
         inventory = sqlite_inventory(connection)
         self._verify_retained(inventory, revision)

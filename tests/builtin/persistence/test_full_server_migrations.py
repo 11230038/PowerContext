@@ -271,8 +271,8 @@ def test_code_with_separate_cache_upgrades_and_reopens_server(source, tmp_path):
         ]
 
 
-@pytest.mark.parametrize("bundle", ["server", "processing", "atomic-projection"])
-def test_unregistered_vector_storage_is_rejected_before_opening_database(tmp_path, bundle):
+@pytest.mark.parametrize("bundle", ["processing", "atomic-projection"])
+def test_partial_vector_maintenance_is_rejected_before_opening_database(tmp_path, bundle):
     from powercontext.builtin.persistence.migrations.deployment import deployment_runner
     from powercontext.builtin.runtime.config import InferenceConfig
     from powercontext.server.settings import ServerSettings

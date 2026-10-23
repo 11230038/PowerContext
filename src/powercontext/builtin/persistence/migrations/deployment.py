@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy.engine import make_url
 
+from powercontext.builtin.artifacts.memory import EmbeddingProfile
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
@@ -41,9 +42,9 @@ if TYPE_CHECKING:
     from powercontext.server.settings import ServerSettings
 
 
-def server_bundle() -> MigrationBundle:
+def server_bundle(*, embedding_profile: EmbeddingProfile | None = None) -> MigrationBundle:
     """The complete, shared Server revision chain."""
-    return MigrationBundle(Path(__file__).parent / "server_resources")
+    return MigrationBundle(Path(__file__).parent / "server_resources", embedding_profile=embedding_profile)
 
 
 def production_bundle() -> MigrationBundle:
@@ -75,6 +76,22 @@ def _migration_configuration(settings: ServerSettings) -> dict[str, Any]:
     }
 
 
+def configured_embedding_profile(settings: ServerSettings) -> EmbeddingProfile | None:
+    inference = settings.inference
+    if inference.embedding_model is None:
+        return None
+    if inference.embedding_profile_id is None or inference.embedding_dimension is None:
+        raise MigrationError(
+            "embedding_profile_mismatch", "Embedding configuration needs its exact profile and dimension."
+        )
+    return EmbeddingProfile(
+        profile_id=inference.embedding_profile_id,
+        model=inference.embedding_model,
+        dimension=inference.embedding_dimension,
+        normalization=inference.embedding_normalization,
+    )
+
+
 def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
     settings: ServerSettings,
     *,
@@ -84,20 +101,28 @@ def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
     bundle: Literal["server", "artifacts", "topic-memory-recovery", "processing", "atomic-projection"] = "server",
     migration_id: str = "rfc1515",
     batch_size: int = 100,
+    embedding_profile: EmbeddingProfile | None = None,
 ) -> MigrationRunner:
     """Use the real configured identity without opening a business profile."""
     database = settings.database
     configuration = _migration_configuration(settings)
+    profile = embedding_profile or configured_embedding_profile(settings)
     if bundle in {"server", "processing", "atomic-projection"}:
-        if settings.inference.embedding_model is not None:
+        if profile is not None and bundle != "server":
             raise MigrationError(
                 "unsupported_upgrade_configuration",
-                "The registered 1.3.0 Server path requires no vector provider.",
+                "This partial maintenance bundle has no registered vector configuration path.",
             )
-        configuration["embedding_enabled"] = False
+        configuration["embedding_enabled"] = profile is not None
+        if profile is not None:
+            configuration["embedding_profile"] = profile.model_dump(mode="json")
         if settings.code.enabled and isinstance(database, SeekDBConfig):
             configuration["embedded_code_enabled"] = True
-    selected = server_bundle() if bundle in {"server", "processing", "atomic-projection"} else production_bundle()
+    selected = (
+        server_bundle(embedding_profile=profile)
+        if bundle in {"server", "processing", "atomic-projection"}
+        else production_bundle()
+    )
     maintenance_runner = (
         AtomicProjectionMigrationRunner if bundle == "atomic-projection" else ProcessingConfigurationMigrationRunner
     )

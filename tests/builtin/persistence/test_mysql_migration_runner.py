@@ -460,6 +460,71 @@ def _full_server_runner(
     )
 
 
+@pytest.mark.parametrize(
+    ("origin", "dimension", "code"),
+    [("released", 3, False), ("empty", 4, True)],
+)
+def test_mysql_vector_upgrade_preserves_space_and_registered_indexes(
+    backend: _BackendTarget, tmp_path: Path, origin: str, dimension: int, code: bool
+) -> None:
+    from powercontext.builtin.artifacts.memory import EmbeddingProfile
+    from powercontext.builtin.code import CodeConfig
+    from powercontext.builtin.persistence.migrations.server_readiness import check_server_schema, prepare_server_storage
+    from powercontext.builtin.persistence.topic_memory_index import topic_memory_embedding_profile_fingerprint
+    from powercontext.builtin.runtime.config import InferenceConfig
+
+    profile = EmbeddingProfile(profile_id="native-vectors", model="fixture", dimension=dimension)
+    bundle = server_bundle(embedding_profile=profile)
+    settings = ServerSettings(
+        database=backend.config,
+        code=CodeConfig(enabled=code, cache_dir=tmp_path / "code-cache"),
+        inference=InferenceConfig(
+            embedding_model=profile.model,
+            embedding_profile_id=profile.profile_id,
+            embedding_dimension=dimension,
+        ),
+    )
+    runner = cast(
+        MySQLMigrationRunner,
+        deployment_runner(
+            settings,
+            evidence_dir=backend.evidence_directory,
+            lock_coordination="single-host" if isinstance(backend.config, OceanBaseConfig) else None,
+        ),
+    )
+    if origin == "released":
+
+        def initialize_source(connection, _identity, _guard):
+            baseline = runner.schema.recovery(mysql_inventory(connection), None)
+            for statement in baseline.pending_statements:
+                runner.schema.execute(connection, statement, runner.configuration)
+            connection.execute(
+                text("INSERT INTO pc_topic_memory_retrieval_shape VALUES (1,'hybrid',:profile)"),
+                {"profile": topic_memory_embedding_profile_fingerprint(profile)},
+            )
+            connection.commit()
+
+        backend.connections().run(initialize_source, writable=True)
+    assert runner.plan(backup_policy="manual").source_revision == ("s1300" if origin == "released" else None)
+    assert _apply(runner, policy="manual").revision == bundle.head
+    assert not _apply(runner, policy="manual").changed
+    assert runner.verify().state == "ready"
+    prepare_server_storage(settings)
+
+    def verify(connection, _identity, _guard):
+        check_server_schema(connection)
+        inventory = mysql_inventory(connection)
+        for name in ("pc_atomic_memory_current", "pc_topic_memory_vector_topics", "pc_topic_memory_vector_chunks"):
+            table = inventory["tables"][name]
+            assert table["columns"]["embedding"]["type"] == ["vector", [str(dimension)]]
+            assert any(index.get("kind") == "vector" for index in table["indexes"].values())
+        assert json.loads(
+            connection.exec_driver_sql("SELECT embedding_profile FROM pc_server_storage_profile").scalar_one()
+        ) == profile.model_dump(mode="json")
+
+    backend.connections().run(verify)
+
+
 @pytest.mark.parametrize("backend", ("oceanbase",), indirect=True)
 def test_oceanbase_server_upgrade_with_separate_code_cache_preserves_history(
     backend: _BackendTarget, tmp_path: Path

@@ -23,15 +23,23 @@ from .models import MigrationError, digest
 def check_server_schema(connection):
     bundle = check_server_layout(connection)
     backend = "sqlite" if connection.dialect.name == "sqlite" else "seekdb"
-    bundle.domains.validate(connection, bundle.head, backend=backend, configuration={})
+    configuration = (
+        {"embedding_profile": bundle.vector_profile.profile.model_dump(mode="json")}
+        if bundle.vector_profile is not None
+        else {}
+    )
+    bundle.domains.validate(connection, bundle.head, backend=backend, configuration=configuration)
 
 
 def check_server_layout(connection):
     """Validate the exact managed layout before a registered domain repair."""
     from .deployment import server_bundle
     from .mysql_schema import MySQLSchema, mysql_inventory
+    from .vector_profile import load_sqlite_vector_extension, read_embedding_profile
 
-    bundle = server_bundle()
+    bundle = server_bundle(embedding_profile=read_embedding_profile(connection))
+    if connection.dialect.name == "sqlite" and bundle.vector_profile is not None:
+        load_sqlite_vector_extension(connection)
     revisions = connection.exec_driver_sql("SELECT version_num FROM pc_schema_revision").scalars().all()
     if revisions != [bundle.head]:
         raise MigrationError("migration_required", "The full Server revision chain is incomplete.")
@@ -57,13 +65,14 @@ def check_server_layout(connection):
     return bundle
 
 
-def prepare_server_storage(settings, *, injected_embedding=False):
-    from .deployment import deployment_runner
+def prepare_server_storage(settings, *, injected_embedding=False, embedding_profile=None):
+    from .deployment import configured_embedding_profile, deployment_runner
 
     database = settings.database
     if database.kind == "sqlite" and database.is_in_memory:
         return
-    if injected_embedding or settings.inference.embedding_model is not None:
+    profile = embedding_profile or configured_embedding_profile(settings)
+    if injected_embedding and profile is None:
         _check_unmanaged_optional_profile(database)
         return
     if database.kind == "oceanbase":
@@ -74,11 +83,15 @@ def prepare_server_storage(settings, *, injected_embedding=False):
                 raise MigrationError(
                     "migration_required", "Initialize the remote database with an explicit db-migrate job."
                 )
+            bundle = check_server_layout(connection)
+            stored = bundle.vector_profile.profile if bundle.vector_profile is not None else None
+            if stored != profile:
+                raise MigrationError("embedding_profile_mismatch", "Server configuration differs from managed storage.")
             check_server_schema(connection)
 
         MaintenanceConnections(database).run(verify)
         return
-    runner = deployment_runner(settings)
+    runner = deployment_runner(settings, embedding_profile=profile)
     plan = runner.plan()
     if plan.state == "uninitialized" and database.kind in {"sqlite", "seekdb"}:
         runner.apply(plan_id=plan.plan_id, accepted=True, maintenance_confirmed=True)

@@ -28,8 +28,11 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import Connection
 
+from powercontext.builtin.artifacts.memory import EmbeddingProfile
+
 from .domains import DomainRegistry
 from .models import MigrationError, digest
+from .vector_profile import ServerVectorProfile
 
 ALEMBIC_CONTEXT_LOCK = threading.RLock()
 
@@ -42,7 +45,7 @@ class MigrationBundle:
     partially applied DDL cannot be mistaken for a supported baseline.
     """
 
-    def __init__(self, directory: Path) -> None:  # noqa: C901 -- Keep ordered admission checks with their operation.
+    def __init__(self, directory: Path, *, embedding_profile: EmbeddingProfile | None = None) -> None:  # noqa: C901 -- Keep ordered admission checks with their operation.
         self.directory = directory.resolve()
         # Execute exactly the reviewed bytes, even if the installed resources
         # change during a long backup. Alembic reloads scripts on every command.
@@ -69,6 +72,23 @@ class MigrationBundle:
         self.revisions = tuple(item.revision for item in revisions)
         self.head = self.revisions[-1]
         manifest = json.loads(resources["manifest.json"])
+        self.vector_profile = (
+            ServerVectorProfile(self.snapshot_directory, embedding_profile) if embedding_profile is not None else None
+        )
+        if self.vector_profile is not None:
+            layouts = self.vector_profile.sqlite_layouts(self.snapshot_directory)
+            manifest["sqlite_fingerprints"] = {revision: [digest(rows)] for revision, rows in layouts.items()}
+            manifest["sqlite_baselines"] = {digest(layouts["s1300"]): "s1300"}
+            manifest["affected_objects"] = list(
+                dict.fromkeys([
+                    *manifest["affected_objects"],
+                    *(row[1] for row in self.vector_profile.layout["sqlite"]["target"]),
+                ])
+            )
+            for step in manifest["domain_steps"]:
+                if step["id"] == "server_upgrade":
+                    step["module"] = "server_vector_domain.py"
+                    step["resources"].append(ServerVectorProfile.resource)
         mysql_layouts = manifest.get("mysql_layouts", [])
         if (
             not isinstance(mysql_layouts, list)
@@ -105,6 +125,8 @@ class MigrationBundle:
             domain_inputs = self.domains.checksum_inputs(item.revision, self.resources)
             if domain_inputs:
                 inputs["domain_contract"] = digest(domain_inputs)
+            if self.vector_profile is not None:
+                inputs["server_vector_profile"] = self.vector_profile.checksum
             self.checksums[item.revision] = digest(inputs)
         self.checksum = digest(self.resources)
 

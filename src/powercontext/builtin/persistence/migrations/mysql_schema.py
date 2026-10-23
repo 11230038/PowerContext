@@ -150,6 +150,8 @@ class MySQLSchema:
             self._load_state_layouts(manifest["mysql_state_layouts"])
             if embedded_code:
                 self._extend_embedded_code(manifest)
+            if bundle.vector_profile is not None:
+                self._extend_vectors()
             return
         if embedded_code:
             raise MigrationError("invalid_bundle", "Embedded Code needs a registered complete Server layout.")
@@ -292,6 +294,41 @@ class MySQLSchema:
     @staticmethod
     def fingerprint(inventory: dict[str, Any]) -> str:
         return digest(inventory)
+
+    def _extend_vectors(self) -> None:
+        profile = self.bundle.vector_profile
+        if profile is None:
+            raise MigrationError("invalid_bundle", "Vector schema selection needs an exact profile.")
+        definitions = profile.mysql_tables()
+        self.optional_table_options.update(profile.layout["mysql_optional_table_options"])
+        tables = dict(_parse_table(sql) for sql in definitions.values())
+        atomic_name = "pc_atomic_memory_current"
+        atomic = tables.pop(atomic_name)
+        source, target, *later = self.revisions
+        for revision in self.revisions:
+            for state in [*self._prefixes[revision], self._schemas[revision]]:
+                if atomic_name in state["tables"]:
+                    state["tables"][atomic_name] = copy.deepcopy(atomic)
+                if revision != source:
+                    state["tables"].update(copy.deepcopy(tables))
+        self._statements[source] = tuple(
+            definitions[atomic_name] if sql.startswith(f"CREATE TABLE `{atomic_name}` (") else sql
+            for sql in self._statements[source]
+        )
+        source_state = self._schemas[source]
+        for name, table in tables.items():
+            source_state["tables"][name] = copy.deepcopy(table)
+            self._prefixes[source].append(copy.deepcopy(source_state))
+            self._statements[source] += (definitions[name],)
+        declaration_sql = profile.layout["mysql_profile_table"]
+        declaration_name, declaration = _parse_table(declaration_sql)
+        self._schemas[target]["tables"][declaration_name] = copy.deepcopy(declaration)
+        self._prefixes[target].append(copy.deepcopy(self._schemas[target]))
+        self._statements[target] += (declaration_sql,)
+        for revision in later:
+            for state in [*self._prefixes[revision], self._schemas[revision]]:
+                state["tables"][declaration_name] = copy.deepcopy(declaration)
+        self.affected_objects = tuple(dict.fromkeys([*self.affected_objects, *tables, declaration_name]))
 
     def _matches(self, inventory: dict[str, Any], expected: dict[str, Any]) -> bool:
         # Captured backends may expose an explicit default that another backend

@@ -12,7 +12,7 @@ description: 了解数据库迁移命令、备份策略、服务启停及当前�
 
 `powercontext server db-migrate status/plan/apply/verify` 默认选择 `--bundle server`，使用部署配置中的持久 SQLite、嵌入式 seekDB 或 OceanBase MySQL 模式数据库。维护命令以显式环境文件为准，不接受任意测试 bundle 路径。
 
-完整 Server 路径登记了真实 1.3.0 的无向量配置，版本链为 `s1300 → s1400 → s1401`，三个后端均可启用或关闭 Code。SQLite、OceanBase 的 Code 本地缓存独立于 Server 数据库；嵌入式 seekDB Code 的三张表通过实际安装的 1.3.0 采集并冻结为结构扩展。维护保留已有图数据，为新建的 Code 启用数据库创建已登记的表。此路径覆盖完整数据库结构、Candidate 改名与历史保留、Dream 任务格式、Processing 所有权声明、全文检索投影和既有 Source 引用。未知结构、额外对象、向量配置及未登记来源均在写入前拒绝。更早的 Memory 集合转换不属于此路径。
+完整 Server 路径登记了真实 1.3.0 的存储结构，版本链为 `s1300 → s1400 → s1401`，三个后端均可启用或关闭 Code，并为单位归一化的 L2 向量登记独立 profile。SQLite、OceanBase 的 Code 本地缓存独立于 Server 数据库；嵌入式 seekDB Code 的三张表通过实际安装的 1.3.0 采集并冻结为结构扩展。维护保留已有图数据，为新建的 Code 启用数据库创建已登记的表。此路径覆盖完整数据库结构、Candidate 改名与历史保留、Dream 任务格式、Processing 所有权声明、检索投影和既有 Source 引用。未知结构、额外对象及未登记来源均在写入前拒绝。更早的 Memory 集合转换不属于此路径。
 
 只有结构、领域数据、搜索投影和任务校验全部通过，才返回 `state=ready`、`readiness_scope=server`、`server_ready=true`。发布还必须通过真实安装包在三个后端上的完整验收；实现路径存在不等于某次发布已通过验收，支持状态以安装指南和发布门禁为准。
 
@@ -27,7 +27,9 @@ Candidate 旧表保留为 `pc_retained_dream_candidate_heads` 和 `pc_retained_d
 Server identity 初始化在受管库上只检查已登记的表，不执行 DDL。首次创建 identity 值以及显式轮换已停止副本的
 identity，仍使用原有事务语义。
 
-启用向量的既有新建部署仍使用原领域初始化和启动检查，不会自动纳入此版本链；这些配置不属于已登记升级范围。受管数据库不能通过切换配置绕过检查或隐式增加向量/Code 表。已经受管但没有 Code 表的数据库若要启用嵌入式 Code，需要另行登记配置转换，启动入口与独立 Code CLI 均拒绝隐式扩展。发布闸门分别验收三个后端的 Code 启用配置：用实际安装的 1.3.0 创建索引，保留缓存文件与嵌入式图数据，并在升级后查询原指纹和符号。
+向量维护要求声明与历史数据完全一致的 embedding profile：profile ID、模型、维度、距离和归一化方式。迁移保留历史向量及 Topic 检索配置，不调用 embedding provider。SQLite 的登记步骤添加并回填 Atomic Memory 的 vec0 辅助索引和事务触发器；原生后端保留登记的向量列与 HNSW 参数。`pc_server_storage_profile` 保存完整的 embedding 配置，不是另一张 revision 表或恢复日志。通用存储读入口校验该声明，Server 启动使用配置或注入模型的实际 profile。受管辅助对象缺失或 profile 变化会在启动修补或写入之前被拒绝。
+
+空的持久 SQLite/seekDB Server 启用向量时，通过同一版本链所选的 profile 初始化。已有未受管库必须显式维护，且来源结构必须与登记布局完全一致。切换配置不能绕过准入检查，不能给受管无向量库直接启用向量，也不能隐式增加向量或 Code 对象。已经受管但没有 Code 表的数据库若要启用嵌入式 Code，需要另行登记配置转换，启动入口与独立 Code CLI 均拒绝隐式扩展。发布闸门分别验收三个后端的 Code 启用配置：用实际安装的 1.3.0 创建索引，保留缓存文件与嵌入式图数据，并在升级后查询原指纹和符号。向量发布验收必须独立覆盖相应的实际安装配置；无向量配置通过不能证明向量支持。
 
 `--bundle artifacts` 保留 `p0001` 开始的局部 Artifact 原型链；`--bundle topic-memory-recovery` 只处理登记的 Topic 恢复布局。两者均报告 `server_ready=false`，不得用于证明完整 Server 就绪，也不能把其版本号直接 stamp 为完整 Server 版本。
 
@@ -56,7 +58,7 @@ MySQL 兼容后端的结构反射支持 CHECK 表达式中的二元 `+`、`-`、
 | `ServerIdentityRepository.initialize` | 检查 identity 表，不执行 DDL；创建 identity 值和显式轮换仍使用普通事务 | 保留支持并发的 identity 表初始化 |
 | 离线 Memory 归档 | Server 版本链在 `s1401` 登记结构，运行时准入检查该结构 | 旧 Memory 离线转换负责其归档和转换回执 |
 | `atomic-memory-migrate`、`processing-migrate` | 转发到共享 Server 或已登记的维护计划 | 保留领域独立行为；识别为历史完整 Server 的库必须先完成整库升级 |
-| 向量对象 | 尚无已登记的配置转换，添加对象前拒绝 | 保留既有功能初始化，不宣称已登记升级支持 |
+| 向量对象 | 所选 Server profile 负责结构、辅助索引回填及精确配置准入；切换 embedding 空间需要独立转换 | 完整的已发布向量结构可显式迁移；独立未受管 SDK 存储保留领域初始化 |
 | 嵌入式 seekDB Code 对象 | 已登记 Code profile 创建并验证三张表及全文索引；Code 启动不修补缺失的受管对象 | 完整的已发布 Code 启用结构可显式迁移；独立未受管 Code 保留既有初始化 |
 | SQLite、OceanBase 的独立 Code 缓存 | 保留缓存文件，主数据库走共享版本链 | Code 服务负责本地缓存创建和索引构建 |
 
