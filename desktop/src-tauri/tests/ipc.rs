@@ -100,6 +100,7 @@ fn blocks_remote_navigation_and_userinfo() {
         "file:///C:/secret",
         "javascript:alert(1)",
         "http://tauri.localhost.evil",
+        "http://tauri.localhost:8000",
         "http://user@tauri.localhost",
         "tauri://user@localhost",
         "tauri://localhost:8000",
@@ -107,7 +108,7 @@ fn blocks_remote_navigation_and_userinfo() {
         "https://tauri.localhost",
         "tauri://remote-host",
     ] {
-        assert!(!allowed_navigation(&url.parse().unwrap()));
+        assert!(!allowed_navigation(&url.parse().unwrap()), "{url}");
     }
     assert!(allowed_navigation(&LOCAL_ORIGIN.parse().unwrap()));
     assert!(allowed_navigation(

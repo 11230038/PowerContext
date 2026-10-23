@@ -55,10 +55,10 @@ pub fn foundation_info<R: tauri::Runtime>(
 
 pub fn allowed_navigation(url: &url::Url) -> bool {
     let packaged = if cfg!(any(windows, target_os = "android")) {
-        url.scheme() == "http" && url.host_str() == Some("tauri.localhost")
+        url.scheme() == "http" && url.host_str() == Some("tauri.localhost") && url.port().is_none()
     } else {
-        url.scheme() == "tauri" && url.host_str() == Some("localhost")
-    } && url.port().is_none();
+        url.scheme() == "tauri" && url.host_str() == Some("localhost") && url.port().is_none()
+    };
     let development =
         cfg!(debug_assertions) && url.origin().ascii_serialization() == "http://127.0.0.1:1420";
     (packaged || development) && url.username().is_empty() && url.password().is_none()
