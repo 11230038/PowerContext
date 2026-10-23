@@ -90,7 +90,9 @@ export function Connections({
     invalidated.current = false;
   }
   useEffect(() => {
-    reset(profile);
+    // A response from an earlier editor can update this revision after remount.
+    // Only refresh a clean form; newer input keeps its discard guard.
+    if (!dirty) reset(profile);
   }, [selected, profile?.revision]);
   function change(target = false) {
     setDirty(true);

@@ -336,6 +336,49 @@ test("a late save from a replaced profile editor preserves the requested editor 
   expect((input as HTMLInputElement).value).toBe("Second pending draft");
 });
 
+test.each([true, false])(
+  "reopening the saving profile preserves a newer draft (active cleared: %s)",
+  async (clearActive) => {
+    const user = userEvent.setup();
+    let finish!: (next: DesktopState) => void;
+    vi.mocked(desktopApi.save).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(<App />);
+    await screen.findByRole("button", { name: /当前连接: First/ });
+    await chooseProfile(user, "First");
+    await user.type(
+      screen.getByRole("textbox", { name: "连接名称" }),
+      " saved",
+    );
+    await user.click(screen.getByRole("button", { name: "保存配置" }));
+    await chooseProfile(user, "First");
+    await answerConfirmation(user, true);
+    const input = screen.getByRole("textbox", { name: "连接名称" });
+    await user.type(input, " new draft");
+    await act(async () => {
+      finish({
+        ...state,
+        generation: 2,
+        profiles: [{ ...profileA, revision: 2, name: "First saved" }, profileB],
+        active: clearActive ? null : state.active,
+      });
+    });
+    expect((input as HTMLInputElement).value).toBe("First new draft");
+    await user.click(screen.getByRole("button", { name: "观察" }));
+    await answerConfirmation(user, false);
+    expect((input as HTMLInputElement).value).toBe("First new draft");
+    expect(desktopApi.save).toHaveBeenCalledTimes(1);
+    // Explicitly abandoning the new draft loads the saved revision.
+    await user.click(screen.getByRole("button", { name: "取消编辑" }));
+    await answerConfirmation(user, true);
+    expect((input as HTMLInputElement).value).toBe("First saved");
+  },
+);
+
 test("cancelling Scope selection keeps the current draft and never starts a context transition", async () => {
   const user = userEvent.setup();
   render(<App />);

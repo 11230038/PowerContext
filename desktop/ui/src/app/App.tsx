@@ -428,7 +428,7 @@ export function App() {
             }}
             hideHeading
             onManageConnections={() => {
-              scopeReturnFocus.current = null;
+              scopeReturnFocus.current = heading.current;
               setScopeOpen(false);
               navigate("connections");
             }}

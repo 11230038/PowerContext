@@ -166,6 +166,18 @@ Each platform branch of the packaged navigation allowlist explicitly requires no
 
 打包导航白名单的各平台分支均明确要求无非默认端口，拒绝表同时覆盖 HTTP 和 Tauri 地址的 `:8000`。Windows x64 使用 Rust 1.95.0 完成专项导航回归、全部四项 IPC 测试、fmt 和全目标 clippy。此处为原生策略及 mock IPC 验证，未执行安装包、真实 Server、macOS 或 Android 验收。
 
+## Reopened profile drafts and same-page Scope recovery
+
+On 2026-10-23, Windows x64 checks used Node 24.14.1, pnpm 11.13.1 and Rust 1.95.0 for generated-contract checking. A profile revision refresh resets only a clean connection editor. A new draft entered after reopening the same profile remains intact when the earlier save completes, including when its native state clears the active connection. The new draft retains its discard confirmation, and explicitly cancelling editing loads the saved revision. Scope recovery restores focus to the page title even when Connections is already the current page; its existing draft is preserved.
+
+Regression tests reproduced draft replacement and body focus before the fixes. All 38 focused connection/confirmation/Scope/feedback tests and all 86 frontend tests passed, together with typecheck, lint, generated-contract/icon checks and production build. Headless Edge 155.0.4283.62 with synthetic IPC passed eight combinations of English/Chinese, 800×600/400×400 CSS viewports and save responses retaining/clearing the active connection. Checks cover pending-save reopening, preserved new drafts and discard guards, explicit editor reset, same-page recovery focus and absence of horizontal overflow. Evidence is under ignored `.artifacts/desktop-shell/review-draft-focus-results.json`. This does not qualify native persistence, the installed package, IME or screen-reader behavior.
+
+2026-10-23，Windows x64 使用项目固定工具版本验证：配置版本更新仅同步没有新草稿的编辑器；保存期间重新打开同一配置后输入的新草稿及离开确认不会被旧响应覆盖，响应清除活动连接时也适用。明确取消编辑后加载已保存版本。Scope 恢复入口即使留在连接页，也将焦点恢复到页面标题并保留已有草稿。
+
+回归测试在修复前复现了草稿被覆盖及焦点落到 body。38 项专项测试、全量 86 项前端测试、typecheck、lint、生成检查与构建通过。Edge 合成 IPC 检查覆盖中英文、800×600／400×400 及两种活动连接结果，共八组；草稿、确认、重置及恢复焦点正常，页面无横向溢出。此证据不代表原生持久化、安装包、IME 或屏幕阅读器验收通过。
+
+Repository-wide `uv run --locked prek run -a` passed all hooks except the existing Windows Python `ty check` failures in unchanged code; see ignored `.artifacts/desktop-shell/review-draft-focus-prek.log`. 仓库全量钩子仍有未修改 Python 代码的既存 Windows 类型检查错误，其余钩子通过。
+
 ## Remaining release qualification
 
 - Clean standard-user Windows 11, including absent/present WebView2 and bootstrap recovery.

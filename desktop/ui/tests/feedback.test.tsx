@@ -475,6 +475,46 @@ test("Scope recovery navigation focuses the destination title", async () => {
   );
 });
 
+test.each(["zh", "en"])(
+  "%s Scope recovery on Connections restores focus and preserves its draft",
+  async (language) => {
+    const user = userEvent.setup();
+    vi.mocked(desktopApi.state).mockResolvedValue(disconnected);
+    render(<App />);
+    await screen.findByRole("button", { name: /未选择/ });
+    if (language === "en") {
+      await user.click(screen.getByRole("button", { name: "设置与诊断" }));
+      await user.selectOptions(screen.getByLabelText("语言"), "en");
+    }
+    const title = language === "zh" ? "连接" : "Connections";
+    await user.click(screen.getByRole("button", { name: title }));
+    const input = screen.getByRole("textbox", {
+      name: language === "zh" ? "连接名称" : "Connection name",
+    });
+    await user.type(input, "keep this draft");
+    await user.click(
+      screen.getByRole("button", {
+        name: language === "zh" ? /未选择/ : /None selected/,
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name:
+          language === "zh"
+            ? "管理连接与凭据"
+            : "Manage connections and credentials",
+      }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { level: 1, name: title }),
+    );
+    expect((input as HTMLInputElement).value).toBe("keep this draft");
+    expect(desktopApi.check).not.toHaveBeenCalled();
+  },
+);
+
 test("clicking Scope with body focus restores the actual trigger after Escape", async () => {
   const user = userEvent.setup();
   render(<App />);
