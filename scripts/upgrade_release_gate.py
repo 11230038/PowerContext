@@ -323,7 +323,7 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
     }
     with case_workspace(case["backend"], output) as directory:
         extras = "cli,server,seekdb" if case["backend"] == "seekdb" else "cli,server"
-        if case["configuration"] == "full-server-code":
+        if case["configuration"] in {"full-server-code", "full-server-vector-code"}:
             extras += ",code"
         interpreters = {}
         artifact = case["source_artifact"]
@@ -388,7 +388,7 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
         validate_junit(report)
         backend = validate_backend_evidence(output / "backend.json", case["backend"])
         require(backend.get("configuration") == case["configuration"], "Configuration evidence differs from the case")
-        if case["configuration"] == "full-server-code":
+        if case["configuration"] in {"full-server-code", "full-server-vector-code"}:
             code = backend.get("code")
             if not isinstance(code, dict):
                 raise GateError("Installed Code acceptance evidence required")  # noqa: TRY003 -- operator diagnostic
@@ -399,6 +399,25 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
                     for field in ("immutable_cache_files_preserved", "symbol_ids_preserved", "server_query_ready")
                 ),
                 "The installed Code index must remain queryable with its original immutable identity",
+            )
+        if case["configuration"] in {"full-server-vector", "full-server-vector-code"}:
+            vectors = backend.get("vectors")
+            if not isinstance(vectors, dict):
+                raise GateError("Installed vector acceptance evidence required")  # noqa: TRY003 -- operator diagnostic
+            require(
+                vectors.get("dimension") == (4 if case["configuration"].endswith("-code") else 3)
+                and vectors.get("maintenance_embedding_requests") == 0
+                and all(
+                    vectors.get(field) is True
+                    for field in (
+                        "historical_atomic_and_topic_embeddings_preserved",
+                        "historical_and_new_vector_reads",
+                        "fresh_vector_read",
+                        "profile_drift_rejected",
+                    )
+                )
+                and (case["backend"] != "sqlite" or vectors.get("missing_sqlite_helper_rejected") is True),
+                "Installed vector acceptance must preserve and retrieve the original embedding space",
             )
         return {"case": case, "installed": metadata, "database": backend, "status": "passed"}
 

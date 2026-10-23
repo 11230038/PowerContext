@@ -381,15 +381,20 @@ def test_publishing_jobs_depend_on_nonoptional_preupload_upgrade_gate():
         assert workflow["jobs"][name]["needs"] == "release-build"
 
 
-def test_repository_baseline_covers_all_three_databases():
+@pytest.mark.parametrize(
+    "configuration", ["full-server-no-vector", "full-server-code", "full-server-vector", "full-server-vector-code"]
+)
+def test_repository_baseline_covers_all_three_databases(configuration):
     policy = gate.load_policy(Path(__file__).parents[1])
     selection = policy["automatic_sources"]
     assert selection["strategy"] == "fixed-version"
     assert selection["source_version"] == "1.3.0"
     assert {profile["backend"] for profile in selection["profiles"]} == {"sqlite", "seekdb", "oceanbase"}
-    assert {
-        profile["backend"] for profile in selection["profiles"] if profile["configuration"] == "full-server-code"
-    } == {"sqlite", "seekdb", "oceanbase"}
+    assert {profile["backend"] for profile in selection["profiles"] if profile["configuration"] == configuration} == {
+        "sqlite",
+        "seekdb",
+        "oceanbase",
+    }
 
 
 @pytest.mark.parametrize("workflow_name,job_name", [("master", "upgrade-release-gate"), ("release", "release-build")])

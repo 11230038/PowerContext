@@ -19,7 +19,14 @@ source wheels, invalid artifact metadata, catalog outages, and a target at or be
 Evidence records the catalog digest, exact source artifact, target artifact digest, and expanded matrix. The resolver
 requires universal `py3-none-any` wheels; a distribution format change must extend it explicitly.
 
-All six profiles use `test_full_server.py`: Code enabled or disabled on SQLite, seekDB and OceanBase.
+All twelve profiles use `test_full_server.py`: Code enabled or disabled, with or without vectors, on SQLite,
+seekDB and OceanBase. Vector cases use exact unit-normalized L2 profiles: dimension three without Code and
+dimension four with Code. The local controlled embedding endpoint serves actual installed source/target processes;
+it does not replace either runtime or its persistence. Each source Server writes nonempty Atomic Memory and Topic
+vectors. Maintenance must preserve the exact historical embedding digests without calling that endpoint. Target
+acceptance checks historical and new vector retrieval, Topic content, configured profile drift without writes,
+and fresh-storage equivalence. SQLite additionally rejects a missing vector helper without repairing the clone.
+These assertions establish deterministic execution and space preservation, not embedding model quality.
 Code cases preserve immutable cache files and original fingerprint/symbol identities. Embedded seekDB additionally
 preserves the exact graph-table row digests through maintenance; its frozen extension creates the same schema for fresh storage.
 The suite starts the installed 1.3.0 Server, writes data through HTTP,
@@ -93,7 +100,8 @@ they follow actual installed operations and compare persisted data. The profile 
 actual background Memory processing with controlled model responses. Both installed releases declare the Memory
 capability and use the same processing ownership; the Worker check changes only the execution interval after migration.
 The separate SDK fixture tests the old pending intent's format and acknowledgment. Controlled responses establish
-execution and evidence preservation, not real-model quality. Vector storage needs separately reviewed profiles.
+execution and evidence preservation, not real-model quality. Vector storage uses its separately registered profiles;
+passing a no-vector case cannot establish vector acceptance.
 SQLite inventories include indexes, views and triggers; MySQL-family table DDL includes indexes and constraints,
 and views are collected separately. MySQL comparison parses columns, indexes (including parser properties), constraints, and CHECK expressions, ignoring only physical formatting and backend-generated constraint names. Views and triggers are collected independently. SQLite normalizes whitespace and identifier quoting. Structural differences fail rather than being silently excluded.
 

@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import sqlite3
+from collections.abc import Collection
 from importlib import import_module
 from importlib.metadata import version
 from pathlib import Path
@@ -48,33 +49,68 @@ def row_digest(rows):
     return hashlib.sha256("\n".join(hashes).encode()).hexdigest()
 
 
+def vector_snapshot(cursor: Any, tables: Collection[str], *, sqlite: bool) -> dict[str, Any]:
+    if not os.environ.get("POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_MODEL"):
+        return {}
+    result = {}
+    for table in ("pc_atomic_memory_current", "pc_topic_memory_vector_topics", "pc_topic_memory_vector_chunks"):
+        if table not in tables:
+            continue
+        if table == "pc_atomic_memory_current":
+            query = (
+                "SELECT scope_id,artifact_id,embedding,embedding_input_hash,profile_fingerprint "
+                "FROM pc_atomic_memory_current WHERE embedding IS NOT NULL"
+            )
+        elif sqlite:
+            helper = {
+                "pc_topic_memory_vector_topics": "pc_topic_memory_topic_vec",
+                "pc_topic_memory_vector_chunks": "pc_topic_memory_chunk_vec",
+            }[table]
+            query = f"SELECT m.*,v.embedding FROM {table} m JOIN {helper} v ON m.vector_id=v.rowid"  # noqa: S608 -- Both names come from the fixed fixture table mapping.
+        else:
+            query = f"SELECT * FROM {table} WHERE embedding IS NOT NULL"  # noqa: S608 -- The three fixture table names are fixed above.
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        result[table] = {"rows": len(rows), "sha256": row_digest(rows)}
+    return result
+
+
+def sqlite_snapshot(database: Path, *, add_revision: bool) -> dict[str, Any]:
+    with sqlite3.connect(database) as connection:
+        if os.environ.get("POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_MODEL"):
+            connection.enable_load_extension(True)
+            try:
+                import_module("sqlite_vec").load(connection)
+            finally:
+                connection.enable_load_extension(False)
+        if add_revision:
+            connection.execute(REVISION_DDL)
+        objects = {
+            plural: dict(connection.execute("SELECT name, sql FROM sqlite_schema WHERE type=? ORDER BY name", (kind,)))
+            for kind, plural in (
+                ("table", "tables"),
+                ("index", "indexes"),
+                ("view", "views"),
+                ("trigger", "triggers"),
+            )
+        }
+        data = {
+            name: row_digest(connection.execute('SELECT * FROM "' + name.replace('"', '""') + '"'))  # noqa: S608 -- Reflected identifier is quoted.
+            for name in objects["tables"]
+        }
+        vectors = vector_snapshot(connection.cursor(), objects["tables"], sqlite=True)
+    return {
+        "data_sha256": data,
+        "vectors": vectors,
+        "engine_version": sqlite3.sqlite_version,
+        "driver_version": version("aiosqlite"),
+        **objects,
+    }
+
+
 async def inspect(backend: str, database: Path, *, add_revision: bool, canonical: bool = False) -> dict[str, Any]:
     if backend == "sqlite":
-        with sqlite3.connect(database) as connection:
-            if add_revision:
-                connection.execute(REVISION_DDL)
-            objects = {
-                plural: dict(
-                    connection.execute("SELECT name, sql FROM sqlite_schema WHERE type=? ORDER BY name", (kind,))
-                )
-                for kind, plural in (
-                    ("table", "tables"),
-                    ("index", "indexes"),
-                    ("view", "views"),
-                    ("trigger", "triggers"),
-                )
-            }
-            data = {
-                name: row_digest(connection.execute('SELECT * FROM "' + name.replace('"', '""') + '"'))  # noqa: S608 -- Reflected identifier is quoted.
-                for name in objects["tables"]
-            }
-        return {
-            "data_sha256": data,
-            "engine_version": sqlite3.sqlite_version,
-            "driver_version": version("aiosqlite"),
-            **objects,
-        }
-
+        return sqlite_snapshot(database, add_revision=add_revision)
     # Use the driver's public API, not a current-checkout Profile that could run
     # startup guards or mutate an old schema before the target CLI is tested.
     pymysql = import_module("pymysql")
@@ -115,6 +151,7 @@ async def inspect(backend: str, database: Path, *, add_revision: bool, canonical
                 tables[name] = cursor.fetchone()[1]
                 cursor.execute("SELECT * FROM `" + name.replace("`", "``") + "`")  # noqa: S608 -- Escaped identifiers reflected from the isolated fixture.
                 data[name] = row_digest(cursor.fetchall())
+            vectors = vector_snapshot(cursor, names, sqlite=False)
             cursor.execute("SHOW FULL TABLES WHERE Table_type = 'VIEW'")
             views = {}
             for name in sorted(row[0] for row in cursor.fetchall()):
@@ -130,6 +167,7 @@ async def inspect(backend: str, database: Path, *, add_revision: bool, canonical
         return {
             "logical_tables": logical,
             "data_sha256": data,
+            "vectors": vectors,
             "triggers": triggers,
             "engine_version": engine,
             "driver_version": version("pymysql"),

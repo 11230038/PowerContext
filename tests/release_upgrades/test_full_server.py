@@ -67,6 +67,7 @@ def objects(value):
 @pytest.fixture(scope="session")
 def model_gateway():
     stages = []
+    embeddings = []
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A002 -- stdlib signature
@@ -74,8 +75,33 @@ def model_gateway():
 
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            payload = next(obj for obj in objects(body["messages"]) if "evidence" in obj)
-            if "proposal" in payload:
+            if self.path.endswith("/embeddings"):
+                model = re.fullmatch(r"upgrade-vector-([34])", body["model"])
+                assert model is not None, "Unregistered controlled embedding model"
+                dimension = int(model[1])
+                inputs = body["input"]
+                if isinstance(inputs, str):
+                    inputs = [inputs]
+                embeddings.append(dimension)
+                response = json.dumps({
+                    "object": "list",
+                    "model": body["model"],
+                    "data": [
+                        {"object": "embedding", "index": index, "embedding": [1.0, *([0.0] * (dimension - 1))]}
+                        for index in range(len(inputs))
+                    ],
+                    "usage": {"prompt_tokens": len(inputs), "total_tokens": len(inputs)},
+                }).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+                return
+            payload = next((obj for obj in objects(body["messages"]) if "evidence" in obj), None)
+            if payload is None:
+                value = {"ready": True}
+            elif "proposal" in payload:
                 stages.append("reconcile")
                 proposal = payload["proposal"]
                 duplicate = next((item for item in payload["related"] if item["text"] == proposal["text"]), None)
@@ -129,7 +155,7 @@ def model_gateway():
     thread = threading.Thread(target=gateway.serve_forever, daemon=True)
     thread.start()
     try:
-        yield {"url": f"http://127.0.0.1:{gateway.server_port}/v1", "stages": stages}
+        yield {"url": f"http://127.0.0.1:{gateway.server_port}/v1", "stages": stages, "embeddings": embeddings}
     finally:
         gateway.shutdown()
         gateway.server_close()
@@ -230,7 +256,16 @@ def environment_for(case, *, fresh=False):
         "NO_PROXY": "localhost,127.0.0.1",
         "no_proxy": "localhost,127.0.0.1",
     })
-    if case["configuration"] == "full-server-code":
+    if case["vector_dimension"]:
+        dimension = case["vector_dimension"]
+        environment.update({
+            "POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_MODEL": f"openai:upgrade-vector-{dimension}",
+            "POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_BASE_URL": case["model"]["url"],
+            "POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_PROFILE_ID": f"upgrade-vector-{dimension}-unit",
+            "POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_DIMENSION": str(dimension),
+            "POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_NORMALIZATION": "unit",
+        })
+    if case["code_enabled"]:
         scope = case.get("code_scope")
         environment["POWERCONTEXT_SERVER_CODE"] = json.dumps({
             "enabled": True,
@@ -250,13 +285,18 @@ def environment_for(case, *, fresh=False):
         parsed = urlsplit(url)
         expected = "/pc_upgrade_fresh" if fresh else "/pc_upgrade_test"
         assert parsed.scheme == "mysql+aoceanbase" and parsed.hostname in {"127.0.0.1", "localhost"}
-        if case["configuration"] == "full-server-code":
-            code_path = "/pc_upgrade_code_fresh" if fresh else "/pc_upgrade_code_test"
+        if case["configuration"] != "full-server-no-vector":
+            suffix = {
+                "full-server-code": "code",
+                "full-server-vector": "vector",
+                "full-server-vector-code": "vector_code",
+            }[case["configuration"]]
+            profile_path = f"/pc_upgrade_{suffix}_{'fresh' if fresh else 'test'}"
             if parsed.path == expected:
-                parsed = parsed._replace(path=code_path)
+                parsed = parsed._replace(path=profile_path)
             else:
-                assert re.fullmatch(re.escape(code_path) + r"_[0-9a-f]{8}", parsed.path), (
-                    "Only dedicated disposable Code databases may be used"
+                assert re.fullmatch(re.escape(profile_path) + r"_[0-9a-f]{8}", parsed.path), (
+                    "Only dedicated disposable profile databases may be used"
                 )
             url = parsed.geturl()
         else:
@@ -393,7 +433,13 @@ def case(model_gateway):
     # Missing gate inputs are errors, never skips or an implicit local database.
     assert os.environ["PC_UPGRADE_SOURCE_VERSION"] == "1.3.0", "Add a reviewed adapter for another source release"
     configuration = os.environ["PC_UPGRADE_CONFIGURATION"]
-    assert configuration in {"full-server-no-vector", "full-server-code"}, "Unregistered acceptance configuration"
+    assert configuration in {
+        "full-server-no-vector",
+        "full-server-code",
+        "full-server-vector",
+        "full-server-vector-code",
+    }, "Unregistered acceptance configuration"
+    code_enabled = configuration.endswith("-code")
     return {
         "source": Path(os.environ["PC_UPGRADE_SOURCE_PYTHON"]),
         "target": Path(os.environ["PC_UPGRADE_TARGET_PYTHON"]),
@@ -402,6 +448,8 @@ def case(model_gateway):
         "report": Path(os.environ["PC_UPGRADE_REPORT_DIR"]),
         "model": model_gateway,
         "configuration": configuration,
+        "code_enabled": code_enabled,
+        "vector_dimension": {"full-server-vector": 3, "full-server-vector-code": 4}.get(configuration, 0),
     }
 
 
@@ -458,13 +506,35 @@ def historical(case):
         assert not snapshot(case, "target", "fresh-empty", fresh=True)["tables"]
     with server(case["source"], environment_for(case), case["work"], case["report"] / "source-server.log") as client:
         value = seed(client, candidate_prefix="/v1/artifact-candidates")
-    if case["configuration"] == "full-server-code":
+        if case["vector_dimension"]:
+            value["topic_content"] = {
+                "title": "Upgrade topic evidence",
+                "summary": "Historical semantic retrieval",
+                "detail": "# Upgrade evidence\nHistorical Topic vectors must remain usable after maintenance.",
+            }
+            value["topic"] = post(
+                client,
+                f"/v1/scopes/{value['scope']}/artifacts",
+                {
+                    "family": "topic-memory",
+                    "content": value["topic_content"],
+                },
+            )
+            assert_vector_reads(client, value)
+    if case["code_enabled"]:
         value["code"] = historical_code(case, value["scope"])
     value["task"] = task_state(case, "source", "seed", value["scope"])
     value["schema"] = snapshot(case, "source", "source")
     assert {"pc_artifact_candidate_heads", "pc_artifact_candidate_versions", "pc_scopes", "pc_artifacts"} <= set(
         value["schema"]["tables"]
     )
+    if case["vector_dimension"]:
+        assert set(value["schema"]["vectors"]) == {
+            "pc_atomic_memory_current",
+            "pc_topic_memory_vector_topics",
+            "pc_topic_memory_vector_chunks",
+        }
+        assert all(item["rows"] > 0 for item in value["schema"]["vectors"].values())
     (case["report"] / "source-fixture.json").write_text(json.dumps(value, indent=2) + "\n")
     return value
 
@@ -487,6 +557,7 @@ def rejected_legacy_startup(case, historical):
 
 @pytest.fixture(scope="session")
 def migrated(case, historical, rejected_legacy_startup):
+    embedding_requests = len(case["model"]["embeddings"])
     environment = environment_for(case)
     env_file = case["work"] / "deployment.env"
     env_file.write_text(
@@ -551,7 +622,7 @@ def migrated(case, historical, rejected_legacy_startup):
     # Capture pending work before later behavioral tests legitimately dirty the
     # same scope by publishing new Artifacts. Compare exact old counters here.
     processing = task_state(case, "target", "verify", historical["scope"])
-    return {
+    result = {
         "applied": applied,
         "verified": verified,
         "repeated": repeated,
@@ -559,6 +630,10 @@ def migrated(case, historical, rejected_legacy_startup):
         "historical": historical,
         "processing": processing,
     }
+    if case["vector_dimension"]:
+        assert result["schema"]["vectors"] == historical["schema"]["vectors"]
+        assert len(case["model"]["embeddings"]) == embedding_requests, "Maintenance must not re-embed history"
+    return result
 
 
 @pytest.fixture(scope="session")
@@ -577,7 +652,7 @@ def restored_backup(case, migrated):
     restored["report"].mkdir()
     shutil.copyfile(backup, restored["work"] / "database")
     historical = migrated["historical"]
-    if case["configuration"] == "full-server-code":
+    if case["code_enabled"]:
         # Code caches are separate from the database recovery point. The
         # operator must preserve those immutable files as well.
         for name in ("code-cache", "repository"):
@@ -601,6 +676,8 @@ def restored_backup(case, migrated):
         continuation = client.get("/v1/scopes", params={"limit": 1, "cursor": historical["cursor"]})
         assert continuation.status_code == 200
         assert continuation.json()["items"] == historical["continuation"]["items"]
+        if case["vector_dimension"]:
+            assert_vector_reads(client, historical)
     environment = environment_for(restored)
 
     def migration(operation, *options):
@@ -637,8 +714,10 @@ def restored_backup(case, migrated):
             "records"
         ]
         assert written and written[0]["text"] == text
+        if case["vector_dimension"]:
+            assert_vector_reads(client, historical, new_text=text)
     assert hashlib.sha256(backup.read_bytes()).hexdigest() == before
-    if case["configuration"] == "full-server-code":
+    if case["code_enabled"]:
         assert code_cache_snapshot(restored) == historical["code"]["cache_sha256"]
     return {
         "method": "sqlite_online",
@@ -646,19 +725,73 @@ def restored_backup(case, migrated):
         "source_server_readback": True,
         "target_upgrade_and_read_write": True,
         "backup_sha256_unchanged": before,
-        "separate_code_cache_preserved": case["configuration"] == "full-server-code",
+        "separate_code_cache_preserved": case["code_enabled"],
     }
 
 
 @pytest.fixture
-def target(case, migrated, preserved_code):
+def target(case, migrated, preserved_code, vector_admission):
     with server(case["target"], environment_for(case), case["work"], case["report"] / "target-server.log") as client:
         yield client
 
 
 @pytest.fixture(scope="session")
+def vector_admission(case, migrated):
+    if not case["vector_dimension"]:
+        return None
+    before = snapshot(case, "target", "before-profile-drift")
+    environment = environment_for(case)
+    environment["POWERCONTEXT_SERVER_INFERENCE_EMBEDDING_PROFILE_ID"] = "different-embedding-space"
+    log = case["report"] / "profile-drift-server.log"
+    with (
+        pytest.raises(AssertionError, match="Server exited before readiness"),
+        server(case["target"], environment, case["work"], log),
+    ):
+        pytest.fail("Managed storage admitted a different embedding profile")
+    assert "embedding_profile_mismatch" in log.read_text()
+    after = snapshot(case, "target", "after-profile-drift")
+    assert canonical_schema(before) == canonical_schema(after)
+    assert before["data_sha256"] == after["data_sha256"]
+    if case["backend"] == "sqlite":
+        clone = {**case, "work": case["work"] / "missing-helper", "report": case["report"] / "missing-helper"}
+        clone["work"].mkdir()
+        clone["report"].mkdir()
+        command(
+            [
+                str(case["target"]),
+                "-I",
+                "-c",
+                "import sqlite3,sys\n"
+                "from contextlib import closing\n"
+                "with closing(sqlite3.connect(sys.argv[1])) as source, "
+                "closing(sqlite3.connect(sys.argv[2])) as target:\n"
+                " source.backup(target)\n"
+                " target.execute('DROP TRIGGER pc_atomic_memory_vec_insert')\n"
+                " target.commit()\n",
+                str(case["work"] / "database"),
+                str(clone["work"] / "database"),
+            ],
+            environment_for(case),
+            case["work"],
+            clone["report"] / "remove-helper.log",
+        )
+        before = snapshot(clone, "target", "before-missing-helper-startup")
+        log = clone["report"] / "server.log"
+        with (
+            pytest.raises(AssertionError, match="Server exited before readiness"),
+            server(clone["target"], environment_for(clone), clone["work"], log),
+        ):
+            pytest.fail("Managed startup repaired a missing vector helper")
+        assert "incompatible_schema" in log.read_text()
+        after = snapshot(clone, "target", "after-missing-helper-startup")
+        assert canonical_schema(before) == canonical_schema(after)
+        assert before["data_sha256"] == after["data_sha256"]
+    return {"profile_drift_rejected": True, "missing_sqlite_helper_rejected": case["backend"] == "sqlite"}
+
+
+@pytest.fixture(scope="session")
 def preserved_code(case, migrated):
-    if case["configuration"] != "full-server-code":
+    if not case["code_enabled"]:
         return None
     historical = migrated["historical"]
     source = historical["code"]
@@ -761,7 +894,25 @@ def test_target_startup(target):
     assert response.json()["status"] in {"ready", "degraded"}  # No inference provider in this explicit-write profile.
 
 
-def test_read_write_and_retrieval(target, historical):
+def assert_vector_reads(client, historical, *, new_text=None):
+    scope = historical["scope"]
+    hits = post(client, "/v1/memory/search", {"scope_id": scope, "query": "Upgrade fixture", "mode": "vector"})["hits"]
+    expected = {item["text"] for item in historical["memory"]}
+    if new_text is not None:
+        expected.add(new_text)
+    assert {item["memory"]["text"] for item in hits} >= expected
+    topics = post(
+        client,
+        f"/v1/scopes/{scope}/artifacts/topic-memory/search",
+        {"query": "Upgrade evidence", "mode": "hybrid", "include_scores": True},
+    )["results"]
+    topic = next(item for item in topics if item["artifact_id"] == historical["topic"]["artifact_id"])
+    assert topic["content"] == historical["topic_content"]
+    assert topic["revision"] == historical["topic"]["revision"]
+    assert {"topic_vector", "detail_vector"} <= topic["scores"]["channels"].keys()
+
+
+def test_read_write_and_retrieval(case, target, historical):
     scope = historical["scope"]
     records = post(target, "/v1/memory/entries/list", {"scope_id": scope})["entries"]
     assert {digest(item) for item in records} >= {digest(item) for item in historical["memory"]}
@@ -771,6 +922,8 @@ def test_read_write_and_retrieval(target, historical):
     found = post(target, "/v1/memory/search", {"scope_id": scope, "query": "Upgrade fixture", "mode": "fts"})["hits"]
     texts = {item["memory"]["text"] for item in found}
     assert texts >= {text, *(item["text"] for item in historical["memory"])}
+    if case["vector_dimension"]:
+        assert_vector_reads(target, historical, new_text=text)
 
 
 def test_authorization(target, historical):
@@ -857,7 +1010,9 @@ def canonical_schema(snapshot):
     }
 
 
-def test_fresh_upgrade_equivalence(case, migrated, processed_background, preserved_code, restored_backup):
+def test_fresh_upgrade_equivalence(
+    case, migrated, processed_background, preserved_code, restored_backup, vector_admission
+):
     if case["backend"] == "oceanbase":
         environment = environment_for(case, fresh=True)
         env_file = case["work"] / "fresh.env"
@@ -909,6 +1064,11 @@ def test_fresh_upgrade_equivalence(case, migrated, processed_background, preserv
             client, "/v1/memory/search", {"scope_id": fresh["scope"], "query": "Upgrade fixture", "mode": "fts"}
         )["hits"]
         assert {item["memory"]["text"] for item in hits} >= {item["text"] for item in fresh["memory"]}
+        if case["vector_dimension"]:
+            hits = post(
+                client, "/v1/memory/search", {"scope_id": fresh["scope"], "query": "Upgrade fixture", "mode": "vector"}
+            )["hits"]
+            assert {item["memory"]["text"] for item in hits} >= {item["text"] for item in fresh["memory"]}
     inventory = snapshot(case, "target", "fresh", fresh=True)
     actual = canonical_schema(migrated["schema"])
     expected = canonical_schema(inventory)
@@ -926,6 +1086,16 @@ def test_fresh_upgrade_equivalence(case, migrated, processed_background, preserv
         "background_processing": processed_background,
         "configuration": case["configuration"],
         "code": preserved_code,
+        "vectors": None
+        if not case["vector_dimension"]
+        else {
+            "dimension": case["vector_dimension"],
+            "historical_atomic_and_topic_embeddings_preserved": True,
+            "historical_and_new_vector_reads": True,
+            "maintenance_embedding_requests": 0,
+            "fresh_vector_read": True,
+            **vector_admission,
+        },
     }
     if case["backend"] == "oceanbase":
         evidence.update(tenant_mode=inventory["tenant_mode"], proxy_version=inventory["proxy_version"])
