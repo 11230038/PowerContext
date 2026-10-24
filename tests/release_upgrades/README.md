@@ -60,10 +60,15 @@ Provide these behavioral tests (additional tests are allowed):
 | `test_public_migration_commands` | Stop writers, run the target artifact's public maintenance commands, and validate full readiness. A limited bundle verification does not pass. |
 | `test_target_startup` | Start the target Server against the migrated database and verify readiness. |
 | `test_read_write_and_retrieval` | Read the old records, write new ones, and retrieve both through public interfaces. |
-| `test_authorization` | Verify permitted and denied access and preservation of relevant grants. |
+| `test_authorization` | Preserve the old viewer grant; verify its allowed reads, denied cross-scope reads and denied writes with both installed releases. Invalid credentials must still fail. |
 | `test_candidates_and_processing` | Verify retained Candidates and CAS approval; load and acknowledge the old pending intent using the target installed SDK, including idempotency. This does not execute a model-driven Worker. |
 | `test_preserved_history_and_cursors` | Verify exact history/references and unchanged or declared-transformed cursor and receipt semantics. |
 | `test_fresh_upgrade_equivalence` | Initialize a fresh target database; compare schema/backend objects and behavior with the upgraded database. The current suite has no retained/archive object exclusions. |
+
+The authorization probe runs the installed Server through its native SDK and real HTTP handlers with a fixed
+ordinary-user authentication provider. Authorization uses the persisted builtin policy without overrides. The CLI
+Server is stopped before each SDK probe so embedded seekDB has only one owning process. CLI startup remains a
+separate mandatory acceptance phase.
 
 Use a session fixture for the shared lifecycle; do not depend on pytest's test execution order. All collected tests
 must execute and pass. Empty collection, missing phases, skips (including missing backends), xfail, failure, command
@@ -82,8 +87,8 @@ they follow actual installed operations and compare persisted data. The profile 
 not vector storage or model-generated content. The processing fixture tests persisted intent compatibility and
 acknowledgment, not Worker execution. Add separately reviewed profiles before claiming those optional paths.
 SQLite inventories include indexes, views and triggers; MySQL-family table DDL includes indexes and constraints,
-and views are collected separately. Comparison normalizes whitespace, identifier quoting and auto-increment
-counters only; structural differences fail rather than being silently excluded.
+and views are collected separately. Comparison tokenizes DDL while preserving quoted tokens and comments verbatim,
+and ignores only unquoted whitespace and table-level auto-increment counters; structural differences fail rather than being silently excluded.
 
 Regenerate installation support regions with
 `uv run python scripts/upgrade_release_gate.py --write-docs` and run `make upgrade-policy-check`. When persistence
