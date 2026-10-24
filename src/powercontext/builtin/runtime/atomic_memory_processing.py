@@ -488,8 +488,10 @@ class AtomicMemorySourceWindowProcessor:
                 sorted(by_id[identifier].journal_position for identifier in candidate.evidence_ids)
             ),
         )
-        # With nothing to compare, built-in reconciliation would only repeat the keep-or-drop decision that built-in
-        # extraction made on the same evidence. Custom Prompts and injected stages may apply their own policy.
+        # Built-in extraction decides which candidates are worth keeping, with the whole window in view. With nothing to
+        # compare, built-in reconciliation could only ask that again from the candidate's own evidence, so the candidate
+        # is kept as extracted. Its unworthy noop is a second opinion only where it compares related items.
+        # Custom Prompts and injected stages may apply their own policy.
         skip_unrelated = all(
             prompt is not None and prompt.selection == "built_in"
             for prompt in (extraction_prompt, current_prompt("atomic_memory.reconcile"))
