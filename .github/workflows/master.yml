@@ -384,7 +384,7 @@ jobs:
   code-seekdb:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.suites || '{}').database) }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -405,9 +405,9 @@ jobs:
         run: make code-seekdb-test
 
       - name: Test unified migrations with embedded seekdb
-        # The isolated full-Server cases exceed ten minutes in aggregate;
-        # each runner case retains its separate 180-second deadline below.
-        timeout-minutes: 15
+        # Full-Server cases run in separate processes and exceed fifteen minutes
+        # in aggregate; each runner keeps its 180-second deadline below.
+        timeout-minutes: 25
         env:
           POWERCONTEXT_TEST_MIGRATION_SEEKDB: "1"
           POWERCONTEXT_TEST_MIGRATION_SQL_LOG: "1"
