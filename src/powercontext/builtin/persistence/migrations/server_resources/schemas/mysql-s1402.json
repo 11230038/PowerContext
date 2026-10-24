@@ -3,7 +3,7 @@
   "revisions": {
     "s1402": {
       "statements": [
-        "CREATE TABLE pc_portable_restore_receipts (\n\tbundle_id VARCHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \n\tformat_version INTEGER NOT NULL, \n\ttotal_digest VARCHAR(71) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \n\trecord_count BIGINT NOT NULL, \n\tstatus VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \n\tinserted BIGINT NOT NULL, \n\talready_present BIGINT NOT NULL, \n\tprojections_ready BOOL NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (bundle_id), \n\tCONSTRAINT ck_pc_portable_restore_receipts_status CHECK (status IN ('authoritative_restored', 'ready')), \n\tCONSTRAINT ck_pc_portable_restore_receipts_record_count CHECK (record_count >= 0), \n\tCONSTRAINT ck_pc_portable_restore_receipts_inserted CHECK (inserted >= 0), \n\tCONSTRAINT ck_pc_portable_restore_receipts_existing CHECK (already_present >= 0)\n)",
+        "CREATE TABLE pc_portable_restore_receipts (\n\tbundle_id VARCHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \n\tformat_version INTEGER NOT NULL, \n\ttotal_digest VARCHAR(71) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \n\trecord_count BIGINT NOT NULL, \n\tstatus VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, \n\tinserted BIGINT NOT NULL, \n\talready_present BIGINT NOT NULL, \n\tprojections_ready TINYINT(1) NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (bundle_id), \n\tCONSTRAINT ck_pc_portable_restore_receipts_status CHECK (status IN ('authoritative_restored', 'ready')), \n\tCONSTRAINT ck_pc_portable_restore_receipts_record_count CHECK (record_count >= 0), \n\tCONSTRAINT ck_pc_portable_restore_receipts_inserted CHECK (inserted >= 0), \n\tCONSTRAINT ck_pc_portable_restore_receipts_existing CHECK (already_present >= 0)\n)",
         "ALTER TABLE `pc_artifacts` MODIFY COLUMN `created_at` DATETIME(6) NULL",
         "ALTER TABLE `pc_profile_policies` MODIFY COLUMN `updated_at` DATETIME(6) NOT NULL",
         "ALTER TABLE `pc_topic_memory_revision_publications` MODIFY COLUMN `published_at` DATETIME(6) NOT NULL",
@@ -98,8 +98,10 @@
               },
               "projections_ready": {
                 "type": [
-                  "bool",
-                  []
+                  "tinyint",
+                  [
+                    "1"
+                  ]
                 ],
                 "nullable": false,
                 "default": null,

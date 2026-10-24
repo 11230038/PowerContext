@@ -817,14 +817,18 @@ def test_mysql_full_server_registers_portable_storage_and_retains_timestamp_prec
     if origin == "released":
         _load_full_server_baseline(backend)
     runner = _full_server_runner(backend)
-    assert _apply(runner, policy="manual").state == "ready"
+    try:
+        assert _apply(runner, policy="manual").state == "ready"
+    finally:
+        _capture_portable_schema(backend)
     assert runner.verify().state == "ready"
     # Native DATETIME stores UTC values without timezone metadata.
     timestamp = datetime(2026, 10, 24, 12, 34, 56, 123456, tzinfo=UTC).replace(tzinfo=None)
 
     def verify(connection, _identity, _guard):
         inventory = mysql_inventory(connection)
-        assert "pc_portable_restore_receipts" in inventory["tables"]
+        receipt = inventory["tables"]["pc_portable_restore_receipts"]
+        assert receipt["columns"]["projections_ready"]["type"] == ["tinyint", ["1"]]
         for table, column in (
             ("pc_artifacts", "created_at"),
             ("pc_profile_policies", "updated_at"),
@@ -839,7 +843,21 @@ def test_mysql_full_server_registers_portable_storage_and_retains_timestamp_prec
             ),
             {"content": b'{"history":"retained"}', "created_at": timestamp},
         )
+        connection.execute(
+            text(
+                "INSERT INTO pc_portable_restore_receipts "
+                "(bundle_id,format_version,total_digest,record_count,status,inserted,already_present,projections_ready,updated_at) "
+                "VALUES ('receipt',1,'sha256:fixture',0,'ready',0,0,1,:updated_at)"
+            ),
+            {"updated_at": timestamp},
+        )
         connection.commit()
+        assert (
+            connection.exec_driver_sql(
+                "SELECT projections_ready FROM pc_portable_restore_receipts WHERE bundle_id='receipt'"
+            ).scalar_one()
+            == 1
+        )
         assert (
             connection.exec_driver_sql(
                 "SELECT created_at FROM pc_artifacts WHERE scope_id='precision' AND artifact_id='retained'"
@@ -849,6 +867,33 @@ def test_mysql_full_server_registers_portable_storage_and_retains_timestamp_prec
 
     backend.connections().run(verify, writable=True)
     assert not _apply(runner, policy="manual").changed
+
+
+def _capture_portable_schema(backend: _BackendTarget) -> None:
+    """Keep content-free native reflection even when a new DDL prefix is rejected."""
+
+    def capture(connection, _identity, _guard):
+        names = {row[0] for row in connection.exec_driver_sql("SHOW FULL TABLES")}
+        tables = {}
+        for name in (
+            "pc_portable_restore_receipts",
+            "pc_artifacts",
+            "pc_profile_policies",
+            "pc_topic_memory_revision_publications",
+            "pc_artifact_tags",
+        ):
+            if name in names:
+                tables[name] = connection.exec_driver_sql(f"SHOW CREATE TABLE `{name}`").one()[1]
+        return {"backend_version": connection.exec_driver_sql("SELECT VERSION()").scalar_one(), "tables": tables}
+
+    try:
+        diagnostic = backend.connections().run(capture)
+    except Exception as error:
+        diagnostic = {"capture_error_type": type(error).__name__}
+    backend.evidence_directory.mkdir(parents=True, exist_ok=True)
+    (backend.evidence_directory / "portable-schema.json").write_text(
+        json.dumps(diagnostic, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def test_mysql_full_server_resumes_interrupted_initialization_before_manifest_seed(backend: _BackendTarget) -> None:
