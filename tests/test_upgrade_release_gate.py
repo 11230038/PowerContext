@@ -16,6 +16,11 @@
 
 import json
 import os
+import shutil
+import signal
+import subprocess
+import sys
+import time
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
@@ -539,3 +544,159 @@ def test_artifact_hashes_do_not_normalize_bytes(tmp_path):
     before = gate.sha256(artifact)
     artifact.write_bytes(b"payload\r\n")
     assert gate.sha256(artifact) != before
+
+
+_PROCESS_FIXTURE = """
+import os, signal, subprocess, sys, time
+from pathlib import Path
+
+role, mode, control, evidence = sys.argv[1:]
+control, evidence = Path(control), Path(evidence)
+child = None
+if mode == "forced-timeout":
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+else:
+    def stop(_signal, _frame):
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, stop)
+try:
+    ready = evidence / (role + ".ready")
+    ready.write_text(str(os.getpid()))
+    ready.replace(evidence / (role + ".pid"))
+    if role != "engine":
+        next_role = "server" if role == "root" else "engine"
+        child = subprocess.Popen(
+            [sys.executable, __file__, next_role, mode, str(control), str(evidence)],
+            start_new_session=True,
+        )
+    if role == "root" and mode in {"success", "failure"}:
+        while not (evidence / "engine.pid").exists():
+            time.sleep(0.02)
+        # Deliberately leave both detached generations for the command owner.
+        os._exit(0 if mode == "success" else 7)
+    while control.exists():
+        time.sleep(0.02)
+finally:
+    if child is not None:
+        child.terminate()
+        try:
+            child.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait()
+    (evidence / (role + ".closed")).write_text("closed")
+"""
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="The upgrade supervisor uses Linux subreaper ownership")
+@pytest.mark.parametrize("mode", ["success", "failure", "timeout", "forced-timeout"])
+def test_upgrade_command_reaps_detached_descendants_before_workspace_cleanup(tmp_path, mode):
+    fixture = tmp_path / "process_fixture.py"
+    fixture.write_text(_PROCESS_FIXTURE)
+    control = tmp_path / "keep-running"
+    control.touch()
+    report = tmp_path / "evidence"
+    report.mkdir()
+    # This child belongs to the test, not the isolated command supervisor.
+    sentinel = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        with gate.case_workspace("sqlite", report) as work:
+            arguments = [sys.executable, str(fixture), "root", mode, str(control), str(report)]
+            options = {
+                "environment": dict(os.environ),
+                "cwd": work,
+                "log": report / "command.log",
+                "timeout": 5 if mode.endswith("timeout") else 20,
+                "shutdown_timeout": 0.5,
+            }
+            if mode == "success":
+                gate.run_owned(arguments, **options)
+            else:
+                with pytest.raises(gate.GateError, match="Command failed"):
+                    gate.run_owned(arguments, **options)
+            assert sentinel.poll() is None
+            for role in ("root", "server", "engine"):
+                pid = int((report / f"{role}.pid").read_text())
+                with pytest.raises(ProcessLookupError):
+                    os.kill(pid, 0)
+            if mode != "forced-timeout":
+                assert (report / "server.closed").is_file()
+                assert (report / "engine.closed").is_file()
+            if mode.endswith("timeout"):
+                assert "exceeded 5 seconds" in (report / "command.log").read_text()
+        assert not work.exists()
+    finally:
+        # Also let controlled fixture processes exit if the regression fails.
+        # Never signal a stale PID obtained from a fixture file.
+        control.unlink(missing_ok=True)
+        sentinel.terminate()
+        sentinel.wait(timeout=5)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="The upgrade supervisor uses Linux subreaper ownership")
+@pytest.mark.parametrize("cancellation", ["parent-term", "repeat-interrupt"])
+def test_upgrade_command_owner_finishes_cleanup_after_gate_cancellation(tmp_path, cancellation):
+    fixture = tmp_path / "process_fixture.py"
+    fixture.write_text(_PROCESS_FIXTURE)
+    control = tmp_path / "keep-running"
+    control.touch()
+    report = tmp_path / "evidence"
+    report.mkdir()
+    owner_script = tmp_path / "owner.py"
+    owner_script.write_text(
+        "import os,sys\nfrom pathlib import Path\n"
+        f"sys.path[:0] = {[str(Path(gate.__file__).parent), str(Path(matrix.__file__).parent)]!r}\n"
+        "import upgrade_release_gate as gate\n"
+        f"report = Path({str(report)!r})\n"
+        "with gate.case_workspace('sqlite', report) as work:\n"
+        "    (report / 'workspace').write_text(str(work))\n"
+        f"    gate.run_owned({[sys.executable, str(fixture), 'root', 'forced-timeout', str(control), str(report)]!r}, "
+        "environment=dict(os.environ), cwd=work, log=report / 'command.log', timeout=60, shutdown_timeout=0.5)\n"
+    )
+    sentinel = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    with (report / "owner.log").open("w") as log:
+        owner = subprocess.Popen([sys.executable, str(owner_script)], stdout=log, stderr=subprocess.STDOUT)
+        pids = []
+        try:
+            deadline = time.monotonic() + 15
+            while not (report / "engine.pid").exists():
+                assert owner.poll() is None, (report / "owner.log").read_text()
+                assert time.monotonic() < deadline, "Controlled processes did not become ready"
+                time.sleep(0.02)
+            pids = [int((report / f"{role}.pid").read_text()) for role in ("root", "server", "engine")]
+            work = Path((report / "workspace").read_text())
+            owner.send_signal(signal.SIGTERM if cancellation == "parent-term" else signal.SIGINT)
+            if cancellation == "repeat-interrupt":
+                time.sleep(0.1)
+                assert owner.poll() is None, "Cancellation did not wait for owned processes"
+                owner.send_signal(signal.SIGINT)
+            assert owner.wait(timeout=10) != 0
+            if cancellation == "parent-term":
+                # The dead gate cannot await its owner; PDEATHSIG initiates cleanup.
+                deadline = time.monotonic() + 10
+                while any(_process_exists(pid) for pid in pids):
+                    assert time.monotonic() < deadline, "Detached descendants survived gate termination"
+                    time.sleep(0.02)
+            else:
+                # The second interrupt must not delete the workspace early.
+                assert not any(_process_exists(pid) for pid in pids)
+                assert not work.exists()
+            assert sentinel.poll() is None
+        finally:
+            control.unlink(missing_ok=True)
+            if owner.poll() is None:
+                owner.terminate()
+                owner.wait(timeout=5)
+            sentinel.terminate()
+            sentinel.wait(timeout=5)
+            if cancellation == "parent-term" and pids and not any(_process_exists(pid) for pid in pids):
+                shutil.rmtree(Path((report / "workspace").read_text()), ignore_errors=True)
+
+
+def _process_exists(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True

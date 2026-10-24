@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -233,6 +234,51 @@ def run(command: list[str], *, environment: dict[str, str], cwd: Path, log: Path
     require(result.returncode == 0, f"Command failed; inspect {log.name}")
 
 
+def run_owned(
+    command: list[str],
+    *,
+    environment: dict[str, str],
+    cwd: Path,
+    log: Path,
+    timeout: float = 1800,
+    shutdown_timeout: float = 30,
+) -> None:
+    require(sys.platform == "linux", "Installed-release acceptance requires Linux process ownership and cleanup")
+    supervised = [
+        sys.executable,
+        str(Path(__file__).with_name("upgrade_process.py")),
+        "--parent-pid",
+        str(os.getpid()),
+        "--timeout",
+        str(timeout),
+        "--shutdown-timeout",
+        str(shutdown_timeout),
+        "--",
+        *command,
+    ]
+    # The supervisor enforces the deadline and reaps every owned descendant,
+    # including detached native engines, before workspace cleanup can run.
+    with (
+        log.open("w", encoding="utf-8") as output,
+        subprocess.Popen(  # noqa: S603 -- fixed gate supervisor and reviewed command, no shell
+            supervised, env=environment, cwd=cwd, stdout=output, stderr=subprocess.STDOUT, start_new_session=True
+        ) as process,
+    ):
+        try:
+            returncode = process.wait()
+        except BaseException:
+            # Repeated interrupts must not release the workspace before the
+            # owner has finished closing descendants.
+            previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+            try:
+                process.terminate()
+                process.wait()
+            finally:
+                signal.signal(signal.SIGINT, previous)
+            raise
+    require(returncode == 0, f"Command failed; inspect {log.name}")
+
+
 def installed(python: Path, environment: dict[str, str], cwd: Path) -> dict[str, str]:
     result = subprocess.run(  # noqa: S603 -- isolated environment interpreter
         [
@@ -333,14 +379,14 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
         }
         for role, package in packages.items():
             venv = directory / role
-            run(
+            run_owned(
                 ["uv", "venv", "--python", sys.executable, str(venv)],
                 environment=environment,
                 cwd=directory,
                 log=output / f"{role}-venv.log",
             )
             python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-            run(
+            run_owned(
                 ["uv", "pip", "install", "--python", str(python), package],
                 environment=environment,
                 cwd=directory,
@@ -363,7 +409,7 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
             "PC_UPGRADE_EVIDENCE": str(output / "backend.json"),
         })
         report = output / "junit.xml"
-        run(
+        run_owned(
             [
                 sys.executable,
                 "-m",

@@ -116,9 +116,10 @@ def test_server_rejects_injected_authorization_before_registering_actual_backgro
 def test_background_cli_preserves_deployment_identity_when_building_the_worker_spec(monkeypatch):
     async def scenario():
         settings = ServerSettings(
+            database=SQLiteConfig(),
             access=AccessControlConfig(
                 mode="enforced", background_principal_id="background-worker", deployment_id="test"
-            )
+            ),
         )
         observed = {}
         stop_callbacks = []

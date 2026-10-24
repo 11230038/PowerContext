@@ -140,3 +140,13 @@ Acceptance uses a private copy of those files. Only a passing run creates `valid
 in its evidence directory. CI uploads that directory; local `make publish` calls the runner with `--release --publish`
 and uploads its exact returned paths, never a fresh glob of `dist/`. Failed acceptance produces no publication set.
 Managed persistence hashes normalize CRLF/LF checkout line endings; artifact SHA-256s remain byte-exact.
+
+
+Installed-release execution requires Linux. Each gate command runs under a separate
+Linux child subreaper, which owns detached Server and embedded-engine descendants.
+On timeout it first interrupts the command so fixtures can close the Server and
+seekDB normally, then terminates and reaps any remaining owned descendants before
+collecting native logs, deleting the workspace, or starting the next case. Normal
+success and failure also clean up leftover descendants. If the gate is terminated,
+the owner receives a Linux parent-death signal and completes the same cleanup.
+Policy and documentation checks remain available on other platforms.

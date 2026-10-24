@@ -757,6 +757,9 @@ async def _run_background_async(settings: ServerSettings, tracing: Any) -> None:
         inference=settings.inference,
         external_skills=settings.external_skills,
     )
+    from powercontext.builtin.persistence.migrations.server_readiness import prepare_server_storage
+
+    await asyncio.to_thread(prepare_server_storage, settings)
     metrics = ServerMetrics(role="background") if settings.metrics.enabled else None
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
