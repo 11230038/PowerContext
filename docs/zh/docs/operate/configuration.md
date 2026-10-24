@@ -79,10 +79,30 @@ export POWERCONTEXT_HOME=/srv/powercontext
 
 Server 配置使用 `POWERCONTEXT_SERVER_` 前缀。
 
+每个 Server 进程默认最多接纳 64 个并发外部 HTTP 请求，包括 REST、MCP、Dashboard 和健康检查。
+从读取请求体到响应结束始终占用一个名额，流式响应同样计入。容量满时立即返回 `503`、
+错误码 `server_overloaded` 和 `Retry-After: 1`，不排队，也不读取被拒绝的请求体。异常和取消都会释放名额。
+可信的进程内 MCP 到 HTTP 转发沿用外部请求的准入，不重复计数。
+
+Server 在下游解析之前按实际收到的字节限制请求体，默认上限为 16 MiB，分块上传同样受限。
+声明的 `Content-Length` 过大会提前拒绝；缺少该头或声明较小长度都不能绕过实际字节检查。
+超限返回 `413` 和错误码 `request_too_large`，读取在首个超限 chunk 处停止。这是可配置的部署级上限，
+不改变领域字段约束。默认值可容纳当前最大 5 MiB 的 Skill archive，其 base64 最长为 6,990,508 个字符，
+并为 JSON envelope 留出空间。调低上限可能拒绝原本符合领域约束的操作。两个 HTTP 上限都必须是正整数。
+应按可用内存调整：64 个请求各保留 16 MiB，请求体本身就需要 1 GiB，尚未包括解析和业务开销。
+交给下游时会短暂复制一次已接收的请求体，随后释放输入缓冲。
+按请求来源设置速率配额、上传超时、连接上限和跨 Server 进程的总额度由反向代理负责。
+
+MCP 使用 stateless Streamable HTTP，每次工具执行都采用当前请求的认证身份，不发放传输 Session ID，
+也不保留跨请求恢复的 SSE 会话。从 stateful Server 升级后应重新连接客户端；已持久化的 Scope、Memory
+和 Handoff 数据不受影响。长响应在结束前仍占用一个 HTTP 名额，应为并发请求预留其他名额。
+
 | 变量 | 默认值 | 含义 |
 | --- | --- | --- |
 | `POWERCONTEXT_SERVER_HTTP_HOST` | `127.0.0.1` | 监听地址 |
 | `POWERCONTEXT_SERVER_HTTP_PORT` | `8000` | 监听端口；配置向导在首次设置时建议使用 `17429` |
+| `POWERCONTEXT_SERVER_HTTP_MAX_REQUEST_BODY_BYTES` | `16777216` | 解析前允许的外部 HTTP 请求体字节数，包括分块上传 |
+| `POWERCONTEXT_SERVER_HTTP_MAX_CONCURRENT_REQUESTS` | `64` | 每进程进行中的外部 HTTP 请求上限，包括完整流式响应 |
 | `POWERCONTEXT_SERVER_WORKSPACE` | Server 启动目录 | 本机项目级 Agent Skill 目录的解析根目录 |
 | `POWERCONTEXT_SERVER_MCP_ENABLED` | `true` | 启用 Streamable HTTP MCP |
 | `POWERCONTEXT_SERVER_MCP_PATH` | `/mcp` | MCP 路径 |
