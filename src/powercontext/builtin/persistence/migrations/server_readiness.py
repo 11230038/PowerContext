@@ -20,8 +20,19 @@ from .bundle import sqlite_inventory
 from .models import MigrationError, digest
 
 
-def check_server_schema(connection):
+def check_server_schema(connection, *, _archive_recovery=False):
     bundle = check_server_layout(connection)
+    pending_restore = connection.exec_driver_sql(
+        "SELECT 1 FROM pc_portable_restore_receipts WHERE projections_ready = false LIMIT 1"
+    ).first()
+    if pending_restore is not None:
+        if _archive_recovery:
+            # Only the explicit archive restore path may open an incomplete
+            # projection set. Its registered schema is still checked above.
+            return
+        from powercontext.builtin.portability import BundleRecoveryRequiredError
+
+        raise BundleRecoveryRequiredError()
     backend = "sqlite" if connection.dialect.name == "sqlite" else "seekdb"
     configuration = (
         {"embedding_profile": bundle.vector_profile.profile.model_dump(mode="json")}

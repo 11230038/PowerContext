@@ -12,7 +12,7 @@ description: 了解数据库迁移命令、备份策略、服务启停及当前�
 
 `powercontext server db-migrate status/plan/apply/verify` 默认选择 `--bundle server`，使用部署配置中的持久 SQLite、嵌入式 seekDB 或 OceanBase MySQL 模式数据库。维护命令以显式环境文件为准，不接受任意测试 bundle 路径。
 
-完整 Server 路径登记了真实 1.3.0 的存储结构，版本链为 `s1300 → s1400 → s1401`，三个后端均可启用或关闭 Code，并为单位归一化的 L2 向量登记独立 profile。SQLite、OceanBase 的 Code 本地缓存独立于 Server 数据库；嵌入式 seekDB Code 的三张表通过实际安装的 1.3.0 采集并冻结为结构扩展。维护保留已有图数据，为新建的 Code 启用数据库创建已登记的表。此路径覆盖完整数据库结构、Candidate 改名与历史保留、Dream 任务格式、Processing 所有权声明、检索投影和既有 Source 引用。未知结构、额外对象及未登记来源均在写入前拒绝。更早的 Memory 集合转换不属于此路径。
+完整 Server 路径登记了真实 1.3.0 的存储结构，版本链为 `s1300 → s1400 → s1401 → s1402`，三个后端均可启用或关闭 Code，并为单位归一化的 L2 向量登记独立 profile。SQLite、OceanBase 的 Code 本地缓存独立于 Server 数据库；嵌入式 seekDB Code 的三张表通过实际安装的 1.3.0 采集并冻结为结构扩展。维护保留已有图数据，为新建的 Code 启用数据库创建已登记的表。此路径覆盖完整数据库结构、Candidate 改名与历史保留、Dream 任务格式、Processing 所有权声明、检索投影和既有 Source 引用。未知结构、额外对象及未登记来源均在写入前拒绝。更早的 Memory 集合转换不属于此路径。
 
 只有结构、领域数据、搜索投影和任务校验全部通过，才返回 `state=ready`、`readiness_scope=server`、`server_ready=true`。发布还必须通过真实安装包在三个后端上的完整验收；实现路径存在不等于某次发布已通过验收，支持状态以安装指南和发布门禁为准。
 
@@ -21,6 +21,14 @@ description: 了解数据库迁移命令、备份策略、服务启停及当前�
 Candidate 旧表保留为 `pc_retained_dream_candidate_heads` 和 `pc_retained_dream_candidate_versions`，用于迁移当次的复制验证。它们与迁移备份都不是线上写入目标；升级后的正常修改不再与旧快照比较。历史 Artifact 新增的来源时间/操作者字段保持未知，既有 Source 引用保持不变。投影重建和数据校验会扫描相关表；请为停机时间、备份与保留副本安排容量。
 
 `s1401` 在三种后端的托管目标结构中登记 `pc_memory_artifact_archive`。该表保存供离线维护使用的 Memory 历史快照，不提供公开 Artifact 读取入口。新数据库的归档表为空；重复迁移保留其原始字节，运行时准入检查验证登记的表结构。本 revision 不新增对其他历史来源结构的支持。
+
+`s1402` 登记可移植归档的恢复回执，并为 MySQL 兼容后端中可移植的 Artifact、Profile、Topic 发布及标签时间戳
+保留微秒精度。已有受管库通过显式维护执行这些结构变更；运行时启动不补建回执表，也不修改时间戳列。
+
+[可移植归档恢复](portable-archive.md) 中断后，普通启动和 worker 会继续拒绝未完成的检索投影。
+请使用同一个通过校验的归档，重新执行 `powercontext archive restore <bundle> --yes`。
+仅此显式恢复路径可在验证已登记结构和配置的向量 profile 后打开投影尚未完整的数据库，且不启动 worker。
+没有待完成恢复回执时，恢复入口仍执行完整就绪校验。
 
 普通 Server 启动先做只读就绪检查，不修补已有库。空的本地持久 SQLite/seekDB 可通过同一版本链初始化；OceanBase 必须先执行显式维护命令初始化。内存 SQLite 仍为临时运行时存储。迁移后发现结构或投影被篡改，必须停写维护，不能靠重启修复。
 
@@ -365,7 +373,7 @@ MySQL 结构步骤通过冻结的布局片段注册，由 `manifest.json` 的 `m
 计划通过完整 bundle 摘要绑定注册资源，未完成维护的重试要求使用同一 bundle。已发布 revision 资源及其记录摘要保持不可改写。
 无参数 DDL 使用单语句驱动选项，确保 CHECK 的取余运算符和 SQL 字面量中的百分号原样到达后端。
 
-Repository 仅在结构满足后运行。完整 Server 的 `s1300 → s1400 → s1401` 链用 `mysql_state_layouts` 登记逐语句的精确结构变化和可恢复前缀。领域步骤附着在共享 revision 上，使用同一连接、锁和恢复点；校验成功后才推进版本。只读 live 校验与迁移当次的保留副本校验分离。向量配置仍需独立登记。
+Repository 仅在结构满足后运行。完整 Server 的 `s1300 → s1400 → s1401 → s1402` 链用 `mysql_state_layouts` 登记逐语句的精确结构变化和可恢复前缀。领域步骤附着在共享 revision 上，使用同一连接、锁和恢复点；校验成功后才推进版本。只读 live 校验与迁移当次的保留副本校验分离。向量配置仍需独立登记。
 
 单版本表不提供通用 run ID 续跑。中断后先用只读命令检查真实结构和数据；含混状态返回 `recovery_required`，不盲目 stamp、不用部分状态的备份替换原恢复点。库外摘要在 DDL 前记录执行及备份信息；重试保留原维护窗口和恢复点。在恢复条件允许时可显式重新确认 manual／skip 策略，但不绕过结构验证，也不替代必需的进度证据。
 

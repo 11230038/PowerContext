@@ -16,6 +16,10 @@
     "s1401": [
       "schemas/sqlite-s1401.json",
       "schemas/mysql-s1401.json"
+    ],
+    "s1402": [
+      "schemas/sqlite-s1402.json",
+      "schemas/mysql-s1402.json"
     ]
   },
   "sqlite_baselines": {
@@ -30,6 +34,9 @@
     ],
     "s1401": [
       "8752beed9acfb66e03d4360f8652661107b58067ae7a9c461f1035345edf4f27"
+    ],
+    "s1402": [
+      "795b6fd01188c15d16625c59506aadc42134dc8293ffdd4a1588a04f8f66e877"
     ]
   },
   "affected_objects": [
@@ -122,7 +129,8 @@
     "pc_topic_memory_work_budgets",
     "pc_retained_dream_candidate_heads",
     "pc_retained_dream_candidate_versions",
-    "pc_memory_artifact_archive"
+    "pc_memory_artifact_archive",
+    "pc_portable_restore_receipts"
   ],
   "readiness_scope": "server",
   "retained_objects": [
@@ -149,6 +157,20 @@
         "seekdb",
         "oceanbase"
       ]
+    },
+    {
+      "id": "portable_storage",
+      "revision": "s1402",
+      "kind": "data",
+      "module": "portable_storage.py",
+      "depends_on": [
+        "server_upgrade"
+      ],
+      "backends": [
+        "sqlite",
+        "seekdb",
+        "oceanbase"
+      ]
     }
   ],
   "domain_readiness": {
@@ -157,6 +179,10 @@
     ],
     "s1401": [
       "server_upgrade"
+    ],
+    "s1402": [
+      "server_upgrade",
+      "portable_storage"
     ]
   },
   "retained_fingerprints": {
@@ -170,7 +196,8 @@
   "mysql_state_layouts": [
     "schemas/mysql-s1300.json",
     "schemas/mysql-s1400.json",
-    "schemas/mysql-s1401.json"
+    "schemas/mysql-s1401.json",
+    "schemas/mysql-s1402.json"
   ],
   "mysql_history": "mysql",
   "mysql_schema_extensions": {

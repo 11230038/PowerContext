@@ -36,7 +36,7 @@ class DreamSchemaNotReadyError(RuntimeError):
         )
 
 
-async def assert_dream_schema_ready(engine: AsyncEngine) -> None:
+async def assert_dream_schema_ready(engine: AsyncEngine, *, _archive_recovery: bool = False) -> None:
     """Check before create_all, domain initializers, or workers; never execute DDL."""
     async with engine.connect() as connection:
         if connection.dialect.name == "sqlite":
@@ -44,16 +44,16 @@ async def assert_dream_schema_ready(engine: AsyncEngine) -> None:
             # SELECTs. Pin one read snapshot before checking authority against
             # projections, while still allowing concurrent WAL writers.
             await connection.exec_driver_sql("BEGIN")
-        await connection.run_sync(check_dream_schema)
+        await connection.run_sync(check_dream_schema, _archive_recovery=_archive_recovery)
 
 
-def check_dream_schema(connection: Connection) -> None:
+def check_dream_schema(connection: Connection, *, _archive_recovery: bool = False) -> None:
     inspector = inspect(connection)
     names = set(inspector.get_table_names())
     if "pc_schema_revision" in names:
         from powercontext.builtin.persistence.migrations.server_readiness import check_server_schema
 
-        check_server_schema(connection)
+        check_server_schema(connection, _archive_recovery=_archive_recovery)
         return
     if names & {"pc_catalog_change_candidate_heads", "pc_catalog_change_candidate_versions"}:
         raise DreamSchemaNotReadyError("unknown_baseline", "Unpublished Catalog Change storage is unsupported")

@@ -26,6 +26,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
 from unittest.mock import Mock
@@ -543,7 +544,7 @@ def test_oceanbase_server_upgrade_with_separate_code_cache_preserves_history(
     )
     assert runner.plan(backup_policy="manual").source_revision == "s1300"
     result = _apply(runner, policy="manual")
-    assert result.readiness_scope == "server" and result.revision == "s1401"
+    assert result.readiness_scope == "server" and result.revision == "s1402"
     assert runner.verify().state == "ready"
     prepare_server_storage(settings)
     assert not _apply(runner, policy="manual").changed
@@ -674,7 +675,7 @@ def test_mysql_registered_processing_mode_switch_preserves_revision_and_history(
             ).scalar_one(),
         )
 
-    assert backend.connections().run(inspect_history) == ("s1401", "dedicated", b'{"history":"unchanged"}')
+    assert backend.connections().run(inspect_history) == ("s1402", "dedicated", b'{"history":"unchanged"}')
 
 
 def test_mysql_atomic_compatibility_command_uses_shared_server_upgrade(
@@ -738,7 +739,7 @@ def test_mysql_atomic_compatibility_command_uses_shared_server_upgrade(
             ).scalar_one(),
         )
 
-    assert backend.connections().run(inspect_history) == ("s1401", b'{"history":"unchanged"}')
+    assert backend.connections().run(inspect_history) == ("s1402", b'{"history":"unchanged"}')
 
 
 def test_mysql_registered_projection_repair_preserves_authority_and_revision(backend: _BackendTarget) -> None:
@@ -806,7 +807,71 @@ def test_mysql_registered_projection_repair_preserves_authority_and_revision(bac
             ).scalar_one(),
         )
 
-    assert backend.connections().run(inspect_content) == ("s1401", content, "Preserve immutable nebula evidence.")
+    assert backend.connections().run(inspect_content) == ("s1402", content, "Preserve immutable nebula evidence.")
+
+
+@pytest.mark.parametrize("origin", ("empty", "released"))
+def test_mysql_full_server_registers_portable_storage_and_retains_timestamp_precision(
+    backend: _BackendTarget, origin: str
+) -> None:
+    if origin == "released":
+        _load_full_server_baseline(backend)
+    runner = _full_server_runner(backend)
+    assert _apply(runner, policy="manual").state == "ready"
+    assert runner.verify().state == "ready"
+    # Native DATETIME stores UTC values without timezone metadata.
+    timestamp = datetime(2026, 10, 24, 12, 34, 56, 123456, tzinfo=UTC).replace(tzinfo=None)
+
+    def verify(connection, _identity, _guard):
+        inventory = mysql_inventory(connection)
+        assert "pc_portable_restore_receipts" in inventory["tables"]
+        for table, column in (
+            ("pc_artifacts", "created_at"),
+            ("pc_profile_policies", "updated_at"),
+            ("pc_topic_memory_revision_publications", "published_at"),
+            ("pc_artifact_tags", "assigned_at"),
+        ):
+            assert inventory["tables"][table]["columns"][column]["type"] == ["datetime", ["6"]]
+        connection.execute(
+            text(
+                "INSERT INTO pc_artifacts (scope_id,family,artifact_id,revision,content,created_at) "
+                "VALUES ('precision','custom-family','retained',1,:content,:created_at)"
+            ),
+            {"content": b'{"history":"retained"}', "created_at": timestamp},
+        )
+        connection.commit()
+        assert (
+            connection.exec_driver_sql(
+                "SELECT created_at FROM pc_artifacts WHERE scope_id='precision' AND artifact_id='retained'"
+            ).scalar_one()
+            == timestamp
+        )
+
+    backend.connections().run(verify, writable=True)
+    assert not _apply(runner, policy="manual").changed
+
+
+def test_mysql_full_server_resumes_interrupted_initialization_before_manifest_seed(backend: _BackendTarget) -> None:
+    runner = _full_server_runner(backend)
+    _interrupt_after_ddl(runner, "CREATE TABLE `pc_artifact_candidate_versions`", policy="auto")
+    (journal,) = backend.evidence_directory.rglob("maintenance.json")
+    interrupted = json.loads(journal.read_text())
+    assert interrupted["last_revision"] is None
+    assert interrupted["pending_revision"] == "s1300"
+    recovery = _full_server_runner(backend).plan()
+    assert recovery.state == "recovery_required" and recovery.source_revision is None
+    token = (recovery.coordination or {}).get("pending_run_id")
+    # The injected failure occurs after the native DDL returned and the owned
+    # connection closed, so this test can acknowledge that exact operation.
+    resumed = _full_server_runner(backend, acknowledge_previous_run=token)
+    result = _apply(resumed)
+    assert result.state == "ready" and result.revision == resumed.bundle.head
+    assert result.backup_state == "not_required"
+    assert resumed.verify().state == "ready"
+    completed = json.loads(journal.read_text())
+    assert completed["maintenance_window_id"] == interrupted["maintenance_window_id"]
+    assert completed["source_fingerprint"] == interrupted["source_fingerprint"]
+    assert completed["state"] == "complete"
 
 
 def _load_full_server_baseline(backend: _BackendTarget) -> None:
@@ -852,7 +917,7 @@ def test_mysql_full_server_interruption_preserves_history_and_original_maintenan
     _load_full_server_baseline(backend)
     runner = _full_server_runner(backend)
     original = runner.plan(backup_policy="manual")
-    assert original.source_revision == "s1300" and original.target_revision == "s1401"
+    assert original.source_revision == "s1300" and original.target_revision == "s1402"
     _interrupt_after_ddl(runner, interruption)
     journals = list(backend.evidence_directory.rglob("maintenance.json"))
     assert len(journals) == 1
@@ -874,7 +939,7 @@ def test_mysql_full_server_interruption_preserves_history_and_original_maintenan
 
     result = _apply(resumed, policy="manual")
 
-    assert result.readiness_scope == "server" and result.revision == "s1401"
+    assert result.readiness_scope == "server" and result.revision == "s1402"
     assert result.backup_state == "user_confirmed"
     assert result.backup_ref == interrupted["manual_ref"]
     assert resumed.verify().state == "ready"
@@ -954,7 +1019,7 @@ def test_oceanbase_full_server_client_exit_requires_acknowledgement_and_preserve
     # interruption. An arbitrary remote failure cannot be acknowledged blindly.
     resumed = _full_server_runner(backend, acknowledge_previous_run=token)
     result = _apply(resumed, policy="manual")
-    assert result.state == "ready" and result.readiness_scope == "server" and result.revision == "s1401"
+    assert result.state == "ready" and result.readiness_scope == "server" and result.revision == "s1402"
     assert result.backup_state == "user_confirmed" and result.backup_ref == interrupted["manual_ref"]
     assert resumed.verify().state == "ready"
     completed = json.loads(journals[0].read_text(encoding="utf-8"))

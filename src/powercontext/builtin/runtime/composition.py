@@ -29,7 +29,8 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 from urllib.parse import urlsplit
 
 from pydantic import AnyHttpUrl, JsonValue, SecretStr
-from sqlalchemy import inspect
+from sqlalchemy import inspect, select
+from sqlalchemy.ext.asyncio import AsyncConnection
 from typing_extensions import override
 
 from powercontext._logging import log_safely
@@ -45,6 +46,7 @@ from powercontext.builtin.artifacts.atomic_memory.reconciliation import (
     ATOMIC_MEMORY_RECONCILIATION_INSTRUCTIONS,
     AtomicMemoryReconciliationInput,
     AtomicMemoryReconciliationOutput,
+    validate_reconciliation_decision,
 )
 from powercontext.builtin.artifacts.experience import ExperienceCandidatePipeline, ExperienceGenerator
 from powercontext.builtin.artifacts.experience.merge import ExperienceMergeAdapter
@@ -119,6 +121,7 @@ from powercontext.builtin.persistence.processing_migration import (
     bootstrap_processing_schema,
 )
 from powercontext.builtin.persistence.revision_metadata_schema import ensure_artifact_revision_metadata_schema
+from powercontext.builtin.persistence.schema import ensure_portable_timestamp_precision
 from powercontext.builtin.persistence.scope_search_schema import ensure_scope_search_schema
 from powercontext.builtin.persistence.seekdb.profile import SeekDBConfig, SeekDBProfile
 from powercontext.builtin.persistence.skill_distribution_schema import ensure_skill_distribution_schema
@@ -129,7 +132,7 @@ from powercontext.builtin.persistence.sqlite.topic_memory_index import (
     SQLiteTopicMemoryFTSIndex,
     SQLiteTopicMemoryVectorIndex,
 )
-from powercontext.builtin.persistence.tables import BUILTIN_TABLES
+from powercontext.builtin.persistence.tables import BUILTIN_TABLES, PORTABLE_RESTORE_RECEIPTS_TABLE
 from powercontext.builtin.persistence.tag_schema import ensure_topic_memory_tag_schema
 from powercontext.builtin.persistence.topic_memory import TopicMemoryRepository
 from powercontext.builtin.persistence.topic_memory_budget import record_topic_memory_work_failure
@@ -137,6 +140,7 @@ from powercontext.builtin.persistence.topic_memory_index import (
     CompositeTopicMemoryIndex,
     TopicMemoryIndex,
 )
+from powercontext.builtin.portability import BundleRecoveryRequiredError
 from powercontext.builtin.runtime._scope_cache import ScopeCacheObserver
 from powercontext.builtin.runtime.application import (
     BuiltinRuntime,
@@ -524,6 +528,7 @@ async def open_builtin_runtime(
     cursor_secret: bytes | None = None,
     handoff_verification_keys: tuple[bytes, ...] = (),
     recall_effort_sink: RecallEffortSink | None = None,
+    _archive_recovery: bool = False,
 ) -> AsyncIterator[BuiltinRuntime]:
     """Open the selected database, inference adapters, and built-in runtime.
 
@@ -647,6 +652,7 @@ async def open_builtin_runtime(
         contexts = await resources.enter_async_context(
             open_builtin_contexts(
                 config,
+                _archive_recovery=_archive_recovery,
                 model_usage_observer=model_usage_observer,
                 candidate_pipeline=configured_pipeline,
                 experience_pipeline=configured_incubation,
@@ -868,11 +874,17 @@ async def open_builtin_runtime(
                 scheduled_source_runner=scheduled_source_runner,
                 scheduled_experience_runner=scheduled_experience_runner,
                 remote_ingestion=contexts,
+                archive_service=contexts.portability,
             )
         )
         runtime.artifact_processing_supervisor = await resources.enter_async_context(
             _open_artifact_processing_supervisor(
-                config, contexts, processing_bindings, tracing=tracing, processing_observer=processing_observer
+                config,
+                contexts,
+                processing_bindings,
+                tracing=tracing,
+                recovery=_archive_recovery,
+                processing_observer=processing_observer,
             )
         )
         contexts.profiles.operation_context = runtime._operation
@@ -1060,9 +1072,10 @@ async def _open_artifact_processing_supervisor(
     bindings: Sequence[ArtifactProcessingBinding],
     *,
     tracing: RuntimeTracing | None = None,
+    recovery: bool = False,
     processing_observer: Callable[[str, str, float], None] | None = None,
 ) -> AsyncIterator[ArtifactProcessingSupervisors | None]:
-    if config.runtime.artifact_processing_role == "api" or not bindings:
+    if recovery or config.runtime.artifact_processing_role == "api" or not bindings:
         yield None
         return
     groups = (
@@ -1112,6 +1125,7 @@ async def open_builtin_contexts(  # noqa: C901 -- Backend admission and resource
     handoff_verification_keys: tuple[bytes, ...] = (),
     model_usage_observer: Callable[[int, int, int, int], None] | None = None,
     _topic_memory_worker: bool = False,
+    _archive_recovery: bool = False,
 ) -> AsyncIterator[RelationalContexts]:
     """Open the selected database and expose scope-bound PowerContext providers."""
 
@@ -1132,6 +1146,7 @@ async def open_builtin_contexts(  # noqa: C901 -- Backend admission and resource
             database,
             tables=BUILTIN_TABLES + topic_index.tables + atomic_index.tables,
             load_vector_extension=embedding_model is not None,
+            _archive_recovery=_archive_recovery,
         ) as profile:
             async with profile.database.transaction() as connection:
                 managed = await connection.run_sync(lambda sync: inspect(sync).has_table("pc_schema_revision"))
@@ -1147,7 +1162,13 @@ async def open_builtin_contexts(  # noqa: C901 -- Backend admission and resource
                 if managed:
                     await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
                     await atomic_index.validate_current(connection)
-                    await TopicMemoryRepository(index=topic_index).initialize(connection, validate_only=True)
+                    await _initialize_archive_aware_topics(
+                        connection,
+                        topic_index,
+                        worker=_topic_memory_worker,
+                        recovery=_archive_recovery,
+                        validate_only=True,
+                    )
                 else:
                     await bootstrap_processing_schema(connection, canonical_processing_manifest(config))
                     await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
@@ -1155,6 +1176,7 @@ async def open_builtin_contexts(  # noqa: C901 -- Backend admission and resource
                     await ensure_topic_memory_tag_schema(connection)
                     await ensure_scope_search_schema(connection)
                     await ensure_artifact_revision_metadata_schema(connection)
+                    await ensure_portable_timestamp_precision(connection, BUILTIN_TABLES)
                     # A Topic child reuses its parent's schema. It never reads or
                     # writes Memory/Experience projections; rebuilding their FTS
                     # indexes here would take the shared SQLite write lock once
@@ -1169,8 +1191,8 @@ async def open_builtin_contexts(  # noqa: C901 -- Backend admission and resource
                         await ensure_artifact_head_searchable_text(connection)
                         await assert_atomic_memory_migration_ready(connection)
                         await experience_index.initialize(connection)
-                    await TopicMemoryRepository(index=topic_index).initialize(
-                        connection, configure_retrieval_shape=not _topic_memory_worker
+                    await _initialize_archive_aware_topics(
+                        connection, topic_index, worker=_topic_memory_worker, recovery=_archive_recovery
                     )
             contexts = RelationalContexts(
                 model_usage_observer=model_usage_observer,
@@ -1211,13 +1233,8 @@ async def open_builtin_contexts(  # noqa: C901 -- Backend admission and resource
                 cursor_secret=cursor_secret,
                 tracing=tracing,
             )
-            try:
-                await contexts.scopes.bootstrap_default()
+            async with _contexts_lifecycle(contexts, recovery=_archive_recovery):
                 yield contexts
-            finally:
-                # Producers are stopped by now, and the profile below still owns
-                # the database this recorder writes into.
-                await contexts.aclose_usage_recorder()
         return
     experience_index = OceanBaseExperienceFTSIndex()
     topic_indexes: list[TopicMemoryIndex] = [OceanBaseTopicMemoryFTSIndex()]
@@ -1227,9 +1244,9 @@ async def open_builtin_contexts(  # noqa: C901 -- Backend admission and resource
     atomic_index = OceanBaseAtomicMemoryIndex(None if embedding_model is None else embedding_model.profile)
     tables = BUILTIN_TABLES + topic_index.tables + atomic_index.tables
     if isinstance(database, OceanBaseConfig):
-        profile_context = OceanBaseProfile.open(database, tables=tables)
+        profile_context = OceanBaseProfile.open(database, tables=tables, _archive_recovery=_archive_recovery)
     elif isinstance(database, SeekDBConfig):
-        profile_context = SeekDBProfile.open(database, tables=tables)
+        profile_context = SeekDBProfile.open(database, tables=tables, _archive_recovery=_archive_recovery)
     else:
         raise BuiltinConfigurationError("database")
     async with profile_context as profile:
@@ -1239,7 +1256,9 @@ async def open_builtin_contexts(  # noqa: C901 -- Backend admission and resource
             if managed:
                 await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
                 await atomic_index.validate_current(connection)
-                await TopicMemoryRepository(index=topic_index).initialize(connection, validate_only=True)
+                await _initialize_archive_aware_topics(
+                    connection, topic_index, worker=_topic_memory_worker, recovery=_archive_recovery, validate_only=True
+                )
             else:
                 await bootstrap_processing_schema(connection, canonical_processing_manifest(config))
                 await assert_processing_schema_ready(connection, canonical_processing_manifest(config))
@@ -1247,6 +1266,7 @@ async def open_builtin_contexts(  # noqa: C901 -- Backend admission and resource
                 await ensure_topic_memory_tag_schema(connection)
                 await ensure_scope_search_schema(connection)
                 await ensure_artifact_revision_metadata_schema(connection)
+                await ensure_portable_timestamp_precision(connection, BUILTIN_TABLES)
                 if not _topic_memory_worker:
                     await _initialize_atomic_memory_authority(connection)
                     await atomic_index.initialize(connection)
@@ -1257,8 +1277,8 @@ async def open_builtin_contexts(  # noqa: C901 -- Backend admission and resource
                     await ensure_artifact_head_searchable_text(connection)
                     await assert_atomic_memory_migration_ready(connection)
                     await experience_index.initialize(connection)
-                await TopicMemoryRepository(index=topic_index).initialize(
-                    connection, configure_retrieval_shape=not _topic_memory_worker
+                await _initialize_archive_aware_topics(
+                    connection, topic_index, worker=_topic_memory_worker, recovery=_archive_recovery
                 )
         contexts = RelationalContexts(
             model_usage_observer=model_usage_observer,
@@ -1297,13 +1317,48 @@ async def open_builtin_contexts(  # noqa: C901 -- Backend admission and resource
             cursor_secret=cursor_secret,
             tracing=tracing,
         )
-        try:
-            await contexts.scopes.bootstrap_default()
+        async with _contexts_lifecycle(contexts, recovery=_archive_recovery):
             yield contexts
-        finally:
-            # Producers are stopped by now, and the profile below still owns the
-            # database this recorder writes into.
-            await contexts.aclose_usage_recorder()
+
+
+@asynccontextmanager
+async def _contexts_lifecycle(contexts: RelationalContexts, /, *, recovery: bool) -> AsyncIterator[None]:
+    """Expose initialized Contexts and settle their usage before the owning database closes."""
+
+    try:
+        if not recovery:
+            await contexts.scopes.bootstrap_default()
+        yield
+    finally:
+        await contexts.aclose_usage_recorder()
+
+
+async def _initialize_archive_aware_topics(
+    connection: AsyncConnection, index: TopicMemoryIndex, *, worker: bool, recovery: bool, validate_only: bool = False
+) -> None:
+    pending = await connection.scalar(
+        select(PORTABLE_RESTORE_RECEIPTS_TABLE.c.bundle_id)
+        .where(PORTABLE_RESTORE_RECEIPTS_TABLE.c.projections_ready.is_(False))
+        .limit(1)
+    )
+    if pending and (not recovery or worker):
+        raise BundleRecoveryRequiredError()
+    if pending:
+        if validate_only:
+            from powercontext.builtin.persistence.migrations.models import MigrationError
+            from powercontext.builtin.persistence.migrations.vector_profile import read_embedding_profile
+
+            stored = await connection.run_sync(read_embedding_profile)
+            if stored != index.capabilities.embedding_profile:
+                raise MigrationError(
+                    "embedding_profile_mismatch", "Archive recovery must use the managed vector profile."
+                )
+        else:
+            await index.initialize(connection)
+    else:
+        await TopicMemoryRepository(index=index).initialize(
+            connection, configure_retrieval_shape=not worker, validate_only=validate_only
+        )
 
 
 def _register_prompt_demonstrators(
@@ -1526,6 +1581,7 @@ async def _generation_pipelines(
             model_settings=generation_request_settings,
             name="atomic_memory_reconciliation",
             prompt_key="atomic_memory.reconcile",
+            output_check=validate_reconciliation_decision,
         )
         experience_generator = PydanticAIStructuredGenerator(
             model=generation_model,

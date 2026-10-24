@@ -101,13 +101,6 @@ initialize_database() {
 import json
 import subprocess
 
-from powercontext.server.settings import ServerSettings
-
-settings = ServerSettings()
-if settings.inference.embedding_model is not None or settings.code.enabled:
-    print("Optional vector/Code profile retains its unmanaged fresh bootstrap; no registered upgrade is claimed.")
-    raise SystemExit(0)
-
 common = [
     "--evidence-dir", "/data/migration-state",
     "--lock-coordination", "single-host",

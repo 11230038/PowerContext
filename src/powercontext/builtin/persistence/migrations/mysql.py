@@ -384,9 +384,10 @@ class MySQLMigrationRunner:
         self._assert_unchanged()
         if self.schema.fingerprint(mysql_inventory(connection)) != initial.schema_fingerprint:
             raise MigrationError("plan_changed", "The source schema changed during backup.")
-        self.bundle.domains.preflight(
-            connection, initial.source_revision, backend=identity.product, configuration=self.configuration
-        )
+        if not self._initializing(initial.source_revision, evidence):
+            self.bundle.domains.preflight(
+                connection, initial.source_revision, backend=identity.product, configuration=self.configuration
+            )
         config = self._config(connection)
         if initial.adopt_baseline:
             self._adopt(connection, config, journal, evidence, initial.source_revision, guard)
@@ -545,7 +546,10 @@ class MySQLMigrationRunner:
                     connection, current, backend=identity.product, configuration=self.configuration
                 )
         domain_steps = self.bundle.domains.pending(current, identity.product)
-        if connection is not None:
+        # A recognized first-revision DDL prefix may not contain its seed data
+        # yet. The revision executor checks each domain step after its registered
+        # schema completes, before domain work or that revision's advancement.
+        if connection is not None and not self._initializing(current, evidence):
             self.bundle.domains.preflight(
                 connection, current, backend=identity.product, configuration=self.configuration
             )
@@ -596,6 +600,14 @@ class MySQLMigrationRunner:
             "coordination": coordination,
         }
         return MigrationPlan.model_validate({"plan_id": digest(fields), **fields})
+
+    def _initializing(self, current: str | None, evidence: _Evidence | None) -> bool:
+        return (
+            current is None
+            and evidence is not None
+            and evidence.state == "active"
+            and evidence.pending_revision == self.bundle.revisions[0]
+        )
 
     def _validate_evidence(self, evidence: _Evidence | None) -> None:
         if evidence is None:

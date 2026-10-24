@@ -14,7 +14,7 @@ The design follows [RFC #1771](https://github.com/oceanbase/powercontext/pull/17
 
 `powercontext server db-migrate status/plan/apply/verify` default to `--bundle server` and use the configured persistent SQLite, embedded seekDB, or OceanBase MySQL database. Explicit environment files are authoritative; arbitrary bundle paths are not accepted.
 
-The full Server path registers actual 1.3.0 storage as `s1300 → s1400 → s1401`, with Code enabled or disabled on all three backends and a separate profile for unit-normalized L2 vectors. SQLite and OceanBase keep Code in a separate local cache. Embedded seekDB Code adds three tables through a frozen schema extension captured from installed 1.3.0; maintenance preserves existing graph rows and creates the registered tables for a new Code-enabled database. The path covers the complete schema, Candidate renaming and retained history, Dream task formats, Processing ownership, search projections, and existing Source references. Unknown layouts, extra objects and unregistered sources fail before writes. Older Memory collection conversion is outside this path.
+The full Server path registers actual 1.3.0 storage as `s1300 → s1400 → s1401 → s1402`, with Code enabled or disabled on all three backends and a separate profile for unit-normalized L2 vectors. SQLite and OceanBase keep Code in a separate local cache. Embedded seekDB Code adds three tables through a frozen schema extension captured from installed 1.3.0; maintenance preserves existing graph rows and creates the registered tables for a new Code-enabled database. The path covers the complete schema, Candidate renaming and retained history, Dream task formats, Processing ownership, search projections, and existing Source references. Unknown layouts, extra objects and unregistered sources fail before writes. Older Memory collection conversion is outside this path.
 
 Only successful schema, domain, projection, and task validation returns `state=ready`, `readiness_scope=server`, and `server_ready=true`. Publication also requires installed-artifact acceptance on all three backends. An implemented path is not evidence that a release passed acceptance; consult the installation guide and release gate for support status.
 
@@ -23,6 +23,15 @@ Stop all writers and drain queued/running 1.3.0 Dream tasks before upgrading: th
 Old Candidate tables are retained as `pc_retained_dream_candidate_heads` and `pc_retained_dream_candidate_versions` for migration-copy verification. They and the backup are not live write targets; subsequent business changes are not compared against old snapshots. New historical Artifact provenance fields remain unknown, and existing Source references are preserved. Projection rebuilds and verification scan their tables; budget downtime and capacity for backups and retained copies.
 
 Revision `s1401` registers `pc_memory_artifact_archive` in the managed target schema on all three backends. It stores frozen Memory history for offline maintenance and has no public Artifact read path. Fresh databases start with an empty archive; repeat migration preserves its bytes, and runtime admission verifies its registered structure. This revision does not register additional historical source layouts.
+
+Revision `s1402` registers portable restore receipts and preserves microsecond precision for the portable Artifact,
+Profile, Topic publication, and tag timestamps on MySQL-compatible backends. These schema changes run through explicit
+maintenance for existing managed storage. Runtime startup does not add the receipt table or alter timestamp columns.
+
+An interrupted [portable restore](portable-archive.md) keeps normal startup and workers blocked until its projections
+are complete. Retry `powercontext archive restore <bundle> --yes` with the same validated bundle. Only this explicit
+recovery path can open an incomplete projection set, after validating the registered layout and the configured vector
+profile; it does not start workers. Recovery without a pending restore receipt still performs full readiness checks.
 
 Ordinary Server startup checks readiness without repairing an existing database. Empty local persistent SQLite/seekDB storage initializes through the same revision chain; OceanBase requires an explicit maintenance job first. In-memory SQLite remains transient runtime storage. A changed schema or inconsistent projection requires maintenance, not restart-based repair.
 
@@ -517,7 +526,7 @@ bundle for retry. Released revision resources and their recorded checksums remai
 Parameter-free DDL uses statement-scoped driver execution options so CHECK remainder operators and percent-containing
 SQL literals reach the backend unchanged.
 
-Repositories run after schema checks. The full Server `s1300 → s1400 → s1401` chain registers exact per-statement schema transitions and recovery prefixes through `mysql_state_layouts`. Domain steps attach to the shared revision and use its connection, lock, and recovery point; verification precedes version advancement. Read-only live checks are separate from migration-copy validation. Vector configurations still require separate registration.
+Repositories run after schema checks. The full Server `s1300 → s1400 → s1401 → s1402` chain registers exact per-statement schema transitions and recovery prefixes through `mysql_state_layouts`. Domain steps attach to the shared revision and use its connection, lock, and recovery point; verification precedes version advancement. Read-only live checks are separate from migration-copy validation. Vector configurations still require separate registration.
 
 One version table offers no generic run-ID resume. After interruption, inspect actual schema/data through read-only
 commands. Ambiguous state returns `recovery_required`; never blindly stamp or replace the original recovery point with a
