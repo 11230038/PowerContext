@@ -386,7 +386,8 @@ jobs:
   acceptance:
     needs: validate
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # OceanBase regressions can take 32 minutes before the separate replay scenarios.
+    timeout-minutes: ${{ matrix.database == 'oceanbase' && 60 || 40 }}
     strategy:
       fail-fast: false
       matrix:
@@ -405,6 +406,7 @@ jobs:
           version: ${{ env.UV_VERSION }}
 
       - name: Verify OceanBase Atomic Memory and HTTP regressions
+        timeout-minutes: 40
         if: matrix.database == 'oceanbase'
         env:
           COMPOSE_PROJECT_NAME: powercontext-e2e-oceanbase
@@ -489,6 +491,7 @@ jobs:
           PY
 
       - name: Run deterministic scenarios
+        timeout-minutes: ${{ matrix.database == 'oceanbase' && 15 || 40 }}
         id: acceptance_scenarios
         env:
           POWERCONTEXT_E2E_DATABASE: ${{ matrix.database }}
