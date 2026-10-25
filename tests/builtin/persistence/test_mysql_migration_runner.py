@@ -519,11 +519,28 @@ def test_mysql_vector_upgrade_preserves_space_and_registered_indexes(
             table = inventory["tables"][name]
             assert table["columns"]["embedding"]["type"] == ["vector", [str(dimension)]]
             assert any(index.get("kind") == "vector" for index in table["indexes"].values())
-        assert json.loads(
-            connection.exec_driver_sql("SELECT embedding_profile FROM pc_server_storage_profile").scalar_one()
-        ) == profile.model_dump(mode="json")
+        declaration = connection.exec_driver_sql("SELECT embedding_profile FROM pc_server_storage_profile").scalar_one()
+        assert json.loads(declaration) == profile.model_dump(mode="json")
+        return inventory, declaration
 
-    backend.connections().run(verify)
+    before = backend.connections().run(verify)
+    evidence = {path: path.read_bytes() for path in backend.evidence_directory.rglob("maintenance.json")}
+    assert evidence
+    changed_settings = settings.model_copy(
+        update={"inference": settings.inference.model_copy(update={"embedding_profile_id": "different-space"})}
+    )
+    changed = deployment_runner(
+        changed_settings,
+        evidence_dir=backend.evidence_directory,
+        lock_coordination="single-host" if isinstance(backend.config, OceanBaseConfig) else None,
+    )
+    for operation in (changed.plan, changed.verify, changed.apply):
+        with pytest.raises(MigrationError) as error:
+            operation()
+        assert error.value.code == "embedding_profile_mismatch"
+    assert backend.connections().run(verify) == before
+    assert {path: path.read_bytes() for path in backend.evidence_directory.rglob("maintenance.json")} == evidence
+    assert runner.verify().state == "ready"
 
 
 @pytest.mark.parametrize("backend", ("oceanbase",), indirect=True)

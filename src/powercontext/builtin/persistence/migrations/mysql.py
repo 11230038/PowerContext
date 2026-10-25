@@ -522,6 +522,16 @@ class MySQLMigrationRunner:
             if connection is not None
             else (False, None)
         )
+        if (
+            connection is not None
+            and evidence is not None
+            and evidence.state == "complete"
+            and self.bundle.vector_profile is not None
+        ):
+            # Revision checksums bind the embedding space as well as resources.
+            # Diagnose configuration drift first, but leave partial DDL/domain
+            # recovery to its original evidence: its declaration may be unseeded.
+            self.bundle.vector_profile.verify_declaration(connection, required=False)
         self._validate_evidence(evidence)
         backend = identity.product
         if (
