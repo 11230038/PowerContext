@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pin the packaged ZCode Skill's immutable Git bytes; detect checkout drift."""
+"""Pin the shared PowerContext Skill's immutable Git bytes; detect checkout drift."""
 
 import argparse
 import hashlib

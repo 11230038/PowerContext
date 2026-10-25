@@ -64,7 +64,7 @@ def sync(revision: str) -> None:
     paths = git("ls-tree", "-r", "--name-only", commit, "--", SOURCE).decode().splitlines()
     files = {name[len(SOURCE) + 1 :]: git("cat-file", "blob", f"{commit}:{name}") for name in paths}
     if "SKILL.md" not in files:
-        raise SystemExit("Revision does not contain the packaged Claude Code Skill")
+        raise SystemExit("Revision does not contain the shared PowerContext Skill")
     # Remove only obsolete files in this script-owned vendor directory.
     for old in VENDOR.rglob("*"):
         if old.is_file() and old.relative_to(VENDOR).as_posix() not in files:

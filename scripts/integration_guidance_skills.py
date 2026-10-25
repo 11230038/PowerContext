@@ -14,8 +14,8 @@
 
 """Load packaged Skill resources and expose controlled, observable evaluation reads.
 
-The generation CLI also checks packaged guidance without model calls. Native
-discovery and installation are qualified separately from generated-file checks.
+The copy CLI checks standard packaged resources without model calls. Native
+discovery and installation are qualified separately from resource consistency.
 """
 
 from __future__ import annotations

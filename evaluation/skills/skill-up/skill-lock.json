@@ -1,13 +1,19 @@
 {
   "schema_version": 1,
-  "source_path": "integrations/claude-code/plugins/powercontext/skills/powercontext-project-context",
-  "source_commit": "1ff19cc761969b9f3be68865f629c8523684a36a",
+  "source_path": "integrations/agent-plugin/powercontext/skills/powercontext-project-context",
+  "source_commit": "c56ceaebe4d416eb18bc2bbdf27f0ab65ea91ff9",
   "files": {
-    ".powercontext-guidance.json": "c9872b03159d41f8880b91b679d77b5216970e865187e2c22cdc3e9feddc20fa",
-    "SKILL.md": "c85d5d4ae80354278982ca31d5910b5c4ef27fd1c8ed2bf3683f12722cb8c769",
+    ".powercontext-guidance.json": "c2a329bb471eb4be441315e56d4c4ff1bd1a2f3229cb2e27a7d6b7648ddba51b",
+    "SKILL.md": "a09181268930db29b21faa4ffe75c6c5e6971bf7c0666f485e7e467216c16cba",
+    "agents/openai.yaml": "2500c7e1d329158214626d203c70e7e9975f6ce7273be7fd4e758cbe4320bdbb",
+    "references/examples.json": "3af536b88e12f0c0285c94c339e230dfa78b130b720f0e0a01b3086aa2255a1a",
+    "references/experience-skill.md": "25ce3e78264aea9de0d6298c6b3e4e0965897b3459185366e9c83c35627e5d73",
+    "references/experience-skills.md": "81c2a0675d7525182783412c76f5d0b893d4ce2f3a7298f8b460d09f1f629df4",
+    "references/host.md": "b3018355f3c002644aed144461417823fd6ee463e08823bc73532d1b07029e54",
+    "references/http-boundaries.md": "c012a88b6fb96f5a2e9cfbb6d39a8c9ce897451c4ff3d10f38c7471340ace7e7",
     "references/review-publication.md": "e796ffcb2ffb7fef1d17c2e356104a44c3797603e74ae7f27a9445f556529621",
-    "references/scope-memory.md": "f84c8dc933cdfe9934bc50fd23cb53f4d6a3631506700bfdfff4731fe43e6818",
-    "references/work-handoff.md": "248069bc7f69268ba90de38b2537fe9a385d4a220a35c54603d53e16df10988f"
+    "references/scope-memory.md": "515a2e8c32f8f705a1a282b166079facf7038c52711993069e4ee891f99d7f93",
+    "references/work-handoff.md": "c85607e46b747c3d54443f1afce46dc9f5ea6a923b0e2e23287b1eda050ec32c"
   },
-  "content_sha256": "f4303bc04f7f578bd705ef6515eaa66ede71e91368cd138e6fcfcbe2bd57e072"
+  "content_sha256": "8b538bb11d11dabcd22f68a9cd0a9b229e7c185ec21dbfe70d0098be59250fb1"
 }
