@@ -514,9 +514,8 @@ class AtomicMemorySourceWindowProcessor:
                 scope_id, candidate.text, context, workset, artifacts, local_policy=local_policy
             )
             pending = list(dict.fromkeys((*prior, *recalled)))
-            if not pending and skip_unrelated:
-                continue
-            compared = False
+            # An unrelated candidate is kept as extracted rather than reconciled alone.
+            compared = skip_unrelated
             while pending or not compared:
                 related = workset.related(key, pending[: self.config.comparison_batch_size])
                 selected_count = min(len(pending), self.config.comparison_batch_size)
