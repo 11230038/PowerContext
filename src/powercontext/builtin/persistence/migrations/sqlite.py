@@ -104,6 +104,13 @@ def read_maintenance_evidence(path: Path, database_id: str) -> dict[str, Any] | 
     return value.model_dump(mode="json")
 
 
+def verify_release_checksums(recorded: Mapping[str, str], checksums: Mapping[str, str]) -> None:
+    """Require every recorded revision to retain its released resources."""
+    for revision, checksum in recorded.items():
+        if checksums.get(revision) != checksum:
+            raise MigrationError("checksum_conflict", "A recorded released migration resource changed.")
+
+
 def verify_retained_objects(
     inventory: list[list[Any]],
     revision: str | None,
@@ -386,9 +393,7 @@ class SQLiteMigrationRunner:
             state = "uninitialized"
         evidence = self._evidence()
         if evidence:
-            for recorded, checksum in evidence.get("release_checksums", {}).items():
-                if self.bundle.checksums.get(recorded) != checksum:
-                    raise MigrationError("checksum_conflict", "A recorded released migration resource changed.")
+            verify_release_checksums(evidence["release_checksums"], self.bundle.checksums)
             if evidence["state"] != "complete":
                 if (
                     evidence["bundle_checksum"] != self.bundle.checksum

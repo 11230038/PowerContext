@@ -190,35 +190,29 @@ def _managed_storage(
 ) -> bool:
     """Inspect ownership before a compatibility command may open a writable profile."""
     from powercontext.builtin.persistence.migrations.connections import MaintenanceConnections
-    from powercontext.builtin.persistence.migrations.mysql_schema import mysql_inventory
-    from powercontext.builtin.persistence.migrations.server_baselines import (
-        recognize_mysql_server_baseline,
-        recognize_sqlite_server_baseline,
-    )
+    from powercontext.server.identity import SERVER_IDENTITY_TABLE
 
-    def owned(connection, backend):
+    def owned(connection):
         if connection is None:
             return False
-        if "pc_schema_revision" in inspect(connection).get_table_names():
+        tables = inspect(connection).get_table_names()
+        if "pc_schema_revision" in tables:
             return True
-        source = (
-            recognize_sqlite_server_baseline(connection)
-            if backend == "sqlite"
-            else recognize_mysql_server_baseline(mysql_inventory(connection), backend=backend)
-        )
-        if source is not None and not allow_historical:
+        # Ownership is independent of release and optional configuration. The
+        # shared runner must validate the complete source before any writes;
+        # an unknown or misconfigured Server must not fall back to SDK upkeep.
+        server_owned = SERVER_IDENTITY_TABLE.name in tables
+        if server_owned and not allow_historical:
             raise database_migration.MigrationError(
                 "migration_required",
-                "Complete the registered full Server upgrade before Processing configuration maintenance.",
+                "Complete the registered full Server upgrade before partial maintenance.",
             )
-        return source is not None
+        return server_owned
 
     if isinstance(database, SQLiteConfig) and not database.is_persistent:
         return False
     if not isinstance(database, SQLiteConfig) or not make_url(database.url).query:
-        return MaintenanceConnections(database).run(
-            lambda connection, identity, guard: owned(connection, identity.product)
-        )
+        return MaintenanceConnections(database).run(lambda connection, identity, guard: owned(connection))
 
     async def inspect_sqlite():
         try:
@@ -226,7 +220,7 @@ def _managed_storage(
                 SQLiteProfile.open_readonly(database) as profile,
                 profile.database.transaction() as connection,
             ):
-                return await connection.run_sync(lambda sync: owned(sync, "sqlite"))
+                return await connection.run_sync(owned)
         except OperationalError as error:
             code = getattr(error.orig, "sqlite_errorcode", None)
             if isinstance(code, int) and code & 0xFF == SQLITE_CANTOPEN:

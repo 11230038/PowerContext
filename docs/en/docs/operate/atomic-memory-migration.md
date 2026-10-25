@@ -14,8 +14,9 @@ legacy entry tables; complete per-entry verification is the job of `verify`.
 
 ## Run the maintenance task
 
-On a database with `pc_schema_revision`, or a recognized complete 1.3.0 Server baseline, this compatibility command
-delegates `plan`, `apply` and `verify` to `server db-migrate --bundle server`. It returns the shared plan/result format
+On a database with `pc_schema_revision` or a Server identity marker, this compatibility command delegates
+`plan`, `apply` and `verify` to `server db-migrate --bundle server`. The shared framework validates registered
+1.3.0 and 1.4.0 sources; the identity marker selects this path without accepting unknown layouts or configurations. It returns the shared plan/result format
 and uses the same maintenance lock, backup policy and recovery evidence. Review the plan, then pass its `--plan-id`,
 an explicit `--backup` policy, `--yes` and `--maintenance-confirmed` when changes are required. OceanBase also requires
 the fixed-host coordination/evidence options described in [Database migrations](./database-migrations.md).

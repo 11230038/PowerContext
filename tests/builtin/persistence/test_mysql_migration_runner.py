@@ -694,6 +694,19 @@ def test_mysql_registered_processing_mode_switch_preserves_revision_and_history(
 
     assert backend.connections().run(inspect_history) == ("s1402", "dedicated", b'{"history":"unchanged"}')
 
+    (main_path,) = backend.evidence_directory.glob("*/maintenance.json")
+    evidence = json.loads(main_path.read_text())
+    evidence["release_checksums"]["s1402"] = "0" * 64
+    main_path.write_text(json.dumps(evidence))
+    original_evidence = {path: path.read_bytes() for path in backend.evidence_directory.rglob("maintenance.json")}
+    for inspect in (runner.plan, runner.verify, runner.apply):
+        with pytest.raises(MigrationError, match="checksum_conflict"):
+            inspect()
+    assert backend.connections().run(inspect_history) == ("s1402", "dedicated", b'{"history":"unchanged"}')
+    assert {
+        path: path.read_bytes() for path in backend.evidence_directory.rglob("maintenance.json")
+    } == original_evidence
+
 
 def test_mysql_atomic_compatibility_command_uses_shared_server_upgrade(
     backend: _BackendTarget, monkeypatch, capsys

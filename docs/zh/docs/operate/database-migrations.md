@@ -119,6 +119,10 @@ powercontext server db-migrate verify --bundle processing --env-file .env \
 模式切换的所有阶段在一个事务中提交。提交前失败时，所有权声明和租约撤销一起回滚。
 中断后重新查看计划，保留原配置、迁移 ID、备份策略和证据目录恢复；原维护窗口和恢复点继续沿用。
 成功后的重试不会再次撤销租约。操作前后都运行完整 Server 校验；配置已匹配时只读返回。
+Processing 和 Atomic Memory 投影维护均在接受操作前校验原迁移证据和已记录 revision 的校验和。
+两者还会读取数据库保存的 embedding profile；即使命令配置遗漏 embedding，也会在生成计划、备份或维护记录前拒绝向量存储。
+Processing 和 Atomic Memory 投影维护均在接受操作前校验原迁移证据和已记录 revision 的校验和。
+两者还会读取数据库保存的 embedding profile；即使命令配置遗漏 embedding，也会在生成计划、备份或维护记录前拒绝向量存储。
 
 ## Atomic Memory 投影维护
 

@@ -140,7 +140,13 @@ All mode-switch phases commit together. Failure before commit rolls back the own
 invalidation together. Reopen the plan after an interruption and resume with the original configuration, migration ID,
 backup policy, and evidence directory; the original maintenance window and recovery point are retained.
 Successful retry does not invalidate leases again. Full Server validators run before and after the change.
-An already matching configuration is a read-only no-op.
+An already matching configuration is a read-only no-op. Both Processing and Atomic Memory projection maintenance
+validate the original migration evidence and recorded revision checksums before accepting work. They inspect the
+stored embedding profile and reject vector storage before creating a plan, backup or maintenance journal, even
+when embedding settings are omitted from the command configuration. Both Processing and Atomic Memory projection maintenance
+validate the original migration evidence and recorded revision checksums before accepting work. They inspect the
+stored embedding profile and reject vector storage before creating a plan, backup or maintenance journal, even
+when embedding settings are omitted from the command configuration.
 
 ## Atomic Memory projection maintenance
 

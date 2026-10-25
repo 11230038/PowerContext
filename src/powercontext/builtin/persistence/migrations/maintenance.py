@@ -31,10 +31,11 @@ from .backup import BackupContext, ForkBackupProvider, SQLiteBackupProvider
 from .bundle import MigrationBundle, sqlite_inventory
 from .connections import BackendIdentity, MaintenanceConnections
 from .models import MigrationError, MigrationPlan, MigrationResult, digest
-from .mysql import _Evidence, _Journal
+from .mysql import MySQLMigrationRunner, _Evidence, _Journal
 from .server_readiness import check_server_schema
 from .sources import MigrationSources
-from .sqlite import SQLiteMigrationRunner, read_maintenance_evidence, verify_retained_objects
+from .sqlite import SQLiteMigrationRunner, read_maintenance_evidence, verify_release_checksums, verify_retained_objects
+from .vector_profile import read_embedding_profile
 
 
 class ManagedMaintenanceRunner:
@@ -82,6 +83,11 @@ class ManagedMaintenanceRunner:
         self.bundle.assert_unchanged()
         if connection is None:
             raise MigrationError("migration_required", "Initialize or upgrade the full Server bundle first.")
+        if read_embedding_profile(connection) is not None:
+            raise MigrationError(
+                "unsupported_upgrade_configuration",
+                "This partial maintenance bundle has no registered vector configuration path.",
+            )
         self._check_previous_maintenance(connection, identity)
         fingerprint, required, completed = self._state(connection, identity)
         evidence = self._journal(identity).read()
@@ -278,16 +284,20 @@ class ManagedMaintenanceRunner:
             if main is not None and main["state"] != "complete":
                 raise MigrationError("recovery_required", "Complete the original full Server maintenance first.")
             self._select_source(main)
+            if main is not None:
+                verify_release_checksums(main["release_checksums"], self.bundle.checksums)
             verify_retained_objects(sqlite_inventory(connection), self.bundle.head, bundle=self.bundle, evidence=main)
-        elif main_path.exists():
-            try:
-                main = json.loads(main_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError) as error:
-                raise MigrationError(
-                    "recovery_required", "The original full Server evidence cannot be read."
-                ) from error
-            if not isinstance(main, dict) or main.get("state") != "complete":
-                raise MigrationError("recovery_required", "Complete the original full Server maintenance first.")
-            self._select_source(main)
         else:
-            self._select_source(None)
+            main = _Journal(self.directory, identity).read()
+            self._select_source(main.model_dump() if main is not None else None)
+            if main is not None:
+                runner = MySQLMigrationRunner(
+                    self.connections,
+                    self.bundle,
+                    configuration=self.configuration,
+                    evidence_directory=self.directory,
+                )
+                revisions = connection.exec_driver_sql("SELECT version_num FROM pc_schema_revision").scalars().all()
+                if len(revisions) != 1:
+                    raise MigrationError("recovery_required", "The full Server migration head is missing or ambiguous.")
+                runner.verify_completed_evidence(main, revisions[0])

@@ -41,6 +41,7 @@ from .models import MigrationError, MigrationPlan, MigrationResult, digest
 from .mysql_schema import MySQLSchema, mysql_inventory, read_revision
 from .server_baselines import recognize_mysql_server_baseline
 from .sources import MigrationSources
+from .sqlite import verify_release_checksums
 
 BackupPolicy = Literal["auto", "manual", "skip"]
 BackupFactory = Callable[[Connection, BackendIdentity, Path], BackupProvider]
@@ -636,12 +637,22 @@ class MySQLMigrationRunner:
             and evidence.pending_revision == self.bundle.revisions[0]
         )
 
+    def verify_completed_evidence(self, evidence: _Evidence, revision: str) -> None:
+        """Check shared maintenance history without requiring domain readiness.
+
+        A registered partial operation may repair its own domain, but cannot
+        replace full migration evidence or bypass released execution checksums.
+        """
+        self._assert_unchanged()
+        if evidence.state != "complete":
+            raise MigrationError("recovery_required", "Complete the original full Server maintenance first.")
+        self._validate_evidence(evidence)
+        self._validate_position(evidence, revision)
+
     def _validate_evidence(self, evidence: _Evidence | None) -> None:
         if evidence is None:
             return
-        for revision, checksum in evidence.release_checksums.items():
-            if self.checksums.get(revision) != checksum:
-                raise MigrationError("checksum_conflict", "A recorded released migration resource changed.")
+        verify_release_checksums(evidence.release_checksums, self.checksums)
         if evidence.state != "complete" and (
             evidence.bundle_checksum != self.checksum or evidence.configuration_digest != self.configuration_digest
         ):
