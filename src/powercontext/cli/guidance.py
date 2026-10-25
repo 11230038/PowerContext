@@ -39,8 +39,7 @@ class HostGuidance:
     plugin: str
     source_files: tuple[str, ...] = ("package.json",)
     package_name: str | None = None
-    variables: tuple[str, ...] = ()
-    script_evidence: tuple[str, ...] = ()
+    extra_resources: tuple[str, ...] = ()
 
     def recognizes(self, path: Path) -> bool:
         """Identify a host package without requiring optional build output."""
@@ -62,13 +61,10 @@ class HostGuidance:
 HOST_GUIDANCE = {
     "codex": HostGuidance(
         "integrations/codex/plugins/powercontext",
-        variables=("PLUGIN_ROOT",),
-        script_evidence=("scripts/scope_binding.py",),
+        extra_resources=("agents/openai.yaml",),
     ),
     "claude-code": HostGuidance(
         "integrations/claude-code/plugins/powercontext",
-        variables=("PLUGIN_ROOT",),
-        script_evidence=("scripts/workspace_scope.py",),
     ),
     "dsh": HostGuidance(
         "integrations/dsh/plugins/powercontext",
@@ -85,6 +81,7 @@ HOST_GUIDANCE = {
     "pi": HostGuidance(
         "integrations/pi/plugins/powercontext",
         package_name="powercontext-pi",
+        extra_resources=("agents/openai.yaml",),
     ),
     "hermes": HostGuidance(
         "integrations/hermes/plugins/powercontext",
@@ -92,24 +89,24 @@ HOST_GUIDANCE = {
     ),
     "workbuddy": HostGuidance(
         "integrations/workbuddy/plugins/powercontext",
-        variables=("POWERCONTEXT_PYTHON", "POWERCONTEXT_SCOPE_BINDING_SCRIPT"),
-        script_evidence=("scripts/workspace_scope.py",),
         source_files=("hooks/workbuddy_powercontext_hook.py", "scripts/workspace_scope.py"),
     ),
     "zcode": HostGuidance(
         "integrations/zcode/plugins/powercontext",
-        script_evidence=("scripts/scope.mjs",),
         source_files=(".zcode-plugin/plugin.json", "hooks/user_prompt_submit.mjs"),
         package_name="powercontext",
     ),
     "kimi-code": HostGuidance(
         "integrations/kimi-code/plugins/powercontext",
-        script_evidence=("scripts/scope.mjs",),
         source_files=("kimi.plugin.json",),
         package_name="powercontext",
+        extra_resources=("references/experience-skill.md",),
     ),
     "agent-plugin": HostGuidance("integrations/agent-plugin/powercontext"),
-    "minimax": HostGuidance("integrations/minimax/plugins/powercontext"),
+    "minimax": HostGuidance(
+        "integrations/minimax/plugins/powercontext",
+        extra_resources=("references/examples.json", "references/http-boundaries.md"),
+    ),
 }
 
 

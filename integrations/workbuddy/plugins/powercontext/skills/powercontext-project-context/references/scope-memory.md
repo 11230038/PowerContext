@@ -1,37 +1,19 @@
-
 <!-- POWERCONTEXT-GUIDANCE:START -->
 # Scope and Memory
 
-## Resolve scope
+## Resolve Scope
 
-Before the first memory tool call, run:
+Follow the [host binding](host.md). Prefer the exact current-request Scope or the host's implicitly bound tools.
+If a tool schema omits Scope, let its native adapter supply it; do not bypass that binding with a Server-default resolver.
+For filesystem bindings, locate this installed Skill's plugin root, follow the documented resolver with the actual
+workspace/session identity, and reuse its successful result. A missing resolver or conflicting identity is a failure,
+not permission to guess a Scope or change a binding. A workspace change does not replace a current Session override.
 
-```bash
-${POWERCONTEXT_PYTHON} ${POWERCONTEXT_SCOPE_BINDING_SCRIPT} --cwd "$PWD"
-```
+Use the available Server resolver only when the host binding permits it. Creating, binding or switching a Scope
+requires the user's corresponding intent; never derive an ID from a repository, branch, directory or prompt.
+Before durable Handoff or latest continuation, verify that the selected Scope is the intended result boundary.
 
-Reuse that exact `scope_id` for the task.
-
-The Server resolves an explicit Scope first, then durable session and workspace
-bindings, and finally its default Scope. When the user explicitly asks to bind
-the current checkout to a known Scope, run:
-
-```bash
-${POWERCONTEXT_PYTHON} ${POWERCONTEXT_SCOPE_BINDING_SCRIPT} \
-  --cwd "$PWD" --bind-scope "SCOPE_ID"
-```
-
-Then run the normal resolver command again and verify the same Scope. The
-binding is stored by PowerContext; the plugin never derives a Scope ID from a
-Git remote or directory. Never infer a Scope when multiple candidates remain
-consequential.
-
-Before a durable one-turn Handoff or a `latest` Continue, resolve the intended
-Scope explicitly. If the current binding is not the intended boundary, ask the
-user or host for the exact Scope ID, bind it, and verify the resolver result
-before any Handoff write. Never infer a Scope from a report view.
-
-## Read
+## Read Memory
 
 - Use `search_memory` with a focused query, `mode: "auto"`, and at most eight results.
   Current hits contain `memory.artifact`, text, state, and `state_version`; they do not contain legacy entry citations.
@@ -39,16 +21,14 @@ before any Handoff write. Never infer a Scope from a report view.
   Default to active memories. Include forgotten, merged, or retired memories only for an explicit audit.
 - Use `get_artifact_revision` with the exact `atomic-memory` ArtifactRef to inspect immutable content and lineage.
   Use `get_artifact` for current content and `get_atomic_memory_state` for current lifecycle state.
-- `get_memory_entry` only adapts a legacy `target` with `type: "memory_entry"`, `family: "memory"`,
-  the collection's `artifact_id`, and `entry_id` to the migrated Atomic's current content.
-  Legacy citations and collection history are unsupported. Use `get_artifact_revision` with an Atomic ArtifactRef for exact history.
+## Write Memory Only On Request
 
-## Write only on request
+Call `remember_memory` only when the user explicitly asks to persist reusable
+project context.
 
-Call `remember_memory` only when the user explicitly asks to persist context.
 Store concise, self-contained entries such as a decision, constraint,
-current-state, task-outcome, or next-step. Never store secrets or credentials,
-and never claim success until the tool returns successfully.
+current-state, task-outcome, or next-step. Never store secrets, credentials,
+private tokens, or transient logs.
 
 `remember_memory` returns `records` with independent ArtifactRefs. Omit `expected_revision` or pass null;
 legacy collection revision preconditions are unsupported.

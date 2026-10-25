@@ -5,14 +5,14 @@ on:
     paths:
       - evaluation/skills/skill-up/**
       - openapi/powercontext.yaml
-      - integrations/claude-code/plugins/powercontext/skills/powercontext-project-context/**
+      - integrations/agent-plugin/powercontext/skills/powercontext-project-context/**
       - .github/workflows/skill-guidance.yml
   push:
     branches: [master]
     paths:
       - evaluation/skills/skill-up/**
       - openapi/powercontext.yaml
-      - integrations/claude-code/plugins/powercontext/skills/powercontext-project-context/**
+      - integrations/agent-plugin/powercontext/skills/powercontext-project-context/**
       - .github/workflows/skill-guidance.yml
   workflow_dispatch:
 

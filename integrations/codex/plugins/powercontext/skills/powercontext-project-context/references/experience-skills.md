@@ -1,4 +1,3 @@
-
 <!-- POWERCONTEXT-GUIDANCE:START -->
 # Experience and Skills
 
@@ -21,7 +20,7 @@ Do not infer an approved revision from a candidate, and do not silently retry a 
 
 `scan_external_skills` refreshes configured roots on the **Server host**. It requires `server.admin` under enforced
 access control. `list_external_skills` and `resolve_external_skill` require `server.observe`. A remote Server does
-not gain access to the Codex workstation's filesystem. Roots and host identity must be configured on the Server;
+not gain access to the client workstation's filesystem. Roots and host identity must be configured on the Server;
 tool input cannot supply an arbitrary directory to scan.
 
 Use the exact `external_skill_id` and `fingerprint` from a registration for resolution and import. Resolution checks

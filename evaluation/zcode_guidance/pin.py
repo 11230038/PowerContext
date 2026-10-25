@@ -22,7 +22,7 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parent
 REPOSITORY = PROJECT.parents[1]
-SOURCE = "integrations/zcode/plugins/powercontext/skills/powercontext-project-context"
+SOURCE = "integrations/agent-plugin/powercontext/skills/powercontext-project-context"
 LOCK = PROJECT / "skill-lock.json"
 
 

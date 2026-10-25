@@ -2,15 +2,6 @@
 <!-- POWERCONTEXT-GUIDANCE:START -->
 # Review and publication
 
-## Deliver selected material
-
-Use `publish_artifact` only when the user has selected an exact Artifact
-revision for delivery into another Scope. Supply the complete source address,
-the target Scope, and a stable idempotency key. Publication creates an
-independent target Artifact and does not move Sources, other revisions, or
-other state from the source Scope. Never publish personal information,
-debugging fragments, rejected results, or an inferred `latest` revision.
-
 ## Inspect and decide
 
 Use `list_candidates` and `get_candidate` for requested candidate inspection. Keep inspection read-only.

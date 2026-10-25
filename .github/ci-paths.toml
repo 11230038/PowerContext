@@ -62,7 +62,7 @@ kimi = ["integrations/kimi-code/**", "tests/*kimi*"]
 # Packaged guidance and its generators are inputs to the native host tests.
 [shared]
 patterns = [
-  "scripts/integration_guidance*", "scripts/evaluate_integration_guidance.py", "scripts/guidance_templates/**",
+  "scripts/integration_guidance*", "scripts/evaluate_integration_guidance.py", "integrations/agent-plugin/**",
   "tests/test_integration_guidance*", "tests/test_guidance*", "tests/test_setup_rollback.py",
 ]
 suites = ["tests", "dify", "hermes", "dsh", "pi", "opencode", "openclaw", "zcode", "kimi"]

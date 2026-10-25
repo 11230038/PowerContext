@@ -25,7 +25,7 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parent
 REPOSITORY = PROJECT.parents[2]
-SOURCE = "integrations/claude-code/plugins/powercontext/skills/powercontext-project-context"
+SOURCE = "integrations/agent-plugin/powercontext/skills/powercontext-project-context"
 VENDOR = PROJECT / "vendor/powercontext-project-context"
 LOCK = PROJECT / "skill-lock.json"
 

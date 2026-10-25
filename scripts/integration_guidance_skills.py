@@ -23,7 +23,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import tomllib
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -31,135 +30,134 @@ from urllib.parse import unquote, urlsplit
 import yaml
 
 from powercontext.cli.guidance import (
-    END,
     HOST_GUIDANCE,
     RESOURCE_MANIFEST,
-    START,
-    YAML_START,
-    GuidanceError,
-    merge_guidance,
     write_if_changed,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
 ENTRY_NAME = "powercontext-project-context"
-FILE_HOSTS = {host: descriptor.skill.as_posix() for host, descriptor in HOST_GUIDANCE.items() if host != "dsh"}
+FILE_HOSTS = {host: descriptor.skill.as_posix() for host, descriptor in HOST_GUIDANCE.items()}
 
 
-def _guidance_capabilities(host: str, paths: list[str], manifest: dict[str, Any], root: Path) -> set[str]:
-    """Reject guidance that exceeds the manifest's declared capability contract."""
-    descriptor = HOST_GUIDANCE[host]
-    declarations = {item["id"]: item for item in manifest["integrations"]}
-    server_capabilities = {
-        capability
-        for toolset in manifest["toolsets"]
-        if toolset["id"] == "server-mcp"
-        for tool in toolset["tools"]
-        for capability in tool.get("capabilities", [])
-    }
-    # These two portable MCP packages are not qualified native-host declarations.
-    if host in {"agent-plugin", "minimax"}:
-        capabilities = server_capabilities
+def host_binding(host: str, source: Path) -> str:
+    """Describe only the native Scope entry point; workflows remain shared."""
+    if host == "codex":
+        body = 'Use current-request PowerContext routing metadata and its Session binding. For an explicit workspace binding command, run `uv run --frozen --quiet --project "${PLUGIN_ROOT}" python "${PLUGIN_ROOT}/scripts/scope_binding.py" --cwd "$PWD"`. Its workspace result does not replace a current Session override.'
+    elif host == "claude-code":
+        body = 'Run `python3 "${PLUGIN_ROOT}/scripts/workspace_scope.py" --cwd "$PWD"` before the first data operation and reuse its Scope. Use the host-provided plugin root when available; otherwise locate it from this installed Skill.'
+    elif host == "workbuddy":
+        body = 'Run `${POWERCONTEXT_PYTHON} ${POWERCONTEXT_SCOPE_BINDING_SCRIPT} --cwd "$PWD"` before the first data operation and reuse its Scope. The installer binds these paths to the installed interpreter and hooks.'
+    elif host in {"zcode", "kimi-code"}:
+        body = 'Run `node "${PLUGIN_ROOT}/scripts/scope.mjs" resolve --cwd "$PWD"` and reuse the successful Scope. Resolve the plugin root from this installed Skill; preserve any explicit or current Session binding. Bind or unbind only on user request.'
+        if host == "kimi-code":
+            body += "\n\nThe configured explicit Scope is __POWERCONTEXT_SCOPE_JSON__. A string overrides workspace bindings; null enables workspace resolution followed by the Server default.\nThe enabled MCP profile is __POWERCONTEXT_PROFILE_JSON__. Only tools actually enabled in the current catalog are available.\nThe installed resolver is __POWERCONTEXT_SCOPE_SCRIPT_JSON__."
+    elif host in {"agent-plugin", "minimax"}:
+        return (source / "references/host.md").read_text(encoding="utf-8")
     else:
-        capabilities = set(declarations[host]["capabilities"])
-    required = {"memory_read", "memory_write"}
-    if "references/review-publication.md" in paths:
-        required.add("candidate_review")
-    if not required <= capabilities:
-        message = f"{host}: guidance requires undeclared capabilities: {sorted(required - capabilities)}"
-        raise GuidanceError(message)
-    for relative in descriptor.script_evidence:
-        if not (root / descriptor.plugin / relative).is_file():
-            message = f"{host}: missing packaged resolver: {relative}"
-            raise GuidanceError(message)
-    return capabilities
-
-
-def generated_guidance(root: Path = ROOT) -> dict[Path, bytes]:
-    """Render all resources, checking capability inputs and packaged dependencies first."""
-    from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
-
-    templates = root / "scripts/guidance_templates"
-    environment = Environment(
-        loader=FileSystemLoader(templates),
-        undefined=StrictUndefined,
-        keep_trailing_newline=True,
-        autoescape=select_autoescape(enabled_extensions=("html", "xml"), default_for_string=False, default=False),
+        body = "The native host owns Scope selection. Use current-request PowerContext routing metadata and implicitly bound tools; never independently select the Server default. Preserve the host's approval, human-review and session-eligibility requirements."
+    return (
+        "<!-- POWERCONTEXT-GUIDANCE:START -->\n# Host binding\n\n"
+        + body
+        + "\n\nSet PLUGIN_ROOT to the absolute plugin root, two directories above this installed Skill's directory, when a command needs it. Follow actual native tool schemas and host approval.\n<!-- POWERCONTEXT-GUIDANCE:END -->\n"
     )
-    resources = json.loads((templates / "resources.json").read_text(encoding="utf-8"))
-    manifest = tomllib.loads((root / "integrations/capabilities.toml").read_text(encoding="utf-8"))
-    discovered = {
-        path.parent.relative_to(root).as_posix() for path in (root / "integrations").glob(f"**/{ENTRY_NAME}/SKILL.md")
+
+
+def native_mcp(root: Path, host: str) -> tuple[Path, bytes] | None:
+    """Adapt the portable declaration to existing native configuration syntax."""
+    common = root / HOST_GUIDANCE["agent-plugin"].plugin / "mcp.json"
+    entry = dict(json.loads(common.read_text(encoding="utf-8"))["mcpServers"]["powercontext"])
+    endpoint = entry["url"]
+    target = root / HOST_GUIDANCE[host].plugin / ".mcp.json"
+    entry["type"] = "http"
+    if host == "codex":
+        entry.update(
+            url=endpoint.rstrip("/") + "/",
+            required=False,
+            env_http_headers={"Authorization": "POWERCONTEXT_CODEX_AUTHORIZATION"},
+        )
+    elif host == "claude-code":
+        entry.update(
+            url="${user_config.server_url}/mcp", headers={"Authorization": "${POWERCONTEXT_CLAUDE_AUTHORIZATION:-}"}
+        )
+        return target, (json.dumps({"powercontext": entry}, indent=2) + "\n").encode()
+    elif host == "workbuddy":
+        entry.update(
+            url="${POWERCONTEXT_WORKBUDDY_SERVER_URL:-" + endpoint.removesuffix("/mcp") + "}/mcp",
+            headers={"Authorization": "${POWERCONTEXT_WORKBUDDY_AUTHORIZATION:-}"},
+            disabled=False,
+        )
+    elif host == "zcode":
+        entry.update(enabled=True, timeoutMs=10000)
+    elif host == "kimi-code":
+        target = root / HOST_GUIDANCE[host].plugin / "kimi.plugin.json"
+        manifest = json.loads(target.read_text(encoding="utf-8"))
+        manifest["mcpServers"]["powercontext"]["url"] = endpoint
+        return target, (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
+    elif host == "minimax":
+        target = root / HOST_GUIDANCE[host].plugin / "powercontext.mcp.json"
+        declaration = json.loads(common.read_text(encoding="utf-8"))
+        return target, (
+            json.dumps({"schemaVersion": 1, "mcpServers": declaration["mcpServers"]}, indent=2) + "\n"
+        ).encode()
+    else:
+        return None
+    return target, (json.dumps({"mcpServers": {"powercontext": entry}}, indent=2) + "\n").encode()
+
+
+def shared_resources(root: Path = ROOT) -> dict[Path, bytes]:
+    """Copy literal standard resources; only native connection facts vary."""
+    source = root / HOST_GUIDANCE["agent-plugin"].skill
+    resources = {
+        p.relative_to(source).as_posix(): p.read_bytes()
+        for p in source.rglob("*")
+        if p.is_file() and p.name != RESOURCE_MANIFEST
     }
-    expected = {FILE_HOSTS[host] for host in resources}
-    if discovered - expected or set(resources) != set(FILE_HOSTS):
-        message = f"guidance catalog drift: {sorted(discovered - expected)}"
-        raise GuidanceError(message)
-    output: dict[Path, bytes] = {}
-    for host, paths in resources.items():
-        descriptor = HOST_GUIDANCE[host]
-        capabilities = _guidance_capabilities(host, paths, manifest, root)
-        for relative in paths:
-            overlay = f"hosts/{host}/{relative}.j2"
-            template = overlay if (templates / overlay).is_file() else f"base/{relative}.j2"
-            content = environment.get_template(template).render(capabilities=capabilities)
-            unknown = set(re.findall(r"\$\{([^}]+)\}", content)) - set(descriptor.variables)
-            if unknown:
-                message = f"{host}/{relative}: unknown variables: {sorted(unknown)}"
-                raise GuidanceError(message)
-            if relative == "SKILL.md":
-                content = content.rstrip() + "\n" + environment.get_template("embedding-cost.md.j2").render()
-            if relative.endswith(".md"):
-                metadata = re.match(r"\A---\n.*?\n---\n", content, re.DOTALL)
-                if metadata:
-                    content = "---\n" + YAML_START + "\n" + content[4:] + END + "\n"
-                else:
-                    content = START + "\n" + content + END + "\n"
-                destination = root / descriptor.skill / relative
-                if destination.is_file():
-                    content = merge_guidance(
-                        destination.read_bytes().decode("utf-8"),
-                        content,
-                    )
-            output[root / descriptor.skill / relative] = content.encode("utf-8")
+    core = set(file_skill(source)["resources"])
+    output = {}
+    for host, descriptor in HOST_GUIDANCE.items():
+        names = set(resources) if host == "agent-plugin" else core | set(descriptor.extra_resources)
         output[root / descriptor.skill / RESOURCE_MANIFEST] = (
-            json.dumps(
-                {"schema_version": 1, "resources": sorted(paths)},
-                sort_keys=True,
-                indent=2,
-            )
-            + "\n"
-        ).encode("utf-8")
-    for relative in FILE_HOSTS.values():
-        file_skill(root / relative, generated=output)
+            json.dumps({"schema_version": 1, "resources": sorted(names)}, indent=2) + "\n"
+        ).encode()
+        for name in sorted(names):
+            content = resources[name]
+            if name == "references/host.md":
+                content = host_binding(host, source).encode()
+            output[root / descriptor.skill / name] = content
+        configuration = native_mcp(root, host)
+        if configuration is not None:
+            output[configuration[0]] = configuration[1]
     return output
 
 
-def refresh_generated_guidance(root: Path = ROOT, *, check: bool = False) -> tuple[Path, ...]:
-    """Plan all updates before writing; check mode never changes bytes or mtimes."""
-    expected = generated_guidance(root)
+def sync_resources(root: Path = ROOT, *, check: bool = False) -> tuple[Path, ...]:
+    expected = shared_resources(root)
     changed = tuple(path for path, content in expected.items() if not path.is_file() or path.read_bytes() != content)
     if not check:
         for path in changed:
             write_if_changed(path, expected[path])
+        for descriptor in HOST_GUIDANCE.values():
+            for path in (root / descriptor.skill).rglob("*"):
+                if path.is_file() and path not in expected:
+                    path.unlink()
     return changed
 
 
-def file_skill(directory: Path, *, generated: dict[Path, bytes] | None = None) -> dict[str, Any]:
+def file_skill(directory: Path) -> dict[str, Any]:
     """Read one entry and its reachable local references, diagnosing broken links."""
     directory = directory.resolve()
     resources: dict[str, str] = {}
 
     def read(relative: str, origin: str) -> None:
         path = (directory / relative).resolve()
-        planned = (generated or {}).get(path)
-        if not path.is_relative_to(directory) or (planned is None and not path.is_file()):
+        if not path.is_relative_to(directory) or not path.is_file():
             message = f"Skill {directory.name}: {origin} links to missing or out-of-package resource {relative}"
             raise ValueError(message)
         key = path.relative_to(directory).as_posix()
         if key in resources:
             return
-        resources[key] = planned.decode("utf-8") if planned is not None else path.read_text(encoding="utf-8")
+        resources[key] = path.read_text(encoding="utf-8")
         if path.suffix != ".md":
             return
         for target in re.findall(r"\[[^\]]*\]\(([^)]+)\)", resources[key]):
@@ -302,16 +300,16 @@ class SkillReadingModel:
 
 
 def main() -> None:
-    """Generate or check guidance locally, without running model evaluation."""
+    """Copy or check shared resources locally, without running model evaluation."""
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--write", action="store_true", help="refresh managed regions only")
-    mode.add_argument("--check-generated", action="store_true", help="reject drift without modifying files")
+    mode.add_argument("--write", action="store_true", help="copy shared resources into native packages")
+    mode.add_argument("--check", action="store_true", help="reject drift without modifying files")
     arguments = parser.parse_args()
-    changed = refresh_generated_guidance(check=arguments.check_generated)
-    if arguments.check_generated and changed:
+    changed = sync_resources(check=arguments.check)
+    if arguments.check and changed:
         raise SystemExit(
-            "Generated integration guidance is stale:\n" + "\n".join(str(path.relative_to(ROOT)) for path in changed)
+            "Shared integration resources are stale:\n" + "\n".join(str(path.relative_to(ROOT)) for path in changed)
         )
     for directory in FILE_HOSTS.values():
         file_skill(ROOT / directory)

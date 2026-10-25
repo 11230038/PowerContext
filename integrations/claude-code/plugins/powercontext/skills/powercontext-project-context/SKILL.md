@@ -10,15 +10,25 @@ Use current context directly for ordinary coding, sufficient-context continuatio
 No PowerContext call or Skill load is required before every response. An explicit request still needs its real operation.
 Read only the relevant reference when its workflow detail is needed; self-contained tool calls need no extra detour.
 
+The operation names below describe the PowerContext Server contract. Use the exact available tool name and input
+schema from the current catalog, including its client-added namespace. A native adapter may expose the same operation
+with its own name and result envelope; follow its actual description and schema, never guess an alias or unwrap a
+result by assumption. These instructions do not assert that every listed workflow is available in every session.
+
 | Intent / 意图 | Operation and detail |
 | --- | --- |
 | Find prior decisions / 搜索历史记忆 | `search_memory`; [Scope and Memory](references/scope-memory.md). |
-| Inventory or audit / 盘点、列出记忆 | `list_memory_entries`; [Scope and Memory](references/scope-memory.md). Empty search does not authorize inventory. |
+| Inventory or audit / 盘点、列出记忆 | `list_atomic_memories`; [Scope and Memory](references/scope-memory.md). Empty search does not authorize inventory. |
 | Save, correct, retire / 记住、纠正、停用记忆 | `remember_memory` for explicit save; [Scope and Memory](references/scope-memory.md). |
 | Transfer or resume work / 交接、接续工作 | `handoff_current_work`; [Work Handoff](references/work-handoff.md). Ordinary transfer is temporary; durable commit needs explicit intent. |
 | Inspect candidates / 审查候选 | `list_candidates`; [Review and publication](references/review-publication.md). Inspection grants no decision authority. |
+| Experience, managed or external Skills / 经验、技能 | [Experience and Skills](references/experience-skills.md). Synthesis and import do not approve or execute content. |
 
-Before the first data operation, resolve the host/Server Scope as described in [Scope and Memory](references/scope-memory.md); reuse the returned ID, never guess one.
+Before the first data operation, follow [Scope and Memory](references/scope-memory.md) and the installed
+[host binding](references/host.md). The latter contains connection facts, not additional workflow authority.
+Use the native resource reader or Skill loader with actual catalog names; links name packaged references.
+Reuse the exact resolved ID; never guess one. A native tool whose schema omits Scope already uses its host binding;
+do not bypass that binding with an independent Server-default resolver.
 
 ## Boundaries and results
 

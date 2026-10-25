@@ -1,20 +1,17 @@
-
 <!-- POWERCONTEXT-GUIDANCE:START -->
 # Scope and Memory
 
 ## Resolve Scope
 
-Before the first data-plane call, use `resolve_scope_binding` to obtain one
-Server-owned Scope. Supply an explicit Scope only when the host or user selected
-an existing one; otherwise let the Server use its durable binding or default.
-Reuse the returned `scope_id` for the task. Never derive or invent a Scope ID
-from a repository, directory, branch, Agent, or prompt.
+Follow the [host binding](host.md). Prefer the exact current-request Scope or the host's implicitly bound tools.
+If a tool schema omits Scope, let its native adapter supply it; do not bypass that binding with a Server-default resolver.
+For filesystem bindings, locate this installed Skill's plugin root, follow the documented resolver with the actual
+workspace/session identity, and reuse its successful result. A missing resolver or conflicting identity is a failure,
+not permission to guess a Scope or change a binding. A workspace change does not replace a current Session override.
 
-When the user explicitly establishes an independent result boundary, inspect
-the current Scope, call `create_scope` with the established Parent and
-references, then bind the host identity when the integration supports durable
-binding. Creating or switching a Scope is a host action, not an implicit result
-of an ordinary Memory or Handoff call.
+Use the available Server resolver only when the host binding permits it. Creating, binding or switching a Scope
+requires the user's corresponding intent; never derive an ID from a repository, branch, directory or prompt.
+Before durable Handoff or latest continuation, verify that the selected Scope is the intended result boundary.
 
 ## Read Memory
 
@@ -24,10 +21,6 @@ of an ordinary Memory or Handoff call.
   Default to active memories. Include forgotten, merged, or retired memories only for an explicit audit.
 - Use `get_artifact_revision` with the exact `atomic-memory` ArtifactRef to inspect immutable content and lineage.
   Use `get_artifact` for current content and `get_atomic_memory_state` for current lifecycle state.
-- `get_memory_entry` only adapts a legacy `target` with `type: "memory_entry"`, `family: "memory"`,
-  the collection's `artifact_id`, and `entry_id` to the migrated Atomic's current content.
-  Legacy citations and collection history are unsupported. Use `get_artifact_revision` with an Atomic ArtifactRef for exact history.
-
 ## Write Memory Only On Request
 
 Call `remember_memory` only when the user explicitly asks to persist reusable

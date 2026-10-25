@@ -16,11 +16,10 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
-from integration_guidance_skills import FILE_HOSTS, ROOT, file_skill, refresh_generated_guidance
+from integration_guidance_skills import FILE_HOSTS, ROOT, file_skill, sync_resources
 
 from powercontext.cli.guidance import (
     END,
@@ -37,32 +36,18 @@ from tests.install_support import configure_opencode
 
 @pytest.fixture
 def guidance_tree(tmp_path: Path) -> Path:
-    shutil.copytree(ROOT / "scripts/guidance_templates", tmp_path / "scripts/guidance_templates")
     for host, relative in FILE_HOSTS.items():
         shutil.copytree(ROOT / relative, tmp_path / relative)
         descriptor = HOST_GUIDANCE[host]
-        for evidence in descriptor.script_evidence:
-            destination = tmp_path / descriptor.plugin / evidence
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / descriptor.plugin / evidence, destination)
-    shutil.copy2(ROOT / "integrations/capabilities.toml", tmp_path / "integrations/capabilities.toml")
+        for name in ("mcp.json", ".mcp.json", "powercontext.mcp.json", "kimi.plugin.json"):
+            source = ROOT / descriptor.plugin / name
+            if source.is_file():
+                shutil.copy2(source, tmp_path / descriptor.plugin / name)
     return tmp_path
 
 
 def snapshot(root: Path) -> dict[Path, tuple[bytes, int]]:
     return {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in root.rglob("*") if path.is_file()}
-
-
-def test_refresh_is_idempotent_and_preserves_outside_bytes(guidance_tree: Path) -> None:
-    path = guidance_tree / FILE_HOSTS["claude-code"] / "SKILL.md"
-    original = path.read_bytes()
-    outside = b"\r\nMy private project notes must survive.\r\n"
-    path.write_bytes(original + outside)
-    before = snapshot(guidance_tree)
-    assert refresh_generated_guidance(guidance_tree) == ()
-    assert refresh_generated_guidance(guidance_tree) == ()
-    assert snapshot(guidance_tree) == before
-    assert path.read_bytes().endswith(outside)
 
 
 def test_read_only_check_detects_drift_without_fixing_it(guidance_tree: Path) -> None:
@@ -71,76 +56,20 @@ def test_read_only_check_detects_drift_without_fixing_it(guidance_tree: Path) ->
         path.read_text(encoding="utf-8").replace("# Work Handoff", "# Incorrect guidance"), encoding="utf-8"
     )
     before = snapshot(guidance_tree)
-    assert refresh_generated_guidance(guidance_tree, check=True) == (path,)
+    assert sync_resources(guidance_tree, check=True) == (path,)
     assert snapshot(guidance_tree) == before
-    assert refresh_generated_guidance(guidance_tree) == (path,)
-    assert refresh_generated_guidance(guidance_tree, check=True) == ()
+    assert sync_resources(guidance_tree) == (path,)
+    assert sync_resources(guidance_tree, check=True) == ()
 
 
 def test_canonical_discovery_description_is_refreshed(guidance_tree: Path) -> None:
-    template = guidance_tree / "scripts/guidance_templates/base/SKILL.md.j2"
+    template = guidance_tree / FILE_HOSTS["agent-plugin"] / "SKILL.md"
     template.write_text(
         template.read_text(encoding="utf-8").replace("description: PowerContext", "description: Updated PowerContext"),
         encoding="utf-8",
     )
-    refresh_generated_guidance(guidance_tree)
+    sync_resources(guidance_tree)
     assert file_skill(guidance_tree / FILE_HOSTS["claude-code"])["description"].startswith("Updated PowerContext")
-
-
-def test_all_packaged_references_resolve_and_openclaw_keeps_its_limits(guidance_tree: Path) -> None:
-    for host, relative in FILE_HOSTS.items():
-        skill = file_skill(guidance_tree / relative)
-        assert "references/scope-memory.md" in skill["resources"]
-        if host == "kimi-code":
-            assert "references/work-handoff.md" not in skill["resources"]
-            assert "get_artifact_revision" in skill["resources"]["references/scope-memory.md"]
-        else:
-            assert "references/work-handoff.md" in skill["resources"]
-    openclaw = file_skill(guidance_tree / FILE_HOSTS["openclaw"])
-    assert "Unavailable here." in openclaw["content"]
-    assert "`list_memory_entries`" not in openclaw["content"]
-    assert "`list_artifact_candidates`" not in openclaw["content"]
-    assert "references/review-publication.md" not in openclaw["resources"]
-
-
-def test_unknown_host_variable_is_rejected_before_any_write(guidance_tree: Path) -> None:
-    template = guidance_tree / "scripts/guidance_templates/base/SKILL.md.j2"
-    template.write_text(template.read_text(encoding="utf-8") + "${UNKNOWN_ROOT}/script.py\n", encoding="utf-8")
-    before = snapshot(guidance_tree)
-    with pytest.raises(GuidanceError, match="UNKNOWN_ROOT"):
-        refresh_generated_guidance(guidance_tree)
-    assert snapshot(guidance_tree) == before
-
-
-def test_broken_reference_is_rejected_before_refresh(guidance_tree: Path) -> None:
-    template = guidance_tree / "scripts/guidance_templates/base/SKILL.md.j2"
-    template.write_text(
-        template.read_text(encoding="utf-8").replace("references/scope-memory.md", "references/missing.md"),
-        encoding="utf-8",
-    )
-    before = snapshot(guidance_tree)
-    with pytest.raises(ValueError, match="missing or out-of-package"):
-        refresh_generated_guidance(guidance_tree)
-    assert snapshot(guidance_tree) == before
-
-
-def test_new_skill_directory_cannot_escape_generation_catalog(guidance_tree: Path) -> None:
-    path = guidance_tree / "integrations/newhost/skills/powercontext-project-context/SKILL.md"
-    path.parent.mkdir(parents=True)
-    path.write_text("new guidance", encoding="utf-8")
-    with pytest.raises(GuidanceError, match="catalog drift"):
-        refresh_generated_guidance(guidance_tree, check=True)
-
-
-def test_capability_removal_rejects_stale_host_guidance(guidance_tree: Path) -> None:
-    manifest = guidance_tree / "integrations/capabilities.toml"
-    content = manifest.read_text(encoding="utf-8")
-    marker = 'id = "claude-code"'
-    before, after = content.split(marker, 1)
-    after = after.replace('"candidate_review", ', "", 1)
-    manifest.write_text(before + marker + after, encoding="utf-8")
-    with pytest.raises(GuidanceError, match="undeclared capabilities"):
-        refresh_generated_guidance(guidance_tree)
 
 
 @pytest.mark.parametrize("content", [START, END, END + START, START + END + START + END])
@@ -253,30 +182,6 @@ def test_pre_marker_downgrade_rejects_before_losing_user_content(
         else:
             preserve_installed_guidance(home, pre_marker_packages[host])
     assert {path: data for path, (data, _) in snapshot(home).items()} == before
-
-
-def test_git_crlf_checkout_passes_generation_without_rewriting_user_bytes(guidance_tree: Path) -> None:
-    shutil.copy2(ROOT / ".gitattributes", guidance_tree / ".gitattributes")
-    git = shutil.which("git")
-    assert git is not None, "Git is required to exercise checkout conversion"
-    for args in (
-        ["init", "--quiet"],
-        ["add", "."],
-        ["checkout-index", "--all", "--prefix=checkout/"],
-    ):
-        subprocess.run(
-            [git, "-c", "core.autocrlf=true", "-c", "core.safecrlf=false", *args],
-            cwd=guidance_tree,
-            check=True,
-            capture_output=True,
-        )
-    checkout = guidance_tree / "checkout"
-    skill = checkout / FILE_HOSTS["codex"] / "SKILL.md"
-    skill.write_bytes(skill.read_bytes() + b"\r\nLocal notes retain CRLF.\r\n")
-    before = snapshot(checkout)
-    assert refresh_generated_guidance(checkout, check=True) == ()
-    assert refresh_generated_guidance(checkout) == ()
-    assert snapshot(checkout) == before
 
 
 @pytest.mark.parametrize("host", ["hermes", "zcode"])

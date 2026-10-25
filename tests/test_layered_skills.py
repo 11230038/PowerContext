@@ -42,7 +42,7 @@ def test_missing_skill_resource_identifies_entry_and_exact_link(tmp_path: Path) 
         file_skill(tmp_path)
 
 
-@pytest.mark.parametrize("host", ["opencode", "openclaw"])
+@pytest.mark.parametrize("host", ["opencode", "openclaw", "pi", "dsh"])
 def test_npm_archive_contains_every_reachable_skill_resource(host: str) -> None:
     npm, node = shutil.which("npm"), shutil.which("node")
     if not npm or not node:

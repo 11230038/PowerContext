@@ -45,4 +45,12 @@ with the objective, exact status, observations, checks, produced Artifacts, and
 remaining work. Do not treat every session stop as task completion.
 
 For a preview, use inspected current facts without capture, prepare, or commit. Preserve the complete returned carrier, including required nullable fields and generation receipts.
+## Explicit lower-level activation
+
+If the user requests the lower-level boundary-trigger flow, capture its Source first, then use `activate_handoff`.
+Do not activate again after `handoff_current_work`. A generated activation exposes the Draft as top-level `draft`;
+an ignored activation makes no new carrier. Pass that Draft to `finalize_handoff` according to the current tool schema.
+Preserve the complete native finalization result unchanged, including its schema, Scope, base, content and generation
+receipt. Never return only content, an unfinished Draft, or an assumed wrapper member. Follow an adapter's actual
+result schema when it wraps Server results. An unavailable lower-level tool is not permission to emulate the operation.
 <!-- POWERCONTEXT-GUIDANCE:END -->

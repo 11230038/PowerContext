@@ -16,7 +16,7 @@
 
 import { requireService } from './dsh-service.ts'
 import { DOMAIN_SKILLS } from './domain-skills.ts'
-import { PROJECT_CONTEXT_SKILL } from './skill-body.ts'
+import { PROJECT_CONTEXT_SKILL, SKILL_RESOURCE_BASE } from './skill-body.ts'
 
 export const GUIDANCE = `PowerContext model-facing capabilities are exposed through DSH's native MCP client.
 The plugin connects the configured Server MCP endpoint and the resulting tools use the exact names
@@ -93,6 +93,7 @@ export function registerSkill(ctx: { get: (name: string) => unknown }): void {
       description: string
       source: string
       content: string
+      resourceBase?: { kind: 'directory'; path: string }
       whenToUse?: string
     }) => unknown
   }>(ctx, 'skills')
@@ -102,6 +103,7 @@ export function registerSkill(ctx: { get: (name: string) => unknown }): void {
     source: 'runtime',
     whenToUse: 'Use when continuing work across sessions, recalling prior decisions, preparing a handoff, or maintaining durable memory.',
     content: PROJECT_CONTEXT_SKILL,
+    resourceBase: SKILL_RESOURCE_BASE,
   })
   for (const skill of DOMAIN_SKILLS) skills.register(skill)
 }

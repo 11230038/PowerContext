@@ -1,11 +1,13 @@
 {
+  "schema_version": 1,
   "resources": [
     "SKILL.md",
     "references/examples.json",
+    "references/experience-skills.md",
+    "references/host.md",
     "references/http-boundaries.md",
     "references/review-publication.md",
     "references/scope-memory.md",
     "references/work-handoff.md"
-  ],
-  "schema_version": 1
+  ]
 }

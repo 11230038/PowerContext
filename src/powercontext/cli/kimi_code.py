@@ -59,6 +59,7 @@ REQUIRED_FILES = (
     "scripts/scope.mjs",
     "scripts/status.mjs",
     "skills/powercontext-project-context/SKILL.md",
+    "skills/powercontext-project-context/references/host.md",
 )
 
 
@@ -116,7 +117,7 @@ def _endpoint(value: str) -> str:
     return endpoint
 
 
-def _configured_skill(
+def _configured_binding(
     skill: Path,
     *,
     scope: str | None,
@@ -147,19 +148,6 @@ def _configured_skill(
     content = content.replace(
         f"The enabled MCP profile is {old_profile}.", f"The enabled MCP profile is {json.dumps(profile.value)}."
     )
-    workflow_start = "<!-- POWERCONTEXT-WORKFLOWS:START -->"
-    workflow_end = "<!-- POWERCONTEXT-WORKFLOWS:END -->"
-    if workflow_start not in content and workflow_end not in content and profile is KimiProfile.MINIMAL:
-        return (existing[:start] + content + existing[end:]).encode("utf-8")
-    if (
-        content.count(workflow_start) != 1
-        or content.count(workflow_end) != 1
-        or content.index(workflow_start) > content.index(workflow_end)
-    ):
-        raise SetupError("Run powercontext setup kimi-code to install profile-aware guidance")  # noqa: TRY003
-    before, remaining = content.split(workflow_start)
-    _, after = remaining.split(workflow_end)
-    content = before + workflow_start + "\n" + _profile_guidance(profile) + "\n" + workflow_end + after
     return (existing[:start] + content + existing[end:]).encode("utf-8")
 
 
@@ -178,24 +166,6 @@ def _profile_tools(plugin: Path, profile: KimiProfile) -> list[str]:
     ):
         raise SetupError("Invalid Kimi MCP tool profile")  # noqa: TRY003
     return tools
-
-
-def _profile_guidance(profile: KimiProfile) -> str:
-    if profile is KimiProfile.MINIMAL:
-        return ""
-    result = (
-        "For Work Contract, Handoff, continuation, acknowledgment and Task Outcome, "
-        "read [Work Handoff](references/work-handoff.md) before the first operation. "
-        "An ordinary transfer is temporary; commit only an explicitly requested durable milestone."
-    )
-    if profile is KimiProfile.FULL:
-        result += (
-            "\nFor Experience, managed/external Skill and candidate workflows, "
-            "read [Experience and Skill](references/experience-skill.md) and "
-            "[Review and publication](references/review-publication.md). "
-            "Inspection grants no decision authority."
-        )
-    return result
 
 
 @dataclass
@@ -234,7 +204,9 @@ class KimiInstaller:
         if kimi_executable() is None or which("node") is None:
             raise SetupError("Kimi CLI and Node must be available; KIMI_CLI_BIN may point to a built CLI")  # noqa: TRY003
         with source.package("kimi-code") as plugin:
-            skill_template = (plugin / "skills/powercontext-project-context/SKILL.md").read_text(encoding="utf-8")
+            skill_template = (plugin / "skills/powercontext-project-context/references/host.md").read_text(
+                encoding="utf-8"
+            )
             if any(
                 marker not in skill_template
                 for marker in ("__POWERCONTEXT_SCOPE_JSON__", "__POWERCONTEXT_SCOPE_SCRIPT_JSON__")
@@ -278,9 +250,9 @@ class KimiInstaller:
                         manifest["mcpServers"] = native["mcpServers"]
                 (staged / OWNER_MARKER).write_text("powercontext-kimi-code-v1\n", encoding="utf-8")
                 if previous:
-                    skill = staged / "skills/powercontext-project-context/SKILL.md"
+                    skill = staged / "skills/powercontext-project-context/references/host.md"
                     skill.write_bytes(
-                        _configured_skill(
+                        _configured_binding(
                             skill,
                             scope=previous["scope_id"],
                             previous_scope=previous["scope_id"],
@@ -335,8 +307,8 @@ class KimiInstaller:
             server["bearerTokenEnvVar"] = "POWERCONTEXT_KIMI_TOKEN"
         elif server.get("bearerTokenEnvVar") == "POWERCONTEXT_KIMI_TOKEN":
             del server["bearerTokenEnvVar"]
-        skill = destination / "skills/powercontext-project-context/SKILL.md"
-        content = _configured_skill(
+        skill = destination / "skills/powercontext-project-context/references/host.md"
+        content = _configured_binding(
             skill,
             scope=scope,
             previous_scope=previous.get("scope_id"),

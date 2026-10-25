@@ -457,9 +457,9 @@ test('real DSH discovers bilingual domains and loads only the requested Skill', 
       assert.ok(JSON.stringify(finalMessages).includes(domain.description), `${domain.name} metadata is not model-visible`)
       const result = finalMessages.find(message => message.role === 'tool')
       assert.ok(result, `${domain.name} was not loaded through the host Skill tool`)
-      assert.ok(JSON.stringify(result).includes(domain.content.trim().split('\n')[0]))
+      assert.ok(JSON.stringify(result).includes(domain.content.split('\n').find(line => line.startsWith('# '))))
       for (const other of registered.filter(skill => skill.name !== domain.name)) {
-        assert.ok(!JSON.stringify(result).includes(other.content.trim().split('\n')[0]), `loading ${domain.name} also loaded ${other.name}`)
+        assert.ok(!JSON.stringify(result).includes(other.content.split('\n').find(line => line.startsWith('# '))), `loading ${domain.name} also loaded ${other.name}`)
       }
     }
     await instance.close()

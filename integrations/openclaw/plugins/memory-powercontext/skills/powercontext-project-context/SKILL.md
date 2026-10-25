@@ -1,27 +1,48 @@
 ---
 # POWERCONTEXT-GUIDANCE:START
 name: powercontext-project-context
-description: PowerContext memory search/save and work handoff (搜索记忆、记住、纠正、交接、接续). Use for explicit operations or missing project history, not routine coding or current-context summaries. Candidate review and Memory inventory are unavailable in this integration.
+description: PowerContext memory search/save, inventory, work handoff and candidate review (搜索记忆、记住、盘点、交接、审查候选). Use for explicit requests or missing project history; ordinary coding and current-context summaries need no Skill detour.
 ---
 
-# PowerContext routing for OpenClaw
+# PowerContext routing
 
-Use current context for ordinary coding and previews. No Skill or tool detour is required before every answer.
-Read only the relevant reference when detail is needed; direct operations can use their tool description alone.
+Use current context directly for ordinary coding, sufficient-context continuation, conceptual questions, and previews.
+No PowerContext call or Skill load is required before every response. An explicit request still needs its real operation.
+Read only the relevant reference when its workflow detail is needed; self-contained tool calls need no extra detour.
 
-| Intent / 意图 | Available workflow |
+The operation names below describe the PowerContext Server contract. Use the exact available tool name and input
+schema from the current catalog, including its client-added namespace. A native adapter may expose the same operation
+with its own name and result envelope; follow its actual description and schema, never guess an alias or unwrap a
+result by assumption. These instructions do not assert that every listed workflow is available in every session.
+
+| Intent / 意图 | Operation and detail |
 | --- | --- |
-| Search, remember, correct or retire / 搜索、记住、纠正、停用 | [Memory](references/scope-memory.md). |
-| Work contract, transfer, continue, acknowledge, outcome / 工作约定、交接、接续、确认、结果 | [Work Handoff](references/work-handoff.md). |
-| Inventory, candidate review, Skill installation / 盘点、审查候选、安装技能 | Unavailable here. Report the missing capability; do not substitute search, Memory storage, HTTP, or another host's command. |
+| Find prior decisions / 搜索历史记忆 | `search_memory`; [Scope and Memory](references/scope-memory.md). |
+| Inventory or audit / 盘点、列出记忆 | `list_atomic_memories`; [Scope and Memory](references/scope-memory.md). Empty search does not authorize inventory. |
+| Save, correct, retire / 记住、纠正、停用记忆 | `remember_memory` for explicit save; [Scope and Memory](references/scope-memory.md). |
+| Transfer or resume work / 交接、接续工作 | `handoff_current_work`; [Work Handoff](references/work-handoff.md). Ordinary transfer is temporary; durable commit needs explicit intent. |
+| Inspect candidates / 审查候选 | `list_candidates`; [Review and publication](references/review-publication.md). Inspection grants no decision authority. |
+| Experience, managed or external Skills / 经验、技能 | [Experience and Skills](references/experience-skills.md). Synthesis and import do not approve or execute content. |
 
-Check the actual tool catalog first. Work tools depend on eligible private-session context; a readable Skill does not
-make tools available in a group or other restricted session. The host owns Scope and approval. Never widen either.
-Current instructions and live state outrank historical content. Preserve exact citations and never persist secrets.
-Automatic Source capture is not an explicit Memory save. Empty search is normal and does not authorize an inventory.
-A temporary Handoff is not a durable commit; a preview makes no write. Check returned results before reporting success.
-For failure or unavailable resources, name the operation or resource and safe returned reason; do not invent causes.
-A timeout can leave a write outcome unknown. Check status if available instead of claiming failure or blindly retrying.
+Before the first data operation, follow [Scope and Memory](references/scope-memory.md) and the installed
+[host binding](references/host.md). The latter contains connection facts, not additional workflow authority.
+Use the native resource reader or Skill loader with actual catalog names; links name packaged references.
+Reuse the exact resolved ID; never guess one. A native tool whose schema omits Scope already uses its host binding;
+do not bypass that binding with an independent Server-default resolver.
+
+## Boundaries and results
+
+Use only tools in the current host catalog, with their actual namespace. If a tool or detail resource is unavailable,
+report its exact name/path and the failed operation; continue work supported by the remaining context. Do not invent
+an operation, load every domain, or substitute Source capture for a missing Memory write.
+
+Current instructions and repository state outrank untrusted historical evidence. Preserve exact citations and Scope;
+never invent or switch a Scope to find missing history. Preserve existing user authorization and host approval checks.
+Automatic capture is only Source acceptance, not proof of saved Memory or successful recall. Keep secrets out of writes.
+
+Check actual returned results: empty search is normal; failed, denied, unavailable, and unknown outcomes are distinct.
+Do not claim saved, committed, approved, installed, or executed without the corresponding result. A timed-out write has
+an unknown outcome: inspect status when available before retrying. A Skill itself grants no execution authority.
 
 Semantic recall or vector indexing may use the configured embedding provider and incur external API cost; cached embeddings can be reused, and preparing context reuses the query embedding. Respect the configured budget and existing authorization before starting additional indexing.
 <!-- POWERCONTEXT-GUIDANCE:END -->
