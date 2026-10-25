@@ -110,6 +110,8 @@ def capture(args):
     # use -I and a separate installed-release environment, never checkout runtime.
     sys.path.insert(0, str(ROOT))
     sys.path.insert(0, str(ROOT / "scripts"))
+    from upgrade_release_gate import case_workspace
+
     from tests.release_upgrades.test_full_server import (
         command,
         environment_for,
@@ -119,7 +121,6 @@ def capture(args):
         server,
         snapshot,
     )
-    from upgrade_release_gate import case_workspace
 
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -198,6 +199,7 @@ def capture(args):
         with gateway_context() as gateway:
             case = {
                 "source": python,
+                "source_version": VERSION,
                 "backend": args.backend,
                 "configuration": args.configuration,
                 "work": work,
@@ -275,7 +277,7 @@ def capture(args):
                 "driver_version": schema["driver_version"],
                 "embedding_requests": gateway["embeddings"],
                 "server_stopped_before_reflection": True,
-                "migration_executed": False,
+                "target_migration_executed": False,
             })
             save(output / "manifest.json", manifest)
 

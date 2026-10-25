@@ -45,15 +45,35 @@ class MigrationBundle:
     partially applied DDL cannot be mistaken for a supported baseline.
     """
 
-    def __init__(self, directory: Path, *, embedding_profile: EmbeddingProfile | None = None) -> None:  # noqa: C901 -- Keep ordered admission checks with their operation.
+    def __init__(  # noqa: C901 -- Keep ordered admission checks with their operation.
+        self,
+        directory: Path,
+        *,
+        embedding_profile: EmbeddingProfile | None = None,
+        source_directory: Path | None = None,
+    ) -> None:
         self.directory = directory.resolve()
+        self.source_directory = source_directory.resolve() if source_directory is not None else None
+        self._original_resources = self._read_resources(self.directory)
+        self._source_resources = self._read_resources(self.source_directory) if self.source_directory else {}
+        resources = self._original_resources.copy()
+        if self.source_directory is not None:
+            registration = json.loads(self._source_resources["registration.json"])
+            removed = registration.get("remove_resources", [])
+            if (
+                not isinstance(removed, list)
+                or any(not isinstance(name, str) or name not in resources for name in removed)
+                or len(set(removed)) != len(removed)
+            ):
+                raise MigrationError("invalid_bundle", "Source overlay removes an unknown or duplicate resource.")
+            for name in removed:
+                del resources[name]
+            resources.update({
+                name: content for name, content in self._source_resources.items() if name != "registration.json"
+            })
+            resources["_source_registration.json"] = self._source_resources["registration.json"]
         # Execute exactly the reviewed bytes, even if the installed resources
         # change during a long backup. Alembic reloads scripts on every command.
-        resources = {
-            path.relative_to(self.directory).as_posix(): path.read_bytes()
-            for path in sorted(self.directory.rglob("*"))
-            if path.is_file() and path.suffix in {".py", ".sql", ".json"}
-        }
         self._snapshot = TemporaryDirectory(prefix="pc-migration-bundle-")
         self.snapshot_directory = Path(self._snapshot.name).resolve()
         for name, content in resources.items():
@@ -72,13 +92,18 @@ class MigrationBundle:
         self.revisions = tuple(item.revision for item in revisions)
         self.head = self.revisions[-1]
         manifest = json.loads(resources["manifest.json"])
+        self.source_revision = manifest.get("source_revision")
+        self.source_release = manifest.get("source_release")
+        if self.source_revision is not None and self.source_revision != self.revisions[0]:
+            raise MigrationError("invalid_bundle", "A registered source must start its linear revision chain.")
         self.vector_profile = (
             ServerVectorProfile(self.snapshot_directory, embedding_profile) if embedding_profile is not None else None
         )
         if self.vector_profile is not None:
             layouts = self.vector_profile.sqlite_layouts(self.snapshot_directory)
             manifest["sqlite_fingerprints"] = {revision: [digest(rows)] for revision, rows in layouts.items()}
-            manifest["sqlite_baselines"] = {digest(layouts["s1300"]): "s1300"}
+            source_revision = manifest.get("source_revision", "s1300")
+            manifest["sqlite_baselines"] = {digest(layouts[source_revision]): source_revision}
             manifest["affected_objects"] = list(
                 dict.fromkeys([
                     *manifest["affected_objects"],
@@ -87,7 +112,7 @@ class MigrationBundle:
             )
             for step in manifest["domain_steps"]:
                 if step["id"] == "server_upgrade":
-                    step["module"] = "server_vector_domain.py"
+                    step["module"] = manifest.get("vector_domain_module", "server_vector_domain.py")
                     step["resources"].append(ServerVectorProfile.resource)
         mysql_layouts = manifest.get("mysql_layouts", [])
         if (
@@ -144,13 +169,18 @@ class MigrationBundle:
             raise MigrationError("invalid_bundle", "MySQL execution registration is outside its frozen revision.")
         return dict(wrappers)
 
-    def assert_unchanged(self) -> None:
-        resources = {
-            path.relative_to(self.directory).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-            for path in sorted(self.directory.rglob("*"))
+    @staticmethod
+    def _read_resources(directory: Path) -> dict[str, bytes]:
+        return {
+            path.relative_to(directory).as_posix(): path.read_bytes()
+            for path in sorted(directory.rglob("*"))
             if path.is_file() and path.suffix in {".py", ".sql", ".json"}
         }
-        if resources != self.resources:
+
+    def assert_unchanged(self) -> None:
+        if self._read_resources(self.directory) != self._original_resources or (
+            self.source_directory is not None and self._read_resources(self.source_directory) != self._source_resources
+        ):
             raise MigrationError("plan_changed", "Migration resources changed after the bundle was loaded.")
 
     def config(self, connection: Connection) -> Config:

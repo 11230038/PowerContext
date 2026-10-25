@@ -14,13 +14,34 @@ The design follows [RFC #1771](https://github.com/oceanbase/powercontext/pull/17
 
 `powercontext server db-migrate status/plan/apply/verify` default to `--bundle server` and use the configured persistent SQLite, embedded seekDB, or OceanBase MySQL database. Explicit environment files are authoritative; arbitrary bundle paths are not accepted.
 
-The full Server path registers actual 1.3.0 storage as `s1300 → s1400 → s1401 → s1402`, with Code enabled or disabled on all three backends and a separate profile for unit-normalized L2 vectors. SQLite and OceanBase keep Code in a separate local cache. Embedded seekDB Code adds three tables through a frozen schema extension captured from installed 1.3.0; maintenance preserves existing graph rows and creates the registered tables for a new Code-enabled database. The path covers the complete schema, Candidate renaming and retained history, Dream task formats, Processing ownership, search projections, and existing Source references. Unknown layouts, extra objects and unregistered sources fail before writes. Older Memory collection conversion is outside this path.
+The full Server framework registers two installed-release sources:
+
+- **1.3.0:** `s1300 → s1400 → s1401 → s1402`.
+- **1.4.0:** `r1400 → s1400 → s1401 → s1402` through a separate frozen source bridge.
+
+Application release numbers and schema revisions are distinct. The 1.4.0 release is not the `s1400` checkpoint:
+its existing Candidate schema is current, but its Topic attempt storage still needs the registered bridge.
+Both source paths preserve existing references and history and reach the same managed target. Their original
+resource checksums remain independently verifiable, including after a later registered revision is appended.
+Other releases and extra database objects are not inferred to be compatible; they need exact source registration
+and acceptance before writes. Older Memory collection conversion is outside these paths.
+
+Both sources register Code enabled or disabled on all three backends and a separate profile for unit-normalized L2
+vectors. SQLite and OceanBase keep Code in a separate local cache. Embedded seekDB Code uses three registered tables;
+maintenance preserves existing graph rows and creates the registered tables for a new Code-enabled database.
+Native source and profile registrations must pass the installed-release gate on their actual backends.
 
 Only successful schema, domain, projection, and task validation returns `state=ready`, `readiness_scope=server`, and `server_ready=true`. Publication also requires installed-artifact acceptance on all three backends. An implemented path is not evidence that a release passed acceptance; consult the installation guide and release gate for support status.
 
 Stop all writers and drain queued/running 1.3.0 Dream tasks before upgrading: the target cannot execute the old prompt contract. Terminal task payloads and pending Processing counters are preserved; old worker leases are fenced. Registered capability additions retain the old automatic-processing choices instead of replacing ownership with the current configuration.
 
-Old Candidate tables are retained as `pc_retained_dream_candidate_heads` and `pc_retained_dream_candidate_versions` for migration-copy verification. They and the backup are not live write targets; subsequent business changes are not compared against old snapshots. New historical Artifact provenance fields remain unknown, and existing Source references are preserved. Projection rebuilds and verification scan their tables; budget downtime and capacity for backups and retained copies.
+For the 1.3.0 path, old Candidate tables are retained as `pc_retained_dream_candidate_heads` and `pc_retained_dream_candidate_versions` for migration-copy verification. They and the backup are not live write targets; subsequent business changes are not compared against old snapshots. New historical Artifact provenance fields remain unknown, and existing Source references are preserved. Projection rebuilds and verification scan their tables; budget downtime and capacity for backups and retained copies.
+
+The 1.4.0 path preserves its already-current Candidate heads, versions and payloads without running the 1.3
+Candidate conversion. It creates the same two retained tables empty to share the target structure; those empty
+tables do not represent fabricated 1.3 history. Its preflight validates the current Processing declaration, Dream
+payload identities and pending intents. It preserves compatible current tasks rather than applying the 1.3-only
+Dream drain rule, and fences old worker leases during the explicit maintenance window.
 
 Revision `s1401` registers `pc_memory_artifact_archive` in the managed target schema on all three backends. It stores frozen Memory history for offline maintenance and has no public Artifact read path. Fresh databases start with an empty archive; repeat migration preserves its bytes, and runtime admission verifies its registered structure. This revision does not register additional historical source layouts.
 
@@ -40,7 +61,7 @@ identity value and explicitly rotating a stopped clone's identity retain their e
 
 Vector maintenance requires the exact historical embedding profile: profile ID, model, dimension, distance and normalization. It preserves historical embeddings and Topic retrieval shape without calling an embedding provider. The registered SQLite transition adds and backfills Atomic Memory's vec0 helper and transactional triggers; native backends retain the registered vector columns and HNSW parameters. `pc_server_storage_profile` stores the complete embedding configuration, not another revision or recovery journal. Generic storage readers validate this declaration, and Server startup uses the configured or injected model's actual profile. Missing managed helpers and profile changes are rejected before startup repair or writes.
 
-Empty persistent SQLite/seekDB Server storage with vectors initializes through the selected profile of the same chain. Existing unmanaged storage requires explicit maintenance and an exact registered source layout. Changing configuration cannot bypass admission, enable vectors on no-vector managed storage, or implicitly add vector/Code objects. Enabling embedded Code on an already managed database without its tables requires a separately registered configuration transition; startup and the standalone Code CLI reject it. The release gate requires all twelve combinations of backend, vectors enabled or disabled, and Code enabled or disabled. Code cases build an index with installed 1.3.0, preserve its cache files and embedded graph rows, and query the original fingerprint and symbols after the upgrade. Vector cases preserve nonempty historical Atomic and Topic embeddings, verify semantic reads and new writes through the installed target, reject profile drift, and compare fresh/upgraded storage. SQLite also tests missing-helper rejection and backup restoration. A successful no-vector case does not establish vector support; every declared case must pass for the actual target artifact.
+Empty persistent SQLite/seekDB Server storage with vectors initializes through the selected profile of the same chain. Existing unmanaged storage requires explicit maintenance and an exact registered source layout. Changing configuration cannot bypass admission, enable vectors on no-vector managed storage, or implicitly add vector/Code objects. Enabling embedded Code on an already managed database without its tables requires a separately registered configuration transition; startup and the standalone Code CLI reject it. The release gate requires all 24 combinations of the two source releases, three backends, vectors enabled or disabled, and Code enabled or disabled. Code cases build an index with each installed source release, preserve its cache files and embedded graph rows, and query the original fingerprint and symbols after the upgrade. Vector cases preserve nonempty historical Atomic and Topic embeddings, verify semantic reads and new writes through the installed target, reject profile drift, and compare fresh/upgraded storage. SQLite also tests missing-helper rejection and backup restoration. A successful no-vector case does not establish vector support; every declared case must pass for the actual target artifact.
 
 `--bundle artifacts` retains the partial Artifact prototype chain starting at `p0001`; `--bundle topic-memory-recovery` covers only registered Topic recovery layouts. Both report `server_ready=false`. Neither establishes full Server readiness, and their revisions cannot be stamped as full Server revisions.
 
@@ -474,6 +495,7 @@ startup. Unknown formats or unobservable sources must not be reported as an empt
 consumption, idempotent conversion, or bounded draining. Preserve task IDs, idempotency keys, Scope, retries, and domain
 receipts. The partial Artifact bundle does not cover these complete business checks. The full Server path checks its
 registered 1.3.0 Dream formats and rejects queued/running old tasks before migration; terminal payloads remain intact.
+For 1.4.0, it validates current task identities and formats and preserves compatible queued tasks.
 
 ## Storage layers and recovery boundaries
 
@@ -526,7 +548,14 @@ bundle for retry. Released revision resources and their recorded checksums remai
 Parameter-free DDL uses statement-scoped driver execution options so CHECK remainder operators and percent-containing
 SQL literals reach the backend unchanged.
 
-Repositories run after schema checks. The full Server `s1300 → s1400 → s1401 → s1402` chain registers exact per-statement schema transitions and recovery prefixes through `mysql_state_layouts`. Domain steps attach to the shared revision and use its connection, lock, and recovery point; verification precedes version advancement. Read-only live checks are separate from migration-copy validation. Vector configurations still require separate registration.
+Repositories run after schema checks. Both full Server source chains register exact per-statement schema transitions and recovery prefixes through `mysql_state_layouts`. Domain steps attach to the shared revision and use its connection, lock, and recovery point; verification precedes version advancement. Read-only live checks are separate from migration-copy validation. Vector configurations still require separate registration.
+
+The 1.4.0 bridge is assembled from immutable shared resources and its `server_sources/1.4.0` overlay. Source
+selection uses the complete unversioned inventory or the original lineage in the main maintenance evidence; it
+neither adds another version table nor rewrites a completed backup's source revision. Repeated maintenance and
+later registered upgrades retain the same lineage. The canonical target remains the ordinary runtime admission
+contract. New sources need their own exact baseline and bridge; adding a target revision alone does not register
+all intervening application releases.
 
 One version table offers no generic run-ID resume. After interruption, inspect actual schema/data through read-only
 commands. Ambiguous state returns `recovery_required`; never blindly stamp or replace the original recovery point with a

@@ -16,6 +16,7 @@
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -23,6 +24,7 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+from urllib.parse import urlsplit
 from xml.etree import ElementTree
 
 import pytest
@@ -32,6 +34,7 @@ import yaml
 from ci_legacy_upgrade_rejection import database_environment
 
 from powercontext.server.settings import ServerSettings
+from tests.release_upgrades.test_full_server import environment_for
 
 
 @pytest.fixture
@@ -281,6 +284,43 @@ def test_fixed_source_tracks_each_target_on_all_three_backends(release, monkeypa
     assert all(case["source_artifact"]["sha256"] == "a" * 64 for case in resolved["candidate_cases"])
 
 
+@pytest.mark.parametrize("target", ["1.4.1", "1.5.0"])
+def test_reviewed_sources_each_require_every_backend_and_configuration(release, monkeypatch, target):
+    _, _, policy = release
+    profiles = [
+        {
+            "backend": backend,
+            "configuration": configuration,
+            "suite": "tests/release_upgrades/test_example.py",
+        }
+        for backend in ("sqlite", "seekdb", "oceanbase")
+        for configuration in (
+            "full-server-no-vector",
+            "full-server-code",
+            "full-server-vector",
+            "full-server-vector-code",
+        )
+    ]
+    policy["automatic_sources"]["profiles"] = profiles
+    policy["cases"] = [{"source_version": "1.4.0", **profile} for profile in profiles]
+    catalog = catalog_for("1.3.0", "1.4.0", "1.4.1", "1.5.0")
+    catalog["releases"]["1.4.0"][0]["digests"]["sha256"] = "b" * 64
+    monkeypatch.setattr(matrix, "fetch_catalog", lambda: catalog)
+    resolved = matrix.resolve_matrix(policy, target)
+    assert resolved["required_cases"] == resolved["candidate_cases"]
+    assert len(resolved["required_cases"]) == 24
+    assert {
+        (case["source_version"], case["backend"], case["configuration"]) for case in resolved["required_cases"]
+    } == {
+        (source, profile["backend"], profile["configuration"]) for source in ("1.3.0", "1.4.0") for profile in profiles
+    }
+    for case in resolved["required_cases"]:
+        assert case["source_artifact"]["sha256"] == {"1.3.0": "a" * 64, "1.4.0": "b" * 64}[case["source_version"]]
+    del catalog["releases"]["1.4.0"]
+    with pytest.raises(ValueError, match=r"1\.4\.0"):
+        matrix.resolve_matrix(policy, target)
+
+
 def test_newly_published_versions_do_not_change_the_fixed_source(release, monkeypatch):
     _, _, policy = release
     automatic_policy(policy)
@@ -400,6 +440,12 @@ def test_repository_baseline_covers_all_three_databases(configuration):
         "seekdb",
         "oceanbase",
     }
+    assert {case["source_version"] for case in policy["cases"]} == {"1.4.0"}
+    assert {case["backend"] for case in policy["cases"] if case["configuration"] == configuration} == {
+        "sqlite",
+        "seekdb",
+        "oceanbase",
+    }
 
 
 @pytest.mark.parametrize("workflow_name,job_name", [("master", "upgrade-release-gate"), ("release", "release-build")])
@@ -420,6 +466,70 @@ def test_upgrade_jobs_require_real_backends_and_always_clean_up(workflow_name, j
     assert "/pc_upgrade_fresh?" in job["env"]["PC_UPGRADE_OCEANBASE_FRESH_URL"]
     cleanup = next(step for step in steps if "docker rm --force upgrade-oceanbase" in step.get("run", ""))
     assert cleanup["if"] == "always()"
+
+
+def test_oceanbase_sources_and_profiles_use_separate_provisioned_databases(tmp_path, monkeypatch):
+    urls = {
+        "PC_UPGRADE_OCEANBASE_URL": "mysql+aoceanbase://root%40test:fixture@127.0.0.1:2881/pc_upgrade_test?charset=utf8mb4",
+        "PC_UPGRADE_OCEANBASE_FRESH_URL": "mysql+aoceanbase://root%40test:fixture@127.0.0.1:2881/pc_upgrade_fresh?charset=utf8mb4",
+    }
+    for key, value in urls.items():
+        monkeypatch.setenv(key, value)
+    action = yaml.safe_load(
+        (Path(__file__).parents[1] / ".github/actions/setup-upgrade-oceanbase/action.yml").read_text()
+    )
+    setup = action["runs"]["steps"][0]["run"]
+    provisioned = set(re.findall(r"CREATE DATABASE (pc_upgrade[a-z0-9_]*)", setup))
+    provisioned.update(re.findall(r"--env OB_DATABASE=(pc_upgrade[a-z0-9_]*)", setup))
+    selected = set()
+    for source in ("1.3.0", "1.4.0"):
+        for configuration in (
+            "full-server-no-vector",
+            "full-server-code",
+            "full-server-vector",
+            "full-server-vector-code",
+        ):
+            case = {
+                "source_version": source,
+                "backend": "oceanbase",
+                "configuration": configuration,
+                "code_enabled": configuration.endswith("-code"),
+                "vector_dimension": 0,
+                "model": {"url": "http://127.0.0.1:1/v1"},
+                "work": tmp_path,
+            }
+            for fresh in (False, True):
+                environment = environment_for(case, fresh=fresh)
+                selected_url = urlsplit(environment["POWERCONTEXT_SERVER_DATABASE_URL"])
+                assert selected_url.geturl() == environment["PC_UPGRADE_OCEANBASE_URL"]
+                assert selected_url.path not in selected, "Source/configuration cases must not reuse stored data"
+                assert selected_url.path.removeprefix("/") in provisioned
+                selected.add(selected_url.path)
+                original = urlsplit(urls["PC_UPGRADE_OCEANBASE_FRESH_URL" if fresh else "PC_UPGRADE_OCEANBASE_URL"])
+                assert selected_url._replace(path=original.path) == original
+    assert len(selected) == 16
+    assert {key: os.environ[key] for key in urls} == urls
+
+
+@pytest.mark.parametrize(
+    "database", ["production", "pc_upgrade_vector_test_deadbeef", "pc_upgrade_140_code_test_deadbeef"]
+)
+def test_oceanbase_source_adapter_rejects_other_databases(tmp_path, monkeypatch, database):
+    monkeypatch.setenv(
+        "PC_UPGRADE_OCEANBASE_URL",
+        f"mysql+aoceanbase://root%40test:fixture@127.0.0.1:2881/{database}?charset=utf8mb4",
+    )
+    case = {
+        "source_version": "1.4.0",
+        "backend": "oceanbase",
+        "configuration": "full-server-vector",
+        "code_enabled": False,
+        "vector_dimension": 3,
+        "model": {"url": "http://127.0.0.1:1/v1"},
+        "work": tmp_path,
+    }
+    with pytest.raises(AssertionError, match="dedicated disposable"):
+        environment_for(case)
 
 
 def test_oceanbase_fixture_selects_the_oceanbase_server_profile(tmp_path, monkeypatch):
@@ -606,6 +716,7 @@ def test_artifact_hashes_do_not_normalize_bytes(tmp_path):
 _PROCESS_FIXTURE = """
 import os, signal, subprocess, sys, time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 role, mode, control, evidence = sys.argv[1:]
 control, evidence = Path(control), Path(evidence)

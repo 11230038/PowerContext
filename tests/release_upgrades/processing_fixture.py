@@ -21,6 +21,7 @@ No schema creation or direct SQL writes: the installed repository owns its rows.
 import asyncio
 import json
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 from powercontext.builtin.persistence.oceanbase import OceanBaseProfile
@@ -32,6 +33,10 @@ from powercontext.server.settings import ServerSettings
 
 async def main():
     operation, scope = sys.argv[1:3]
+    source_version = sys.argv[4]
+    assert source_version in {"1.3.0", "1.4.0"}, "Unreviewed source processing contract"
+    if operation == "seed":
+        assert version("powercontext") == source_version, "Seed must use the exact installed source SDK"
     config = ServerSettings().database
     if config.kind == "sqlite":
         storage_context = SQLiteProfile.open(config, tables=())
@@ -44,6 +49,11 @@ async def main():
     async with storage_context as storage, storage.database.transaction() as connection:
         if operation == "seed":
             row = await repository.request(connection, scope, binding)
+            if source_version == "1.4.0":
+                # Preserve a nondefault field absent from the 1.3.0 task contract.
+                await repository.acknowledge(connection, scope, binding, row.requested_generation, dream=True)
+                row = await repository.request(connection, scope, binding)
+                assert row.consecutive_dream_attempts == 1
             result = row.model_dump(mode="json")
         else:
             row = await repository.load(connection, scope, binding)

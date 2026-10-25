@@ -22,7 +22,8 @@ jobs:
   upgrade-release-gate:
     name: Upgrade release gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    # Two source releases each run all twelve configurations; per-case deadlines remain unchanged.
+    timeout-minutes: 360
     env:
       PC_UPGRADE_OCEANBASE_URL: mysql+aoceanbase://root%40test:powercontext-e2e@127.0.0.1:2881/pc_upgrade_test?charset=utf8mb4
       PC_UPGRADE_OCEANBASE_FRESH_URL: mysql+aoceanbase://root%40test:powercontext-e2e@127.0.0.1:2881/pc_upgrade_fresh?charset=utf8mb4

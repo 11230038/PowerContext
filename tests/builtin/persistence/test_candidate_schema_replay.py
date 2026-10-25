@@ -25,10 +25,10 @@ import os
 from pathlib import Path
 
 import pytest
-from powercontext.builtin.persistence.migrations.models import digest
 from replay_candidate_migration import CandidateReplay, ReplayInterrupted, inventory, objects
 from sqlalchemy import create_engine, inspect, text
 
+from powercontext.builtin.persistence.migrations.models import digest
 from tests.builtin.persistence import test_full_server_migrations as sqlite_fixtures
 from tests.builtin.persistence import test_mysql_migration_runner as native_fixtures
 
@@ -253,7 +253,8 @@ def test_candidate_replay_native(backend, tmp_path, scenario):
         return inventory(connection)
 
     state = backend.connections().run(final)
-    assert not native_fixtures._apply(runner, policy="manual").changed
+    # The recovery acknowledgement was consumed; a fresh command has no stale token.
+    assert not native_fixtures._apply(native_fixtures._full_server_runner(backend), policy="manual").changed
     assert backend.connections().run(final) == state
     _cross_table_effects(replay)
     positions = {

@@ -40,6 +40,7 @@ from .bundle import ALEMBIC_CONTEXT_LOCK, MigrationBundle, sqlite_inventory
 from .locking import local_migration_lock
 from .models import MigrationError, MigrationPlan, MigrationResult, digest
 from .server_baselines import recognize_sqlite_server_baseline
+from .sources import MigrationSources
 
 _VERSION_DDL = (
     "CREATE TABLE pc_schema_revision (version_num VARCHAR(32) NOT NULL, "
@@ -142,9 +143,11 @@ class SQLiteMigrationRunner:
         configuration: Mapping[str, Any] | None = None,
         backup_provider: BackupProvider | None = None,
         evidence_directory: Path | None = None,
+        source_bundles: tuple[MigrationBundle, ...] = (),
     ) -> None:
         self.database = database.expanduser().resolve()
         self.bundle = bundle
+        self.sources = MigrationSources(bundle, source_bundles)
         self.configuration = json.loads(json.dumps(configuration or {}))
         self.configuration_digest = digest(self.configuration)
         self.backup_provider = backup_provider or SQLiteBackupProvider(self.database)
@@ -324,14 +327,22 @@ class SQLiteMigrationRunner:
         initialized = bool(controls)
         if initialized and controls != [["table", "pc_schema_revision", "pc_schema_revision", _VERSION_DDL]]:
             raise MigrationError("recovery_required", "The Alembic version table has an unknown shape.")
+        revisions = (
+            list(connection.exec_driver_sql("SELECT version_num FROM pc_schema_revision").scalars())
+            if initialized
+            else []
+        )
+        if len(revisions) > 1:
+            raise MigrationError("incompatible_schema", "Multiple revision heads are unsupported.")
+        revision = revisions[0] if revisions else None
+        self.bundle = self.sources.select(
+            evidence=self._evidence(), revision=revision, initialized=initialized, inventory=inventory
+        )
+        self.bundle.assert_unchanged()
         fingerprint = digest(
             sqlite_inventory(connection, exclude=_CONTROL_NAMES | frozenset(self.bundle.retained_objects))
         )
         if initialized:
-            revisions = list(connection.exec_driver_sql("SELECT version_num FROM pc_schema_revision").scalars())
-            if len(revisions) > 1:
-                raise MigrationError("incompatible_schema", "Multiple revision heads are unsupported.")
-            revision = revisions[0] if revisions else None
             self._verify_schema(connection, revision)
             if self.bundle.pending(revision) and self._evidence() is None:
                 raise MigrationError(

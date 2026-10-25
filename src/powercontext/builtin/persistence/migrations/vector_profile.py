@@ -43,6 +43,8 @@ class ServerVectorProfile:
                 "unsupported_upgrade_configuration", "Server vectors require a positive unit-normalized L2 profile."
             )
         self.profile = profile.model_copy(deep=True)
+        manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+        self.source_revision = manifest.get("source_revision", "s1300")
         source = (directory / self.resource).read_text(encoding="utf-8")
         self.layout: dict[str, Any] = json.loads(
             source
@@ -61,7 +63,7 @@ class ServerVectorProfile:
         core = json.loads((directory / "schemas/sqlite.json").read_text(encoding="utf-8"))
         archive = json.loads((directory / "schemas/sqlite-s1401.json").read_text(encoding="utf-8"))["create"]
         layouts = {
-            "s1300": core["source"] + self.layout["sqlite"]["source"],
+            self.source_revision: core["source"] + self.layout["sqlite"]["source"],
             "s1400": core["target"] + self.layout["sqlite"]["target"],
         }
         # The frozen s1400 table rebuild uses ALTER TABLE RENAME, whose stored
@@ -83,7 +85,7 @@ class ServerVectorProfile:
         return layouts
 
     def sqlite_upgrade(self, connection: Connection, revision: str) -> None:
-        operations = {"s1300": "initialize", "s1400": "upgrade"}
+        operations = {self.source_revision: "initialize", "s1400": "upgrade"}
         if revision in operations:
             for statement in self.layout["sqlite"][operations[revision]]:
                 connection.exec_driver_sql(statement)

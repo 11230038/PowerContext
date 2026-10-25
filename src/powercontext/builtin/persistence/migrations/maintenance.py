@@ -33,6 +33,7 @@ from .connections import BackendIdentity, MaintenanceConnections
 from .models import MigrationError, MigrationPlan, MigrationResult, digest
 from .mysql import _Evidence, _Journal
 from .server_readiness import check_server_schema
+from .sources import MigrationSources
 from .sqlite import SQLiteMigrationRunner, read_maintenance_evidence, verify_retained_objects
 
 
@@ -52,20 +53,27 @@ class ManagedMaintenanceRunner:
         implementation_checksum: str,
         migration_id: str = "rfc1515",
         batch_size: int = 100,
+        source_bundles: tuple[MigrationBundle, ...] = (),
     ) -> None:
         self.connections = connections
         self.bundle = bundle
+        self.sources = MigrationSources(bundle, source_bundles)
         self.configuration = json.loads(json.dumps(configuration))
         self.directory = evidence_directory.expanduser().resolve()
         self.migration_id = migration_id
         self.batch_size = batch_size
         self.configuration_digest = digest({"configuration": configuration, "migration_id": migration_id})
-        self.checksum = digest({
-            "bundle": bundle.checksum,
+        self._checksum_inputs = {
             "operation": self.operation,
             "lifecycle": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             "implementation": implementation_checksum,
-        })
+        }
+        self.checksum = digest({"bundle": bundle.checksum, **self._checksum_inputs})
+
+    def _select_source(self, evidence) -> None:
+        self.bundle = self.sources.from_evidence(evidence)
+        self.bundle.assert_unchanged()
+        self.checksum = digest({"bundle": self.bundle.checksum, **self._checksum_inputs})
 
     def _journal(self, identity: BackendIdentity) -> _Journal:
         return _Journal(self.directory / self.operation, identity)
@@ -269,6 +277,7 @@ class ManagedMaintenanceRunner:
             main = read_maintenance_evidence(main_path, identity.database_id)
             if main is not None and main["state"] != "complete":
                 raise MigrationError("recovery_required", "Complete the original full Server maintenance first.")
+            self._select_source(main)
             verify_retained_objects(sqlite_inventory(connection), self.bundle.head, bundle=self.bundle, evidence=main)
         elif main_path.exists():
             try:
@@ -279,3 +288,6 @@ class ManagedMaintenanceRunner:
                 ) from error
             if not isinstance(main, dict) or main.get("state") != "complete":
                 raise MigrationError("recovery_required", "Complete the original full Server maintenance first.")
+            self._select_source(main)
+        else:
+            self._select_source(None)

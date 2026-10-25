@@ -33,10 +33,11 @@ from typing import Any
 from unittest.mock import patch
 from xml.etree import ElementTree
 
+from sqlalchemy import Connection, Engine, event
+
 from powercontext.builtin.persistence.migrations.bundle import MigrationBundle, sqlite_inventory
 from powercontext.builtin.persistence.migrations.models import digest
 from powercontext.builtin.persistence.migrations.mysql_schema import MySQLSchema, mysql_inventory
-from sqlalchemy import Connection, Engine, event
 
 _CONTROL = frozenset({"pc_schema_revision"})
 

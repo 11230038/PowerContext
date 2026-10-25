@@ -3,10 +3,83 @@
   "target_version": "1.4.0",
   "mode": "upgrade-required",
   "schema_review": {
-    "persistence_sha256": "cd553dfba288d88ed1c415e9fba065cf9e42dcf3a6727e7f1ded25ed611bf680",
-    "rationale": "The shared s1300 -> s1400 -> s1401 -> s1402 chain registers installed 1.3.0 no-vector Server storage on SQLite, seekDB and OceanBase with Code disabled or enabled. SQLite/OceanBase Code caches remain separate; embedded seekDB Code uses the three frozen released tables. A selected vector profile binds the frozen schema and domain contract to the exact historical profile ID, model, dimension, distance and normalization. SQLite maintenance registers and backfills the Atomic vec0 helper and transactional triggers; native layouts preserve vector column dimensions and explicit HNSW parameters, including ordered key columns, algorithm, distance, library and construction/search options. Unknown index options remain rejected. The vector-only configuration declaration is not a second revision or recovery journal. Full layout and domain checks precede managed use; configured or injected model drift and missing helpers cannot trigger startup repair. No embedding provider is called during migration and historical embeddings, Topic shape, authority and evidence are preserved. Full Server readiness validates Atomic Memory projections against authority and checks complete SQLite FTS identities for both vector and no-vector profiles before admission. Validation is read-only and damaged projections require explicit maintenance. SQLite startup preflight reads authority and projections in one explicit read transaction so concurrent WAL writes cannot produce a mixed-revision validation result; no schema or stored data format changes are introduced. Reviewed plans bind the draft validation resources; selected vector profiles have separately bound checksums. Target locks, original recovery points, acknowledgements and backup policies remain shared. The installed-release gate requires all twelve backend/configuration combinations, with Code enabled or disabled and vectors enabled or disabled. Vector cases seed nonempty Atomic and Topic vectors through the actual source Server, preserve exact embedding digests and retrieval shape, and verify historical/new semantic reads, configuration-drift rejection, SQLite missing-helper rejection and fresh-storage equivalence using the independently installed target. Maintenance must not call an embedding provider. SQLite vector cases also restore the automatic backup with the old Server before re-upgrading. Complete current-artifact and recovery/restore acceptance remain required. Source tests and schema captures do not establish that release acceptance passed. Policy remains upgrade-required. Revision s1402 adapts the storage already present on master: portable restore receipts and native microsecond precision for Artifact creation, policy updates, Topic publications and tag assignments. Earlier revision resources and checksums remain unchanged. Pending archive restores reject ordinary managed startup and readiness; only the explicit archive recovery entry can open a registered layout to finish projections, and it still checks the configured embedding profile. Interrupted first-revision MySQL initialization defers domain preflight until the executor has completed the registered baseline statements and seed data; missing maintenance evidence and unregistered DDL remain rejected. The s1402 portable receipt boolean is explicitly declared and registered as TINYINT(1), matching native MySQL-compatible reflection without relaxing schema matching; earlier revision resources are unchanged. The managed persistence implementation batches Source, Artifact, Candidate and authorization writes, processing-intent updates, and Atomic/Topic projection publication. These changes preserve the registered table definitions, constraints, projection encodings, Source payloads and processing metadata; they do not require a new schema revision or a data backfill. SQLite consistent reads establish a native transaction snapshot. The s1300 -> s1400 -> s1401 -> s1402 migration resources remain unchanged. The compatibility review includes the changed repository and authorization implementations; full migration, vector, projection-repair and archive-recovery tests must confirm that their current batch interfaces remain usable with migrated storage. Independent local-operations control storage is separate from the managed Server business database. Upgrade claims remain gated on complete installed-release acceptance. Completed MySQL-mode vector migrations check the stored embedding declaration before comparing configuration-bound revision checksums, so profile drift remains a read-only embedding_profile_mismatch rather than a false resource-integrity diagnosis. Incomplete maintenance retains its original evidence and recovery ordering, including an unseeded profile declaration after committed DDL. Historical resources and checksum inputs are unchanged. Partial maintenance checks required retained historical tables against the main upgrade journal before declaring readiness or committing. Native read-only readiness uses a consistent REPEATABLE READ snapshot so concurrent authorized writes cannot mix authority and projection revisions. Historical registered resources and checksums remain unchanged."
+    "persistence_sha256": "be0f4469866e391daed26b5d4a4e5a4714afad5866a94994fd8716afcade2fcb",
+    "rationale": "The reusable Server migration framework registers actual PowerContext 1.3.0 through s1300 -> s1400 -> s1401 -> s1402 and actual 1.4.0 through the separate immutable r1400 -> s1400 -> s1401 -> s1402 source bridge. Original 1.3 resources and checksums remain byte-identical. Real 1.4.0 SQLite, embedded seekDB and OceanBase structures were captured from the official wheel in all twelve vector/Code configurations; provenance and exact source layouts are packaged with the bridge. The 1.4 bridge preserves current Candidate, Artifact and task data, adds the missing Topic budget/block structure, revokes old lease fences and joins the existing archive/portable-storage path. Empty retained tables align the final schema without inventing 1.3 Candidate history. Source histories retain their identity through subsequent upgrades and recovery; shared head names never authorize adopting unknown layouts. Vector profiles remain bound to historical model, profile ID, dimension, unit normalization and L2 distance, with no provider calls during maintenance. Complete schema, domain, projection, profile and retained-history checks precede startup and partial maintenance. Native read-only readiness uses a consistent snapshot; normal business transaction isolation is unchanged. Target locks, backup choices, original recovery evidence and explicit remote acknowledgments remain enforced. The installed-artifact gate requires 24 independent source/backend/vector/Code combinations, preserves source-specific Processing counters and isolates OceanBase source databases. Any failed, skipped or missing case rejects publication. The policy remains upgrade-required until the exact target artifact passes the complete matrix. Captured source structure, local tests and checkpoint replay are distinct from installed-release acceptance, native interruption/observer recovery and backup restoration. The Candidate generation prototype observes actual SQLite/seekDB/OceanBase migration checkpoints outside the production bundle; it does not replace frozen registrations or weaken recovery checks. Existing target schema and data formats, including batched persistence interfaces, remain governed by the shared registered path."
   },
-  "cases": [],
+  "cases": [
+    {
+      "source_version": "1.4.0",
+      "backend": "sqlite",
+      "configuration": "full-server-no-vector",
+      "suite": "tests/release_upgrades/test_full_server.py"
+    },
+    {
+      "source_version": "1.4.0",
+      "backend": "seekdb",
+      "configuration": "full-server-no-vector",
+      "suite": "tests/release_upgrades/test_full_server.py"
+    },
+    {
+      "source_version": "1.4.0",
+      "backend": "oceanbase",
+      "configuration": "full-server-no-vector",
+      "suite": "tests/release_upgrades/test_full_server.py"
+    },
+    {
+      "source_version": "1.4.0",
+      "backend": "sqlite",
+      "configuration": "full-server-code",
+      "suite": "tests/release_upgrades/test_full_server.py"
+    },
+    {
+      "source_version": "1.4.0",
+      "backend": "oceanbase",
+      "configuration": "full-server-code",
+      "suite": "tests/release_upgrades/test_full_server.py"
+    },
+    {
+      "source_version": "1.4.0",
+      "backend": "seekdb",
+      "configuration": "full-server-code",
+      "suite": "tests/release_upgrades/test_full_server.py"
+    },
+    {
+      "source_version": "1.4.0",
+      "backend": "sqlite",
+      "configuration": "full-server-vector",
+      "suite": "tests/release_upgrades/test_full_server.py"
+    },
+    {
+      "source_version": "1.4.0",
+      "backend": "seekdb",
+      "configuration": "full-server-vector",
+      "suite": "tests/release_upgrades/test_full_server.py"
+    },
+    {
+      "source_version": "1.4.0",
+      "backend": "oceanbase",
+      "configuration": "full-server-vector",
+      "suite": "tests/release_upgrades/test_full_server.py"
+    },
+    {
+      "source_version": "1.4.0",
+      "backend": "sqlite",
+      "configuration": "full-server-vector-code",
+      "suite": "tests/release_upgrades/test_full_server.py"
+    },
+    {
+      "source_version": "1.4.0",
+      "backend": "seekdb",
+      "configuration": "full-server-vector-code",
+      "suite": "tests/release_upgrades/test_full_server.py"
+    },
+    {
+      "source_version": "1.4.0",
+      "backend": "oceanbase",
+      "configuration": "full-server-vector-code",
+      "suite": "tests/release_upgrades/test_full_server.py"
+    }
+  ],
   "automatic_sources": {
     "strategy": "fixed-version",
     "source_version": "1.3.0",

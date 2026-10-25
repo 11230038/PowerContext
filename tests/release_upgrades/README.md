@@ -1,26 +1,27 @@
 # Installed-release upgrade acceptance
 
-`release/upgrade-support.json` requires **positive** 1.3.0 upgrades on SQLite, embedded seekDB, and OceanBase.
+`release/upgrade-support.json` requires **positive** 1.3.0 and 1.4.0 upgrades on SQLite, embedded seekDB, and OceanBase.
 The current `upgrade-required` mode keeps the upgrade support declaration unverified while requiring every case
 to run and pass. Missing full migration integration (#2154) fails the gate. `supported-upgrades` runs the same
 matrix and enables publication after the reviewed support declaration is updated. `fresh-install-only` is rejected.
 
-## Fixed source and current target
+## Reviewed sources and current target
 
-The `automatic_sources` policy uses `strategy: "fixed-version"` and `source_version: "1.3.0"`, with SQLite,
-embedded seekDB, and OceanBase profiles. Every run expands that exact source across the three backends. The target
-is the **actual wheel built by this job**, not the latest published PyPI package. Thus releases 1.4.1 and 1.5.0
-exercise 1.3.0 → 1.4.1 and 1.3.0 → 1.5.0 without adding test scripts or changing the source version. Newly published
-intermediate versions do not become additional sources. This fixed baseline does not establish support for every
-intermediate release's database or data shapes; add explicit `cases` if those need separate acceptance.
+The `automatic_sources` policy uses `strategy: "fixed-version"` and `source_version: "1.3.0"`.
+Explicit `cases` add the independently reviewed 1.4.0 source. Both sources require the same twelve SQLite,
+embedded seekDB, and OceanBase configurations, for twenty-four cases per run. The target is the **actual wheel
+built by this job**, not the latest published PyPI package. Thus releases 1.4.1 and 1.5.0 exercise both reviewed
+sources against that build without changing the source versions. Newly published intermediate versions do not
+become additional sources. This matrix does not establish support for every intermediate release's database or
+data shapes; add reviewed explicit `cases` and source adapters if those need separate acceptance.
 
 The runner resolves the exact source wheel from public PyPI and installs its URL with a SHA-256. Missing/yanked
 source wheels, invalid artifact metadata, catalog outages, and a target at or below the source version fail the gate.
 Evidence records the catalog digest, exact source artifact, target artifact digest, and expanded matrix. The resolver
 requires universal `py3-none-any` wheels; a distribution format change must extend it explicitly.
 
-All twelve profiles use `test_full_server.py`: Code enabled or disabled, with or without vectors, on SQLite,
-seekDB and OceanBase. Vector cases use exact unit-normalized L2 profiles: dimension three without Code and
+Each source uses all twelve profiles in `test_full_server.py`: Code enabled or disabled, with or without vectors,
+on SQLite, seekDB and OceanBase. Vector cases use exact unit-normalized L2 profiles: dimension three without Code and
 dimension four with Code. The local controlled embedding endpoint serves actual installed source/target processes;
 it does not replace either runtime or its persistence. Each source Server writes nonempty Atomic Memory and Topic
 vectors. Maintenance must preserve the exact historical embedding digests without calling that endpoint. Target
@@ -29,15 +30,18 @@ and fresh-storage equivalence. SQLite additionally rejects a missing vector help
 These assertions establish deterministic execution and space preservation, not embedding model quality.
 Code cases preserve immutable cache files and original fingerprint/symbol identities. Embedded seekDB additionally
 preserves the exact graph-table row digests through maintenance; its frozen extension creates the same schema for fresh storage.
-The suite starts the installed 1.3.0 Server, writes data through HTTP,
+The suite starts the selected installed 1.3.0 or 1.4.0 Server, writes data through HTTP,
 stops it, seeds a pending processing intent using the installed SDK, and runs the target wheel's public
-`server db-migrate status/plan/apply/verify` commands. Verification must report `state=ready` and `server_ready=true`.
+`server db-migrate status/plan/apply/verify` commands. Reviewed adapters select the source Candidate API and table
+names. The 1.4.0 SDK also creates a pending intent with `consecutive_dream_attempts=1`; target readback must preserve
+every field supplied by the source SDK before idempotent acknowledgment. The 1.3.0 fixture retains its original
+pending-intent contract. Verification must report `state=ready` and `server_ready=true`.
 The target Server must then start, preserve data and permissions, accept new writes, and support retrieval.
 Partial migration success, missing framework/baseline support, and startup rejection all fail. SQLite profiles use
 automatic backup and restore that recovery point into a separate database. The suite compares the complete
-restored source schema and row digests, reads historical Memory, Candidates, grants and cursors with installed
-1.3.0, upgrades the restored database again, then verifies target reads, FTS and new writes. Code-enabled SQLite
-also preserves its separate immutable cache files. The original backup checksum must remain unchanged.
+restored source schema and row digests, reads historical Memory, Candidates, grants and cursors with the installed
+source release, upgrades the restored database again, then verifies target reads, FTS and new writes. Code-enabled
+SQLite also preserves its separate immutable cache files. The original backup checksum must remain unchanged.
 seekDB and OceanBase fixtures explicitly accept no backup; these cases do not establish backup restoration.
 This is not a production upgrade procedure.
 
@@ -49,6 +53,12 @@ PR/master and publication CI start an isolated OceanBase CE container using the 
 the existing E2E workflow. They wait for SQL readiness and adequate datafile capacity before testing, save diagnostics,
 and remove the container even when a check fails. No external database credentials are needed. Embedded seekDB
 runs directly in a temporary runner directory. A backend startup failure fails the job instead of skipping it.
+OceanBase reserves separate upgraded and fresh databases for every source/configuration pair. The default
+connection URLs remain `pc_upgrade_test` and `pc_upgrade_fresh`; the suite selects the corresponding configuration
+and, for 1.4.0, the `pc_upgrade_140` prefix before either Server is started. Every selected database must be empty.
+The PR and publication jobs allow six hours for the twenty-four cases and environment setup. The thirty-minute
+per-case deadline and descendant cleanup are unchanged; increasing the overall budget does not turn a timeout
+into successful acceptance.
 
 The runner creates separate source/target environments, installs the exact published source package and the built
 target wheel, verifies their versions, then executes the reviewed suite in an isolated working directory. Repository

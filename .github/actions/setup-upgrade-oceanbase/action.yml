@@ -49,7 +49,27 @@ runs:
             docker exec upgrade-oceanbase \
               obclient -h127.0.0.1 -P2881 -uroot@test -ppowercontext-e2e \
               -Dpc_upgrade_test \
-              -e "CREATE DATABASE pc_upgrade_fresh; CREATE DATABASE pc_upgrade_code_test; CREATE DATABASE pc_upgrade_code_fresh; CREATE DATABASE pc_upgrade_vector_test; CREATE DATABASE pc_upgrade_vector_fresh; CREATE DATABASE pc_upgrade_vector_code_test; CREATE DATABASE pc_upgrade_vector_code_fresh; SET GLOBAL recyclebin=OFF; SELECT VERSION(); SHOW VARIABLES LIKE 'ob_compatibility_mode'; SHOW VARIABLES LIKE 'recyclebin';"
+              -e "
+                CREATE DATABASE pc_upgrade_fresh;
+                CREATE DATABASE pc_upgrade_code_test;
+                CREATE DATABASE pc_upgrade_code_fresh;
+                CREATE DATABASE pc_upgrade_vector_test;
+                CREATE DATABASE pc_upgrade_vector_fresh;
+                CREATE DATABASE pc_upgrade_vector_code_test;
+                CREATE DATABASE pc_upgrade_vector_code_fresh;
+                CREATE DATABASE pc_upgrade_140_test;
+                CREATE DATABASE pc_upgrade_140_fresh;
+                CREATE DATABASE pc_upgrade_140_code_test;
+                CREATE DATABASE pc_upgrade_140_code_fresh;
+                CREATE DATABASE pc_upgrade_140_vector_test;
+                CREATE DATABASE pc_upgrade_140_vector_fresh;
+                CREATE DATABASE pc_upgrade_140_vector_code_test;
+                CREATE DATABASE pc_upgrade_140_vector_code_fresh;
+                SET GLOBAL recyclebin=OFF;
+                SELECT VERSION();
+                SHOW VARIABLES LIKE 'ob_compatibility_mode';
+                SHOW VARIABLES LIKE 'recyclebin';
+              "
             exit 0
           fi
           if [ "$(docker inspect --format '{{.State.Running}}' upgrade-oceanbase)" != true ]; then

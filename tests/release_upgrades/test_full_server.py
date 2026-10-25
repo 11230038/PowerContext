@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Installed 1.3.0 -> built wheel acceptance; every required phase must succeed.
+"""Installed release -> built wheel acceptance; every required phase must succeed.
 
 No checkout runtime imports, migration fallbacks, skips or expected failures.
 Fixtures establish dependencies rather than relying on test execution order.
@@ -34,6 +34,7 @@ import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import TypedDict
 from urllib.parse import urlsplit
 
 import httpx
@@ -42,6 +43,29 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 TOKEN = "isolated-upgrade-acceptance-token"  # noqa: S105 -- disposable fixture, never a deployment credential
 AUTOMATIC_MEMORY = "Upgrade fixture background processing retains source evidence."
+
+
+class SourceAdapter(TypedDict):
+    candidate_prefix: str
+    candidate_tables: set[str]
+    revision: str
+    database_prefix: str
+
+
+SOURCE_ADAPTERS: dict[str, SourceAdapter] = {
+    "1.3.0": {
+        "candidate_prefix": "/v1/artifact-candidates",
+        "candidate_tables": {"pc_artifact_candidate_heads", "pc_artifact_candidate_versions"},
+        "revision": "s1300",
+        "database_prefix": "pc_upgrade",
+    },
+    "1.4.0": {
+        "candidate_prefix": "/v1/candidates",
+        "candidate_tables": {"pc_candidate_heads", "pc_candidate_versions"},
+        "revision": "r1400",
+        "database_prefix": "pc_upgrade_140",
+    },
+}
 
 
 def objects(value):
@@ -285,22 +309,21 @@ def environment_for(case, *, fresh=False):
         parsed = urlsplit(url)
         expected = "/pc_upgrade_fresh" if fresh else "/pc_upgrade_test"
         assert parsed.scheme == "mysql+aoceanbase" and parsed.hostname in {"127.0.0.1", "localhost"}
-        if case["configuration"] != "full-server-no-vector":
-            suffix = {
-                "full-server-code": "code",
-                "full-server-vector": "vector",
-                "full-server-vector-code": "vector_code",
-            }[case["configuration"]]
-            profile_path = f"/pc_upgrade_{suffix}_{'fresh' if fresh else 'test'}"
-            if parsed.path == expected:
-                parsed = parsed._replace(path=profile_path)
-            else:
-                assert re.fullmatch(re.escape(profile_path) + r"_[0-9a-f]{8}", parsed.path), (
-                    "Only dedicated disposable profile databases may be used"
-                )
-            url = parsed.geturl()
+        suffix = {
+            "full-server-no-vector": "",
+            "full-server-code": "_code",
+            "full-server-vector": "_vector",
+            "full-server-vector-code": "_vector_code",
+        }[case["configuration"]]
+        prefix = SOURCE_ADAPTERS[case["source_version"]]["database_prefix"]
+        profile_path = f"/{prefix}{suffix}_{'fresh' if fresh else 'test'}"
+        if parsed.path == expected:
+            parsed = parsed._replace(path=profile_path)
         else:
-            assert parsed.path == expected, "Only dedicated disposable OceanBase databases may be used"
+            assert re.fullmatch(re.escape(profile_path) + r"_[0-9a-f]{8}", parsed.path), (
+                "Only dedicated disposable source/profile databases may be used"
+            )
+        url = parsed.geturl()
         environment["POWERCONTEXT_SERVER_DATABASE_URL"] = url
         environment["PC_UPGRADE_OCEANBASE_URL"] = url
     return environment
@@ -338,6 +361,7 @@ def task_state(case, role, operation, scope):
             operation,
             scope,
             str(path),
+            case["source_version"],
         ],
         environment_for(case),
         case["work"],
@@ -431,7 +455,8 @@ def seed(client, *, candidate_prefix):
 @pytest.fixture(scope="session")
 def case(model_gateway):
     # Missing gate inputs are errors, never skips or an implicit local database.
-    assert os.environ["PC_UPGRADE_SOURCE_VERSION"] == "1.3.0", "Add a reviewed adapter for another source release"
+    source_version = os.environ["PC_UPGRADE_SOURCE_VERSION"]
+    assert source_version in SOURCE_ADAPTERS, "Add a reviewed adapter for another source release"
     configuration = os.environ["PC_UPGRADE_CONFIGURATION"]
     assert configuration in {
         "full-server-no-vector",
@@ -441,6 +466,7 @@ def case(model_gateway):
     }, "Unregistered acceptance configuration"
     code_enabled = configuration.endswith("-code")
     return {
+        "source_version": source_version,
         "source": Path(os.environ["PC_UPGRADE_SOURCE_PYTHON"]),
         "target": Path(os.environ["PC_UPGRADE_TARGET_PYTHON"]),
         "backend": os.environ["PC_UPGRADE_BACKEND"],
@@ -505,7 +531,7 @@ def historical(case):
         assert not snapshot(case, "source", "empty")["tables"], "Refusing to write into a nonempty test database"
         assert not snapshot(case, "target", "fresh-empty", fresh=True)["tables"]
     with server(case["source"], environment_for(case), case["work"], case["report"] / "source-server.log") as client:
-        value = seed(client, candidate_prefix="/v1/artifact-candidates")
+        value = seed(client, candidate_prefix=SOURCE_ADAPTERS[case["source_version"]]["candidate_prefix"])
         if case["vector_dimension"]:
             value["topic_content"] = {
                 "title": "Upgrade topic evidence",
@@ -525,7 +551,7 @@ def historical(case):
         value["code"] = historical_code(case, value["scope"])
     value["task"] = task_state(case, "source", "seed", value["scope"])
     value["schema"] = snapshot(case, "source", "source")
-    assert {"pc_artifact_candidate_heads", "pc_artifact_candidate_versions", "pc_scopes", "pc_artifacts"} <= set(
+    assert SOURCE_ADAPTERS[case["source_version"]]["candidate_tables"] | {"pc_scopes", "pc_artifacts"} <= set(
         value["schema"]["tables"]
     )
     if case["vector_dimension"]:
@@ -668,7 +694,7 @@ def restored_backup(case, migrated):
         assert {digest(item) for item in records} == {digest(item) for item in historical["memory"]}
         candidate = post(
             client,
-            "/v1/artifact-candidates/get",
+            SOURCE_ADAPTERS[case["source_version"]]["candidate_prefix"] + "/get",
             {"scope_id": historical["scope"], "candidate_id": historical["candidate"]["candidate_id"]},
         )
         assert candidate == historical["candidate"]
@@ -691,7 +717,7 @@ def restored_backup(case, migrated):
         )
 
     plan = migration("plan", "--backup", "auto")
-    assert plan["source_revision"] == "s1300"
+    assert plan["source_revision"] == SOURCE_ADAPTERS[case["source_version"]]["revision"]
     applied = migration("apply", "--backup", "auto", "--plan-id", plan["plan_id"], "--yes", "--maintenance-confirmed")
     assert applied["changed"] is True and applied["backup_state"] == "completed"
     assert migration("verify")["server_ready"] is True

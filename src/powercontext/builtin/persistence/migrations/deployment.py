@@ -42,9 +42,16 @@ if TYPE_CHECKING:
     from powercontext.server.settings import ServerSettings
 
 
-def server_bundle(*, embedding_profile: EmbeddingProfile | None = None) -> MigrationBundle:
-    """The complete, shared Server revision chain."""
-    return MigrationBundle(Path(__file__).parent / "server_resources", embedding_profile=embedding_profile)
+def server_bundle(
+    *, embedding_profile: EmbeddingProfile | None = None, source_release: Literal["1.4.0"] | None = None
+) -> MigrationBundle:
+    """The shared Server chain, optionally reached through a frozen source bridge."""
+    root = Path(__file__).parent
+    return MigrationBundle(
+        root / "server_resources",
+        embedding_profile=embedding_profile,
+        source_directory=root / "server_sources" / source_release if source_release else None,
+    )
 
 
 def production_bundle() -> MigrationBundle:
@@ -123,6 +130,11 @@ def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
         if bundle in {"server", "processing", "atomic-projection"}
         else production_bundle()
     )
+    sources = (
+        (server_bundle(embedding_profile=profile, source_release="1.4.0"),)
+        if bundle in {"server", "processing", "atomic-projection"}
+        else ()
+    )
     maintenance_runner = (
         AtomicProjectionMigrationRunner if bundle == "atomic-projection" else ProcessingConfigurationMigrationRunner
     )
@@ -161,6 +173,7 @@ def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
             return maintenance_runner(
                 connections,
                 selected,
+                source_bundles=sources,
                 configuration=configuration,
                 evidence_directory=evidence_dir,
                 migration_id=migration_id,
@@ -169,6 +182,7 @@ def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
         return MySQLMigrationRunner(
             connections,
             selected,
+            source_bundles=sources,
             evidence_directory=evidence_dir,
             configuration=configuration,
         )
@@ -186,6 +200,7 @@ def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
         return maintenance_runner(
             MaintenanceConnections(database),
             selected,
+            source_bundles=sources,
             configuration=configuration,
             evidence_directory=directory,
             migration_id=migration_id,
@@ -194,6 +209,7 @@ def deployment_runner(  # noqa: C901 -- Ordered backend admission checks.
     return SQLiteMigrationRunner(
         target,
         selected,
+        source_bundles=sources,
         configuration=configuration,
         evidence_directory=evidence_dir,
     )

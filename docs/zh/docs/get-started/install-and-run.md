@@ -161,7 +161,7 @@ Agent 诊断见[各自的集成文档](../integrations/index.md)；Server 状态
 ## 更新或替换安装
 
 <!-- upgrade-support:start -->
-1.3.0 升级必须通过 SQLite、seekDB 和 OceanBase 的完整 Server 验收。当前迁移路径尚未验证，请勿升级已有数据库。
+1.3.0 和 1.4.0 升级必须通过 SQLite、seekDB 和 OceanBase 的完整 Server 验收。当前迁移路径尚未验证，请勿升级已有数据库。
 <!-- upgrade-support:end -->
 
 已有部署应保持当前可用版本，等待来源版本及后端具备已验收的升级路径。试用新建部署时，请使用独立程序环境、

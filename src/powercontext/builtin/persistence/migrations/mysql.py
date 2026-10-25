@@ -40,6 +40,7 @@ from .connections import BackendIdentity, MaintenanceConnections
 from .models import MigrationError, MigrationPlan, MigrationResult, digest
 from .mysql_schema import MySQLSchema, mysql_inventory, read_revision
 from .server_baselines import recognize_mysql_server_baseline
+from .sources import MigrationSources
 
 BackupPolicy = Literal["auto", "manual", "skip"]
 BackupFactory = Callable[[Connection, BackendIdentity, Path], BackupProvider]
@@ -152,15 +153,16 @@ class MySQLMigrationRunner:
         evidence_directory: Path,
         configuration: Mapping[str, Any] | None = None,
         backup_factory: BackupFactory | None = None,
+        source_bundles: tuple[MigrationBundle, ...] = (),
     ) -> None:
         self.connections = connections
         self.bundle = bundle
+        self.sources = MigrationSources(bundle, source_bundles)
         self.evidence_directory = evidence_directory.expanduser().resolve()
         self.configuration = json.loads(json.dumps(configuration or {}))
         embedded_code = self.configuration.get("embedded_code_enabled", False)
         if embedded_code and connections.config.kind != "seekdb":
             raise MigrationError("unsupported_upgrade_configuration", "Embedded Code storage requires seekDB.")
-        self.schema = MySQLSchema(bundle, embedded_code=embedded_code)
         self.configuration_digest = digest(self.configuration)
         if connections.config.kind == "oceanbase":
             if (
@@ -178,8 +180,13 @@ class MySQLMigrationRunner:
                 "evidence_directory": str(self.evidence_directory),
             })
         self.backup_factory = backup_factory or _fork_provider
+        self._load_bundle(bundle)
+
+    def _load_bundle(self, bundle: MigrationBundle) -> None:
+        self.bundle = bundle
+        self.schema = MySQLSchema(bundle, embedded_code=self.configuration.get("embedded_code_enabled", False))
         self._history_directory = (
-            bundle.directory / "mysql"
+            bundle.snapshot_directory / "mysql"
             if bundle.readiness_scope == "server"
             else Path(__file__).parent / "mysql_resources"
         )
@@ -518,10 +525,20 @@ class MySQLMigrationRunner:
             mysql_inventory(connection) if connection is not None else {"tables": {}, "views": [], "triggers": []}
         )
         initialized, current = (
-            read_revision(connection, inventory, revisions=self.bundle.revisions)
+            read_revision(connection, inventory, revisions=self.sources.revisions)
             if connection is not None
             else (False, None)
         )
+        selected = self.sources.select(
+            evidence=evidence.model_dump() if evidence is not None else None,
+            revision=current,
+            initialized=initialized,
+            inventory=inventory,
+            embedded_code=self.configuration.get("embedded_code_enabled", False),
+        )
+        selected.assert_unchanged()
+        if selected is not self.bundle:
+            self._load_bundle(selected)
         if (
             connection is not None
             and evidence is not None

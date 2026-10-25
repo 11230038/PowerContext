@@ -175,7 +175,7 @@ For a long-running process, Docker, authentication, or remote access, continue w
 ## Update or replace an installation
 
 <!-- upgrade-support:start -->
-Upgrades from 1.3.0 require passing full Server acceptance on SQLite, seekDB and OceanBase. This migration path is not yet verified; do not upgrade existing databases.
+Upgrades from 1.3.0 and 1.4.0 require passing full Server acceptance on SQLite, seekDB and OceanBase. These migration paths are not yet verified; do not upgrade existing databases.
 <!-- upgrade-support:end -->
 
 Keep existing deployments on their working version until their source version and backend have an accepted upgrade

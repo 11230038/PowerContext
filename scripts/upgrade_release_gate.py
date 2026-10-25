@@ -60,8 +60,8 @@ PHASES = frozenset({
 })
 VERSION = r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?"
 NOTICE = {
-    "en": "Upgrades from 1.3.0 require passing full Server acceptance on SQLite, seekDB and OceanBase. This migration path is not yet verified; do not upgrade existing databases.",
-    "zh": "1.3.0 升级必须通过 SQLite、seekDB 和 OceanBase 的完整 Server 验收。当前迁移路径尚未验证，请勿升级已有数据库。",  # noqa: RUF001 -- Chinese prose
+    "en": "Upgrades from 1.3.0 and 1.4.0 require passing full Server acceptance on SQLite, seekDB and OceanBase. These migration paths are not yet verified; do not upgrade existing databases.",
+    "zh": "1.3.0 和 1.4.0 升级必须通过 SQLite、seekDB 和 OceanBase 的完整 Server 验收。当前迁移路径尚未验证，请勿升级已有数据库。",  # noqa: RUF001 -- Chinese prose
 }
 
 
