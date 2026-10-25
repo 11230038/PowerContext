@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -70,6 +72,24 @@ def test_canonical_discovery_description_is_refreshed(guidance_tree: Path) -> No
     )
     sync_resources(guidance_tree)
     assert file_skill(guidance_tree / FILE_HOSTS["claude-code"])["description"].startswith("Updated PowerContext")
+
+
+def test_copy_cli_rejects_and_removes_obsolete_packaged_resources(guidance_tree: Path) -> None:
+    script = guidance_tree / "scripts/integration_guidance_skills.py"
+    script.parent.mkdir()
+    shutil.copy2(ROOT / "scripts/integration_guidance_skills.py", script)
+    obsolete = guidance_tree / FILE_HOSTS["opencode"] / "references/obsolete.md"
+    obsolete.write_text("Obsolete packaged resource\n", encoding="utf-8")
+    before = snapshot(guidance_tree)
+    checked = subprocess.run([sys.executable, str(script), "--check"], capture_output=True, text=True, check=False)
+    assert checked.returncode != 0
+    assert "references/obsolete.md" in checked.stderr
+    assert snapshot(guidance_tree) == before
+
+    subprocess.run([sys.executable, str(script), "--write"], capture_output=True, text=True, check=True)
+    assert not obsolete.exists()
+    subprocess.run([sys.executable, str(script), "--check"], capture_output=True, text=True, check=True)
+    refresh_skill(guidance_tree / FILE_HOSTS["opencode"], guidance_tree / "installed")
 
 
 @pytest.mark.parametrize("content", [START, END, END + START, START + END + START + END])

@@ -134,14 +134,18 @@ def shared_resources(root: Path = ROOT) -> dict[Path, bytes]:
 def sync_resources(root: Path = ROOT, *, check: bool = False) -> tuple[Path, ...]:
     expected = shared_resources(root)
     changed = tuple(path for path, content in expected.items() if not path.is_file() or path.read_bytes() != content)
+    obsolete = tuple(
+        path
+        for descriptor in HOST_GUIDANCE.values()
+        for path in (root / descriptor.skill).rglob("*")
+        if path.is_file() and path not in expected
+    )
     if not check:
         for path in changed:
             write_if_changed(path, expected[path])
-        for descriptor in HOST_GUIDANCE.values():
-            for path in (root / descriptor.skill).rglob("*"):
-                if path.is_file() and path not in expected:
-                    path.unlink()
-    return changed
+        for path in obsolete:
+            path.unlink()
+    return changed + obsolete
 
 
 def file_skill(directory: Path) -> dict[str, Any]:
