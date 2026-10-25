@@ -27,9 +27,11 @@ import time
 import uuid
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterator
-from contextlib import closing, contextmanager, suppress
+from contextlib import ExitStack, closing, contextmanager, suppress
 from importlib.metadata import version
 from pathlib import Path
+from socketserver import BaseRequestHandler, TCPServer
+from threading import Thread
 from typing import Any
 
 import httpx
@@ -446,19 +448,14 @@ def test_native_public_migration_switches_an_installed_130_service(
 def _native_upgrade_fault(
     adapter: NativeServiceAdapter, port: int, failure: str | None, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:
-    with closing(socket.socket()) as listener, monkeypatch.context() as fault:
+    with ExitStack() as resources, monkeypatch.context() as fault:
         if failure == "startup":
             native_start = adapter.start
 
             def occupy_then_start(*, reload_definition: bool) -> None:
                 # Bind after migration and stopped checks, then let the actual
                 # native manager attempt to start the registered executable.
-                if sys.platform != "win32":
-                    # Reuse the stopped server's port even while its accepted
-                    # connections remain in TIME_WAIT.
-                    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                listener.bind(("127.0.0.1", port))
-                listener.listen(16)
+                resources.enter_context(_occupy_service_port(port))
                 native_start(reload_definition=reload_definition)
 
             fault.setattr(adapter, "start", occupy_then_start)
@@ -472,6 +469,24 @@ def _native_upgrade_fault(
 
             fault.setattr(os, "replace", fail_definition_replace)
         yield
+
+
+@contextmanager
+def _occupy_service_port(port: int) -> Iterator[None]:
+    # Accept and close probe connections so repeated liveness checks cannot fill
+    # the backlog and turn a live port conflict into a connection timeout.
+    with TCPServer(("127.0.0.1", port), BaseRequestHandler, bind_and_activate=False) as listener:
+        # Reuse the stopped server's port while its connections remain in TIME_WAIT.
+        listener.allow_reuse_address = sys.platform != "win32"
+        listener.server_bind()
+        listener.server_activate()
+        thread = Thread(target=listener.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield
+        finally:
+            listener.shutdown()
+            thread.join()
 
 
 def _native_migration_command(cli, environment: Path, action: str, *options: str) -> dict[str, Any]:
