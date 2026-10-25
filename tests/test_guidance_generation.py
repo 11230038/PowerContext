@@ -45,6 +45,9 @@ def guidance_tree(tmp_path: Path) -> Path:
             source = ROOT / descriptor.plugin / name
             if source.is_file():
                 shutil.copy2(source, tmp_path / descriptor.plugin / name)
+    script = tmp_path / "scripts/integration_guidance_skills.py"
+    script.parent.mkdir()
+    shutil.copy2(ROOT / "scripts/integration_guidance_skills.py", script)
     return tmp_path
 
 
@@ -64,20 +67,25 @@ def test_read_only_check_detects_drift_without_fixing_it(guidance_tree: Path) ->
     assert sync_resources(guidance_tree, check=True) == ()
 
 
-def test_canonical_discovery_description_is_refreshed(guidance_tree: Path) -> None:
-    template = guidance_tree / FILE_HOSTS["agent-plugin"] / "SKILL.md"
-    template.write_text(
-        template.read_text(encoding="utf-8").replace("description: PowerContext", "description: Updated PowerContext"),
+@pytest.mark.parametrize("host", ["codex", "kimi-code", "dsh"])
+def test_copy_cli_updates_shared_skill_without_overwriting_host_binding(guidance_tree: Path, host: str) -> None:
+    script = guidance_tree / "scripts/integration_guidance_skills.py"
+    source = guidance_tree / FILE_HOSTS["agent-plugin"] / "SKILL.md"
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("description: PowerContext", "description: Updated PowerContext"),
         encoding="utf-8",
     )
-    sync_resources(guidance_tree)
-    assert file_skill(guidance_tree / FILE_HOSTS["claude-code"])["description"].startswith("Updated PowerContext")
+    binding = guidance_tree / FILE_HOSTS[host] / "references/host.md"
+    content = binding.read_bytes().replace(END.encode(), b"Additional native binding facts.\n" + END.encode())
+    binding.write_bytes(content)
+    subprocess.run([sys.executable, str(script), "--write"], capture_output=True, text=True, check=True)
+    assert file_skill(guidance_tree / FILE_HOSTS[host])["description"].startswith("Updated PowerContext")
+    assert binding.read_bytes() == content
+    subprocess.run([sys.executable, str(script), "--check"], capture_output=True, text=True, check=True)
 
 
 def test_copy_cli_rejects_and_removes_obsolete_packaged_resources(guidance_tree: Path) -> None:
     script = guidance_tree / "scripts/integration_guidance_skills.py"
-    script.parent.mkdir()
-    shutil.copy2(ROOT / "scripts/integration_guidance_skills.py", script)
     obsolete = guidance_tree / FILE_HOSTS["opencode"] / "references/obsolete.md"
     obsolete.write_text("Obsolete packaged resource\n", encoding="utf-8")
     before = snapshot(guidance_tree)
@@ -90,6 +98,18 @@ def test_copy_cli_rejects_and_removes_obsolete_packaged_resources(guidance_tree:
     assert not obsolete.exists()
     subprocess.run([sys.executable, str(script), "--check"], capture_output=True, text=True, check=True)
     refresh_skill(guidance_tree / FILE_HOSTS["opencode"], guidance_tree / "installed")
+
+
+@pytest.mark.parametrize("mode", ["--check", "--write"])
+def test_copy_cli_requires_native_binding_without_changing_packages(guidance_tree: Path, mode: str) -> None:
+    script = guidance_tree / "scripts/integration_guidance_skills.py"
+    binding = guidance_tree / FILE_HOSTS["kimi-code"] / "references/host.md"
+    binding.unlink()
+    before = snapshot(guidance_tree)
+    result = subprocess.run([sys.executable, str(script), mode], capture_output=True, text=True, check=False)
+    assert result.returncode != 0
+    assert "references/host.md" in result.stderr
+    assert snapshot(guidance_tree) == before
 
 
 @pytest.mark.parametrize("content", [START, END, END + START, START + END + START + END])

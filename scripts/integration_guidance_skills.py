@@ -40,33 +40,11 @@ ENTRY_NAME = "powercontext-project-context"
 FILE_HOSTS = {host: descriptor.skill.as_posix() for host, descriptor in HOST_GUIDANCE.items()}
 
 
-def host_binding(host: str, source: Path) -> str:
-    """Describe only the native Scope entry point; workflows remain shared."""
-    if host == "codex":
-        body = 'Use current-request PowerContext routing metadata and its Session binding. For an explicit workspace binding command, run `uv run --frozen --quiet --project "${PLUGIN_ROOT}" python "${PLUGIN_ROOT}/scripts/scope_binding.py" --cwd "$PWD"`. Its workspace result does not replace a current Session override.'
-    elif host == "claude-code":
-        body = 'Run `python3 "${PLUGIN_ROOT}/scripts/workspace_scope.py" --cwd "$PWD"` before the first data operation and reuse its Scope. Use the host-provided plugin root when available; otherwise locate it from this installed Skill.'
-    elif host == "workbuddy":
-        body = 'Run `${POWERCONTEXT_PYTHON} ${POWERCONTEXT_SCOPE_BINDING_SCRIPT} --cwd "$PWD"` before the first data operation and reuse its Scope. The installer binds these paths to the installed interpreter and hooks.'
-    elif host in {"zcode", "kimi-code"}:
-        body = 'Run `node "${PLUGIN_ROOT}/scripts/scope.mjs" resolve --cwd "$PWD"` and reuse the successful Scope. Resolve the plugin root from this installed Skill; preserve any explicit or current Session binding. Bind or unbind only on user request.'
-        if host == "kimi-code":
-            body += "\n\nThe configured explicit Scope is __POWERCONTEXT_SCOPE_JSON__. A string overrides workspace bindings; null enables workspace resolution followed by the Server default.\nThe enabled MCP profile is __POWERCONTEXT_PROFILE_JSON__. Only tools actually enabled in the current catalog are available.\nThe installed resolver is __POWERCONTEXT_SCOPE_SCRIPT_JSON__."
-    elif host in {"agent-plugin", "minimax"}:
-        return (source / "references/host.md").read_text(encoding="utf-8")
-    else:
-        body = "The native host owns Scope selection. Use current-request PowerContext routing metadata and implicitly bound tools; never independently select the Server default. Preserve the host's approval, human-review and session-eligibility requirements."
-    return (
-        "<!-- POWERCONTEXT-GUIDANCE:START -->\n# Host binding\n\n"
-        + body
-        + "\n\nSet PLUGIN_ROOT to the absolute plugin root, two directories above this installed Skill's directory, when a command needs it. Follow actual native tool schemas and host approval.\n<!-- POWERCONTEXT-GUIDANCE:END -->\n"
-    )
-
-
 def native_mcp(root: Path, host: str) -> tuple[Path, bytes] | None:
-    """Adapt the portable declaration to existing native configuration syntax."""
+    """Adapt packaged MCP defaults; setup and config own user connection settings."""
     common = root / HOST_GUIDANCE["agent-plugin"].plugin / "mcp.json"
-    entry = dict(json.loads(common.read_text(encoding="utf-8"))["mcpServers"]["powercontext"])
+    declaration = json.loads(common.read_text(encoding="utf-8"))
+    entry = dict(declaration["mcpServers"]["powercontext"])
     endpoint = entry["url"]
     target = root / HOST_GUIDANCE[host].plugin / ".mcp.json"
     entry["type"] = "http"
@@ -96,7 +74,6 @@ def native_mcp(root: Path, host: str) -> tuple[Path, bytes] | None:
         return target, (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
     elif host == "minimax":
         target = root / HOST_GUIDANCE[host].plugin / "powercontext.mcp.json"
-        declaration = json.loads(common.read_text(encoding="utf-8"))
         return target, (
             json.dumps({"schemaVersion": 1, "mcpServers": declaration["mcpServers"]}, indent=2) + "\n"
         ).encode()
@@ -106,7 +83,7 @@ def native_mcp(root: Path, host: str) -> tuple[Path, bytes] | None:
 
 
 def shared_resources(root: Path = ROOT) -> dict[Path, bytes]:
-    """Copy literal standard resources; only native connection facts vary."""
+    """Copy shared resources while retaining each package's native binding description."""
     source = root / HOST_GUIDANCE["agent-plugin"].skill
     resources = {
         p.relative_to(source).as_posix(): p.read_bytes()
@@ -123,7 +100,7 @@ def shared_resources(root: Path = ROOT) -> dict[Path, bytes]:
         for name in sorted(names):
             content = resources[name]
             if name == "references/host.md":
-                content = host_binding(host, source).encode()
+                content = (root / descriptor.skill / name).read_bytes()
             output[root / descriptor.skill / name] = content
         configuration = native_mcp(root, host)
         if configuration is not None:
