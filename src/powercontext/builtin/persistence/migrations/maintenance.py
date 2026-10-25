@@ -28,12 +28,12 @@ from sqlalchemy.engine import make_url
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
 
 from .backup import BackupContext, ForkBackupProvider, SQLiteBackupProvider
-from .bundle import MigrationBundle
+from .bundle import MigrationBundle, sqlite_inventory
 from .connections import BackendIdentity, MaintenanceConnections
 from .models import MigrationError, MigrationPlan, MigrationResult, digest
 from .mysql import _Evidence, _Journal
 from .server_readiness import check_server_schema
-from .sqlite import SQLiteMigrationRunner
+from .sqlite import SQLiteMigrationRunner, read_maintenance_evidence, verify_retained_objects
 
 
 class ManagedMaintenanceRunner:
@@ -74,7 +74,7 @@ class ManagedMaintenanceRunner:
         self.bundle.assert_unchanged()
         if connection is None:
             raise MigrationError("migration_required", "Initialize or upgrade the full Server bundle first.")
-        self._check_previous_maintenance(identity)
+        self._check_previous_maintenance(connection, identity)
         fingerprint, required, completed = self._state(connection, identity)
         evidence = self._journal(identity).read()
         active = evidence is not None and evidence.state != "complete"
@@ -252,7 +252,7 @@ class ManagedMaintenanceRunner:
     def _apply_operation(self, connection: Connection, guard) -> None:
         raise NotImplementedError
 
-    def _check_previous_maintenance(self, identity: BackendIdentity) -> None:
+    def _check_previous_maintenance(self, connection: Connection, identity: BackendIdentity) -> None:
         for operation in ("processing_configuration", "atomic_projection"):
             if operation != self.operation:
                 previous = _Journal(self.directory / operation, identity).read()
@@ -265,7 +265,12 @@ class ManagedMaintenanceRunner:
             if isinstance(self.connections.config, SQLiteConfig)
             else self.directory / identity.database_id / "maintenance.json"
         )
-        if main_path.exists():
+        if isinstance(self.connections.config, SQLiteConfig):
+            main = read_maintenance_evidence(main_path, identity.database_id)
+            if main is not None and main["state"] != "complete":
+                raise MigrationError("recovery_required", "Complete the original full Server maintenance first.")
+            verify_retained_objects(sqlite_inventory(connection), self.bundle.head, bundle=self.bundle, evidence=main)
+        elif main_path.exists():
             try:
                 main = json.loads(main_path.read_text(encoding="utf-8"))
             except (OSError, ValueError) as error:

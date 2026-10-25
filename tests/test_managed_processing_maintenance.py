@@ -97,6 +97,62 @@ def test_registered_mode_switch_backs_up_preserves_revision_and_fences_old_worke
         assert tuple(connection.iterdump()) == after
 
 
+@pytest.mark.parametrize(
+    ("bundle", "missing", "recorded"),
+    [
+        ("processing", "pc_retained_dream_candidate_heads", True),
+        ("atomic-projection", "pc_retained_dream_candidate_versions", False),
+    ],
+)
+def test_partial_maintenance_rejects_missing_required_history(managed, bundle, missing, recorded):
+    path, settings = managed
+    full = deployment_runner(settings)
+    journal = path.with_name(path.name + ".pc-migration-state") / "maintenance.json"
+    evidence = json.loads(journal.read_text())
+    assert missing in evidence["retained_objects"]
+    if not recorded:
+        # The source-to-head transition still requires retention when its final
+        # inventory has not been recorded in the external journal.
+        del evidence["retained_objects"]
+        journal.write_text(json.dumps(evidence))
+    partial = deployment_runner(switched(settings) if bundle == "processing" else settings, bundle=bundle)
+    reviewed = partial.plan()
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(f"DROP TABLE {missing}")
+    original = path.read_bytes()
+    original_evidence = journal.read_bytes()
+    with pytest.raises(MigrationError, match="recovery_required"):
+        full.verify()
+
+    for operation in (
+        partial.plan,
+        partial.verify,
+        lambda: partial.apply(plan_id=reviewed.plan_id, accepted=True, maintenance_confirmed=True),
+    ):
+        with pytest.raises(MigrationError, match="recovery_required"):
+            operation()
+    assert path.read_bytes() == original
+    assert journal.read_bytes() == original_evidence
+    assert not list(journal.parent.glob("*/*/maintenance.json"))
+    assert not list(path.parent.glob("*.pc-migration-backups/*"))
+
+
+@pytest.mark.parametrize("bundle", ["processing", "atomic-projection"])
+def test_partial_maintenance_accepts_current_storage_without_external_evidence(managed, bundle):
+    path, settings = managed
+    full = deployment_runner(settings)
+    (path.with_name(path.name + ".pc-migration-state") / "maintenance.json").unlink()
+    # A current-layout database without an upgrade journal has no recorded
+    # historical retention obligation, matching the full runner's admission.
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute("DROP TABLE pc_retained_dream_candidate_heads")
+        connection.execute("DROP TABLE pc_retained_dream_candidate_versions")
+    original = path.read_bytes()
+    assert full.verify().state == "ready"
+    assert deployment_runner(settings, bundle=bundle).verify().state == "ready"
+    assert path.read_bytes() == original
+
+
 def test_mode_switch_uses_the_whole_database_migration_lock(managed):
     path, settings = managed
     runner = deployment_runner(switched(settings), bundle="processing")

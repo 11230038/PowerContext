@@ -94,6 +94,7 @@ def sqlite_snapshot(database: Path, *, add_revision: bool) -> dict[str, Any]:
                 ("trigger", "triggers"),
             )
         }
+        schema_rows = list(connection.execute("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name"))
         data = {
             name: row_digest(connection.execute('SELECT * FROM "' + name.replace('"', '""') + '"'))  # noqa: S608 -- Reflected identifier is quoted.
             for name in objects["tables"]
@@ -104,6 +105,7 @@ def sqlite_snapshot(database: Path, *, add_revision: bool) -> dict[str, Any]:
         "vectors": vectors,
         "engine_version": sqlite3.sqlite_version,
         "driver_version": version("aiosqlite"),
+        "schema_rows": schema_rows,
         **objects,
     }
 
@@ -158,7 +160,10 @@ async def inspect(backend: str, database: Path, *, add_revision: bool, canonical
                 cursor.execute("SHOW CREATE VIEW `" + name.replace("`", "``") + "`")
                 views[name] = cursor.fetchone()[1]
             cursor.execute("SHOW TRIGGERS")
-            triggers = {row[0]: list(row[1:4]) for row in cursor.fetchall()}
+            trigger_rows = [
+                dict(zip((column[0] for column in cursor.description), row, strict=True)) for row in cursor.fetchall()
+            ]
+            triggers = {row["Trigger"]: [row["Event"], row["Table"], row["Statement"]] for row in trigger_rows}
         logical = None
         if canonical:
             from powercontext.builtin.persistence.migrations.mysql_schema import _parse_table
@@ -169,6 +174,10 @@ async def inspect(backend: str, database: Path, *, add_revision: bool, canonical
             "data_sha256": data,
             "vectors": vectors,
             "triggers": triggers,
+            "trigger_rows": [
+                {key: row[key] for key in ("Trigger", "Table", "Timing", "Event", "Statement")} for row in trigger_rows
+            ],
+            "database": options["database"],
             "engine_version": engine,
             "driver_version": version("pymysql"),
             **details,

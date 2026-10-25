@@ -90,6 +90,43 @@ class _MaintenanceEvidence(BaseModel):
         return self
 
 
+def read_maintenance_evidence(path: Path, database_id: str) -> dict[str, Any] | None:
+    """Read the original journal and require its recorded database identity."""
+    if not path.exists():
+        return None
+    try:
+        value = _MaintenanceEvidence.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise MigrationError("recovery_required", "The external maintenance evidence cannot be read safely.") from error
+    if value.database_id != database_id:
+        raise MigrationError("recovery_required", "The external maintenance evidence belongs to another target.")
+    return value.model_dump(mode="json")
+
+
+def verify_retained_objects(
+    inventory: list[list[Any]],
+    revision: str | None,
+    *,
+    bundle: MigrationBundle,
+    evidence: Mapping[str, Any] | None,
+) -> None:
+    """Check historical retention without requiring unrelated domain readiness."""
+    for name in bundle.retained_objects:
+        objects = [row for row in inventory if row[1] == name or row[2] == name]
+        if objects and bundle.retained_revisions[name] in bundle.pending(revision):
+            raise MigrationError("recovery_required", "A retained object exists before its introducing revision.")
+        if objects and digest(objects) not in bundle.retained_fingerprints.get(name, []):
+            raise MigrationError("incompatible_schema", "A retained historical object has an unregistered shape.")
+    required = set(evidence["retained_objects"]) if evidence else set()
+    if evidence:
+        # A revision can commit before its retained inventory is recorded.
+        # Adoption at the current revision did not execute that revision.
+        committed = set(bundle.pending(evidence["source_revision"])) - set(bundle.pending(revision))
+        required.update(name for name, introduced in bundle.retained_revisions.items() if introduced in committed)
+    if any(not any(row[1] == name for row in inventory) for name in required):
+        raise MigrationError("recovery_required", "A required retained table was removed without a cleanup revision.")
+
+
 class SQLiteMigrationRunner:
     """Keep business writers stopped throughout this synchronous executor.
 
@@ -487,17 +524,7 @@ class SQLiteMigrationRunner:
         )
 
     def _evidence(self) -> dict[str, Any] | None:
-        if not self.evidence_path.exists():
-            return None
-        try:
-            value = _MaintenanceEvidence.model_validate_json(self.evidence_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            raise MigrationError(
-                "recovery_required", "The external maintenance evidence cannot be read safely."
-            ) from error
-        if value.database_id != self._database_id():
-            raise MigrationError("recovery_required", "The external maintenance evidence belongs to another target.")
-        return value.model_dump(mode="json")
+        return read_maintenance_evidence(self.evidence_path, self._database_id())
 
     def _write_evidence(self, evidence: dict[str, Any]) -> None:
         directory = self.evidence_path.parent
@@ -564,25 +591,7 @@ class SQLiteMigrationRunner:
         self.bundle.domains.validate(connection, revision, backend="sqlite", configuration=self.configuration)
 
     def _verify_retained(self, inventory: list[list[Any]], revision: str | None) -> None:
-        for name in self.bundle.retained_objects:
-            objects = [row for row in inventory if row[1] == name or row[2] == name]
-            if objects and self.bundle.retained_revisions[name] in self.bundle.pending(revision):
-                raise MigrationError("recovery_required", "A retained object exists before its introducing revision.")
-            if objects and digest(objects) not in self.bundle.retained_fingerprints.get(name, []):
-                raise MigrationError("incompatible_schema", "A retained historical object has an unregistered shape.")
-        evidence = self._evidence()
-        required = set(evidence["retained_objects"]) if evidence else set()
-        if evidence:
-            # A revision can commit before its retained inventory is recorded.
-            # Adoption at the current revision did not execute that revision.
-            committed = set(self.bundle.pending(evidence["source_revision"])) - set(self.bundle.pending(revision))
-            required.update(
-                name for name, introduced in self.bundle.retained_revisions.items() if introduced in committed
-            )
-        if any(not any(row[1] == name for row in inventory) for name in required):
-            raise MigrationError(
-                "recovery_required", "A required retained table was removed without a cleanup revision."
-            )
+        verify_retained_objects(inventory, revision, bundle=self.bundle, evidence=self._evidence())
 
     def _verify_integrity(self, connection: Connection) -> None:
         if any(

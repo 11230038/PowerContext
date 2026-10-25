@@ -32,6 +32,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from powercontext.builtin.persistence.database import begin_mysql_read_snapshot
 from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
 from powercontext.builtin.persistence.oceanbase import profile as oceanbase_profile
 from powercontext.builtin.persistence.seekdb import SeekDBConfig
@@ -120,7 +121,9 @@ class MaintenanceConnections:
                         "unsupported_target", "A nonempty seekdb directory must contain recognized native storage."
                     )
                 initial_inode = _directory_inode(path) if path.exists() else None
-                return asyncio.run(self._seekdb(operation, self.config, path, identity, initial_inode))
+                return asyncio.run(
+                    self._seekdb(operation, self.config, path, identity, initial_inode, writable=writable)
+                )
         return asyncio.run(self._oceanbase(operation, self.config, writable=writable))
 
     @staticmethod
@@ -169,6 +172,8 @@ class MaintenanceConnections:
         path: Path,
         identity: BackendIdentity,
         initial_inode: tuple[int, int] | None,
+        *,
+        writable: bool,
     ) -> _T:
         try:
             module = seekdb_profile._load_binding()
@@ -187,6 +192,8 @@ class MaintenanceConnections:
                 if initial_inode is not None and initial_inode != inode:
                     raise MigrationError("migration_lock_lost", "The seekdb directory changed during engine startup.")
                 async with engine.connect() as connection:
+                    if not writable:
+                        await begin_mysql_read_snapshot(connection)
 
                     def execute(sync: Connection) -> _T:
                         def verify() -> None:
@@ -198,7 +205,8 @@ class MaintenanceConnections:
                             raise MigrationError("target_identity_unavailable", "The seekdb database identity changed.")
                         # MySQL's SQLAlchemy begin hook sends no SQL. Match the
                         # explicit transaction ownership used by AsyncDatabase.
-                        sync.exec_driver_sql("START TRANSACTION")
+                        if writable:
+                            sync.exec_driver_sql("START TRANSACTION")
                         result = operation(sync, identity, verify)
                         verify()
                         return result
@@ -232,6 +240,8 @@ class MaintenanceConnections:
         )
         try:
             async with engine.connect() as connection:
+                if not writable:
+                    await begin_mysql_read_snapshot(connection)
                 identity = await connection.run_sync(_oceanbase_identity)
                 if not writable:
                     return await connection.run_sync(lambda sync: operation(sync, identity, lambda: None))

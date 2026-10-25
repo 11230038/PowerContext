@@ -468,7 +468,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.suites || '{}').database) }}
     name: Atomic Memory clean migration (SeekDB)
-    timeout-minutes: 50
+    timeout-minutes: 70
     runs-on: ubuntu-latest
     env:
       POWERCONTEXT_TEST_MIGRATION_SEEKDB: "1"
@@ -493,6 +493,17 @@ jobs:
           mkdir -p "$TMPDIR"
           uv run --locked --extra seekdb python scripts/run_atomic_memory_clean_migration.py \
             seekdb --output "$MIGRATION_REPORTS"
+
+      - name: Test concurrent managed startup without skips
+        # Collection and three isolated cases retain their 180s process deadlines.
+        timeout-minutes: 15
+        env:
+          TMPDIR: ${{ runner.temp }}/am-seekdb
+        run: |
+          uv run --locked --extra seekdb --extra server python scripts/run_atomic_memory_clean_migration.py \
+            seekdb --output "$MIGRATION_REPORTS/startup-snapshot" --tests \
+            tests/e2e/test_managed_startup_read_consistency.py
+          test "$(wc -l < "$MIGRATION_REPORTS/startup-snapshot/nodes.txt")" -eq 3
 
       - name: Test long-query retrieval and admission without skips
         timeout-minutes: 10

@@ -21,6 +21,7 @@ from sqlalchemy import CheckConstraint, Connection, inspect
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from powercontext.builtin.persistence.database import begin_mysql_read_snapshot
 from powercontext.builtin.persistence.tables import CANDIDATE_HEADS_TABLE, CANDIDATE_VERSIONS_TABLE
 
 
@@ -44,6 +45,8 @@ async def assert_dream_schema_ready(engine: AsyncEngine, *, _archive_recovery: b
             # SELECTs. Pin one read snapshot before checking authority against
             # projections, while still allowing concurrent WAL writers.
             await connection.exec_driver_sql("BEGIN")
+        elif connection.dialect.name == "mysql":
+            await begin_mysql_read_snapshot(connection)
         await connection.run_sync(check_dream_schema, _archive_recovery=_archive_recovery)
 
 

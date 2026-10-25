@@ -281,7 +281,7 @@ jobs:
       ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.suite != 'recall-effort') &&
           (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.suites || '{}').database) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    timeout-minutes: 145
     env:
       OCEANBASE_IMAGE: ghcr.io/oceanbase/oceanbase-ce:4.3.5.6-106000012026040916
       POWERCONTEXT_TEST_MIGRATION_OCEANBASE_URL: >-
@@ -373,6 +373,15 @@ jobs:
         run: |
           uv run --locked python scripts/run_atomic_memory_clean_migration.py \
             oceanbase --output "$MIGRATION_REPORTS/clean-migration"
+
+      - name: Test concurrent managed startup without skips
+        # Collection and three isolated cases retain their 180s process deadlines.
+        timeout-minutes: 15
+        run: |
+          uv run --locked --extra server python scripts/run_atomic_memory_clean_migration.py \
+            oceanbase --output "$MIGRATION_REPORTS/startup-snapshot" --tests \
+            tests/e2e/test_managed_startup_read_consistency.py
+          test "$(wc -l < "$MIGRATION_REPORTS/startup-snapshot/nodes.txt")" -eq 3
 
       - name: Test long-query retrieval and admission without skips
         # Eight isolated cases include full Server setup and retain 180s deadlines.
