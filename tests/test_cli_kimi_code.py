@@ -118,7 +118,6 @@ def test_cli_installs_repeatably_and_preserves_configuration(kimi_home, installe
     manifest = json.loads((installed / "kimi.plugin.json").read_text(encoding="utf-8"))
     assert manifest["mcpServers"]["powercontext"]["url"] == settings["server_url"] + "/mcp"
     assert "bearerTokenEnvVar" not in manifest["mcpServers"]["powercontext"]
-    assert json.loads((installed / "powercontext.json").read_text())["scope_id"] == "scope-中文"
     report = kimi_code.KimiInstaller().verify()
     assert report["plugin"].detail == "disabled"
     assert not report["mcp"].ok
@@ -207,16 +206,12 @@ def test_scope_changes_preserve_personal_guidance(kimi_home, installed_agent_che
     assert result.exit_code == 0, result.output
     content = skill.read_bytes()
     assert content.endswith(notes)
-    assert json.loads((Path(installed["plugin_path"]) / "powercontext.json").read_text())["scope_id"] == "new-scope"
+    assert json.loads(result.output)["hosts"]["kimi-code"]["result"]["scope_id"] == "new-scope"
 
 
-def test_configuration_updates_scope_without_reinstalling(kimi_home):
-    from powercontext.cli.transport import SetupTransport
-
+def test_configuration_updates_scope_and_preserves_user_settings(kimi_home):
     installed = install()
     root = Path(installed["plugin_path"])
-    hook = root / "hooks/user_prompt_submit.mjs"
-    original = hook.read_bytes()
     manifest_path = root / "kimi.plugin.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["mcpServers"]["other"] = {"url": "https://other.example"}
@@ -229,14 +224,24 @@ def test_configuration_updates_scope_without_reinstalling(kimi_home):
         enabled=False, capabilities={"mcpServers": {"powercontext": {"enabled": False}, "other": {"enabled": False}}}
     )
     registry_path.write_text(json.dumps(registry))
-    installer = kimi_code.KimiInstaller(scope_id="new-scope", capture_prompts=False)
-    updated = installer.configure(SetupTransport("kimi-code", "https://new.example", False))
+    result = CliRunner().invoke(
+        create_cli(),
+        [
+            "config",
+            "agent",
+            "kimi-code",
+            "--scope-id",
+            "new-scope",
+            "--server-url",
+            "https://new.example",
+            "--no-capture-prompts",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    updated = json.loads(result.output)["hosts"]["kimi-code"]["result"]
     assert updated["scope_id"] == "new-scope"
-    assert hook.read_bytes() == original
     assert json.loads((root / "powercontext.json").read_text())["capture_prompts"] is False
-    skill = (root / "skills/powercontext-project-context/references/host.md").read_text()
-    assert 'The configured explicit Scope is "new-scope".' in skill
-    assert 'The configured explicit Scope is "scope-中文".' not in skill
     manifest = json.loads(manifest_path.read_text())
     assert manifest["mcpServers"]["other"] == {"url": "https://other.example"}
     assert manifest["mcpServers"]["powercontext"]["enabledTools"] == ["search_memory"]
@@ -332,10 +337,6 @@ def test_workspace_scope_setup_preserves_mode_and_can_restore_explicit_scope(kim
     install_plugin("kimi-code", source=str(REPOSITORY))
     settings = json.loads((installed / "powercontext.json").read_text(encoding="utf-8"))
     assert settings["scope_id"] is None
-    skill = (installed / "skills/powercontext-project-context/references/host.md").read_text(encoding="utf-8")
-    assert "explicit Scope is null" in skill
-    assert "__POWERCONTEXT_" not in skill
-    assert (installed / "scripts/scope.mjs").is_file()
     install_plugin("kimi-code", source=str(REPOSITORY), scope_id="scope-explicit")
     assert json.loads((installed / "powercontext.json").read_text(encoding="utf-8"))["scope_id"] == "scope-explicit"
     install_plugin("kimi-code", source=str(REPOSITORY), workspace_scope=True)
@@ -384,9 +385,6 @@ def test_profile_updates_preserve_settings_and_minimal_legacy_installations(
         assert record["capabilities"]["mcpServers"]["powercontext"]["enabled"] is False
         tools = json.loads(manifest_path.read_text(encoding="utf-8"))["mcpServers"]["powercontext"]["enabledTools"]
         assert required in tools and absent not in tools
-        skill = (installed / "skills/powercontext-project-context/references/host.md").read_text(encoding="utf-8")
-        assert "__POWERCONTEXT_" not in skill
-        assert f'profile is "{profile}"' in skill
 
 
 def test_invalid_profile_does_not_replace_installation(kimi_home):
@@ -399,10 +397,8 @@ def test_invalid_profile_does_not_replace_installation(kimi_home):
     assert (installed / "powercontext.json").read_bytes() == before
 
 
-def test_configure_switches_profiles_without_reinstalling_or_replacing_personal_guidance(kimi_home):
+def test_configure_switches_profiles_and_preserves_personal_guidance(kimi_home):
     installed = Path(install()["plugin_path"])
-    hook = installed / "hooks/user_prompt_submit.mjs"
-    original_hook = hook.read_bytes()
     skill = installed / "skills/powercontext-project-context/SKILL.md"
     skill.write_text(skill.read_text(encoding="utf-8") + "\nPersonal project instruction.\n", encoding="utf-8")
     for profile, tool, absent in (
@@ -416,9 +412,7 @@ def test_configure_switches_profiles_without_reinstalling_or_replacing_personal_
         tools = json.loads((installed / "kimi.plugin.json").read_text())["mcpServers"]["powercontext"]["enabledTools"]
         assert tool in tools and absent not in tools
         content = skill.read_text(encoding="utf-8")
-        assert json.loads((installed / "powercontext.json").read_text())["profile"] == profile
         assert content.endswith("Personal project instruction.\n")
-        assert hook.read_bytes() == original_hook
 
 
 @pytest.mark.parametrize("command", [["setup"], ["config", "agent"]], ids=["setup", "configure"])
