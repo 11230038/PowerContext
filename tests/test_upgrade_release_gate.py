@@ -474,6 +474,9 @@ def test_failed_backend_does_not_skip_other_required_backends(release, monkeypat
 def test_failed_seekdb_acceptance_keeps_native_logs_before_workspace_cleanup(tmp_path):
     output = tmp_path / "evidence"
     output.mkdir()
+    journal = b'{"state":"active","last_revision":"s1300","pending_revision":"s1400"}'
+    maintenance = "database.pc-migration-state/disposable-database/maintenance.json"
+    fresh_maintenance = "fresh.pc-migration-state/disposable-fresh/maintenance.json"
 
     with pytest.raises(gate.GateError, match="fixture migration failed"), gate.case_workspace("seekdb", output) as work:
         native = work / "database/log"
@@ -483,34 +486,88 @@ def test_failed_seekdb_acceptance_keeps_native_logs_before_workspace_cleanup(tmp
         fresh = work / "fresh/log"
         fresh.mkdir(parents=True)
         (fresh / "observer.log.wf").write_bytes(b"fresh native diagnostic\n")
+        for relative in (maintenance, fresh_maintenance):
+            path = work / relative
+            path.parent.mkdir(parents=True)
+            path.write_bytes(journal)
+            (path.parent / "backup.data").write_bytes(b"backup payload must not be collected")
         raise gate.GateError("fixture migration failed")  # noqa: TRY003 -- synthetic acceptance failure
 
     assert not work.exists()
     with zipfile.ZipFile(output / "seekdb-native-logs.zip") as archive:
-        assert set(archive.namelist()) == {"database/log/observer.log", "fresh/log/observer.log.wf"}
+        assert set(archive.namelist()) == {
+            "database/log/observer.log",
+            "fresh/log/observer.log.wf",
+            maintenance,
+            fresh_maintenance,
+        }
         assert archive.read("database/log/observer.log") == b"native recovery diagnostic\n"
         assert archive.read("fresh/log/observer.log.wf") == b"fresh native diagnostic\n"
+        assert archive.read(maintenance) == journal
+        assert archive.read(fresh_maintenance) == journal
     manifest = json.loads((output / "seekdb-native-logs.json").read_text())
-    assert len(manifest["files"]) == 2
+    assert len(manifest["files"]) == 4
     assert not any(item["truncated"] for item in manifest["files"])
 
 
-def test_seekdb_diagnostics_keep_a_bounded_tail_of_large_native_logs(tmp_path):
+def test_seekdb_diagnostics_failure_preserves_acceptance_failure(tmp_path, capsys):
+    with (
+        pytest.raises(gate.GateError, match="fixture migration failed"),
+        gate.case_workspace("seekdb", tmp_path / "missing-output") as work,
+    ):
+        raise gate.GateError("fixture migration failed")  # noqa: TRY003 -- synthetic acceptance failure
+
+    assert not work.exists()
+    assert "seekDB native log collection failed: FileNotFoundError" in capsys.readouterr().err
+
+
+def test_seekdb_diagnostics_keep_bounded_head_and_tail_of_large_native_logs(tmp_path):
     output = tmp_path / "evidence"
     output.mkdir()
-    size = 5 * 1024 * 1024
+    content = b"initial DDL diagnostic\n" + b"x" * (5 * 1024 * 1024) + b"final wait diagnostic\n"
     with gate.case_workspace("seekdb", output) as work:
         native = work / "database/log"
         native.mkdir(parents=True)
-        (native / "observer.log").write_bytes(b"x" * size + b"final diagnostic")
+        (native / "observer.log").write_bytes(content)
 
     with zipfile.ZipFile(output / "seekdb-native-logs.zip") as archive:
-        tail = archive.read("database/log/observer.log")
-        assert len(tail) <= 4 * 1024 * 1024
-        assert tail.endswith(b"final diagnostic")
+        head = archive.read("head/database/log/observer.log")
+        tail = archive.read("tail/database/log/observer.log")
+        assert len(head) + len(tail) <= 4 * 1024 * 1024
+        assert head.startswith(b"initial DDL diagnostic\n")
+        assert tail.endswith(b"final wait diagnostic\n")
+        manifest = json.loads((output / "seekdb-native-logs.json").read_text())
+        record = manifest["files"][0]
+        assert record["truncated"] is True
+        assert record["size_bytes"] == len(content)
+        assert record["captured_bytes"] == len(head) + len(tail)
+        for segment in record["segments"]:
+            start = segment["offset_bytes"]
+            assert archive.read(segment["path"]) == content[start : start + segment["captured_bytes"]]
+
+
+def test_seekdb_diagnostics_share_one_budget_with_maintenance_evidence(tmp_path):
+    output = tmp_path / "evidence"
+    output.mkdir()
+    maintenance = "database.pc-migration-state/disposable-database/maintenance.json"
+    journal = b'{"state":"active","pending_revision":"s1400"}'
+    with gate.case_workspace("seekdb", output) as work:
+        path = work / maintenance
+        path.parent.mkdir(parents=True)
+        path.write_bytes(journal)
+        for store in ("database", "fresh"):
+            native = work / store / "log"
+            native.mkdir(parents=True)
+            for number in range(3):
+                (native / f"observer.log.{number}").write_bytes(b"x" * (5 * 1024 * 1024))
+
     manifest = json.loads((output / "seekdb-native-logs.json").read_text())
-    assert manifest["files"][0]["truncated"] is True
-    assert manifest["files"][0]["size_bytes"] == size + len(b"final diagnostic")
+    with zipfile.ZipFile(output / "seekdb-native-logs.zip") as archive:
+        assert archive.read(maintenance) == journal
+        captured = sum(entry.file_size for entry in archive.infolist())
+        assert captured <= 16 * 1024 * 1024
+        assert captured == sum(record["captured_bytes"] for record in manifest["files"])
+    assert manifest["budget_exhausted"] is True
 
 
 @pytest.mark.parametrize(

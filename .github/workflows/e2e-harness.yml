@@ -98,10 +98,37 @@ jobs:
             if docker exec recall-effort-oceanbase \
               obclient -h127.0.0.1 -P2881 -uroot@test -ppowercontext-e2e \
               -Dpowercontext_test -e 'SELECT 1' >/dev/null 2>&1; then
+              # The slim image's default 1 GB maximum is too small for the
+              # indexes created across the full Server recovery scenarios.
+              docker exec recall-effort-oceanbase \
+                obclient -h127.0.0.1 -P2881 -uroot@sys \
+                -e "ALTER SYSTEM SET datafile_maxsize='8G'; ALTER SYSTEM SET datafile_next='512M'; ALTER SYSTEM SET datafile_size='4G';"
+              datafile_ready=false
+              for config_attempt in $(seq 1 30); do
+                docker exec recall-effort-oceanbase \
+                  obclient -h127.0.0.1 -P2881 -uroot@sys --batch --skip-column-names \
+                  -e "SHOW PARAMETERS WHERE name IN ('datafile_size', 'datafile_maxsize', 'datafile_next');" \
+                  > "$RUNNER_TEMP/recall-effort-datafile.tsv"
+                if awk '
+                  $5 == "datafile_size" && $7 == "4G" { size = 1 }
+                  $5 == "datafile_maxsize" && $7 == "8G" { maximum = 1 }
+                  $5 == "datafile_next" && $7 == "512M" { increment = 1 }
+                  END { exit !(size && maximum && increment) }
+                ' "$RUNNER_TEMP/recall-effort-datafile.tsv"; then
+                  datafile_ready=true
+                  break
+                fi
+                sleep 2
+              done
+              cat "$RUNNER_TEMP/recall-effort-datafile.tsv"
+              if [ "$datafile_ready" != true ]; then
+                echo 'OceanBase datafile configuration did not become effective within one minute.' >&2
+                exit 1
+              fi
               docker exec recall-effort-oceanbase \
                 obclient -h127.0.0.1 -P2881 -uroot@test -ppowercontext-e2e \
                 -Dpowercontext_test \
-                -e "SELECT VERSION(); SHOW VARIABLES LIKE 'ob_compatibility_mode';"
+                -e "SET GLOBAL recyclebin=OFF; SELECT VERSION(); SHOW VARIABLES LIKE 'ob_compatibility_mode'; SHOW GLOBAL VARIABLES LIKE 'recyclebin';"
               exit 0
             fi
             if [ "$(docker inspect --format '{{.State.Running}}' recall-effort-oceanbase)" != true ]; then
@@ -221,6 +248,17 @@ jobs:
         run: |
           mkdir -p .powercontext/recall-effort-ci
           docker logs recall-effort-oceanbase > .powercontext/recall-effort-ci/oceanbase.log 2>&1 || true
+          for logfile in observer.log observer.log.wf; do
+            docker exec recall-effort-oceanbase tail -n 20000 "/root/demo/log/$logfile" \
+              > ".powercontext/recall-effort-ci/$logfile" 2>&1 || true
+          done
+          df -h / > .powercontext/recall-effort-ci/runner-disk.txt 2>&1 || true
+          docker exec recall-effort-oceanbase df -h /root/demo \
+            > .powercontext/recall-effort-ci/container-disk.txt 2>&1 || true
+          docker exec recall-effort-oceanbase \
+            obclient -h127.0.0.1 -P2881 -uroot@sys \
+            -e "SHOW PARAMETERS WHERE name IN ('datafile_size', 'datafile_maxsize', 'datafile_next'); SELECT data_disk_allocated, data_disk_capacity, data_disk_in_use FROM oceanbase.GV\$OB_SERVERS;" \
+            > .powercontext/recall-effort-ci/database-disk.txt 2>&1 || true
 
       - name: Save validation reports
         if: always()

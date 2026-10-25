@@ -312,27 +312,49 @@ def _preserve_seekdb_logs(directory: Path, output: Path) -> None:
 
     remaining = 16 * 1024 * 1024
     files = []
+    # Preserve the existing revision journal before native logs can use the budget.
+    paths = [
+        path
+        for name in ("database", "fresh")
+        for path in sorted((directory / f"{name}.pc-migration-state").glob("*/maintenance.json"))
+    ]
+    paths += [path for name in ("database", "fresh") for path in sorted((directory / name).rglob("*.log*"))]
     with zipfile.ZipFile(output / "seekdb-native-logs.zip", "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for name in ("database", "fresh"):
-            for path in sorted((directory / name).rglob("*.log*")):
-                if remaining == 0:
-                    break
-                if path.is_symlink() or not path.is_file():
-                    continue
-                with path.open("rb") as source:
-                    size = source.seek(0, os.SEEK_END)
-                    length = min(size, 4 * 1024 * 1024, remaining)
-                    source.seek(size - length)
-                    content = source.read(length)
-                relative = path.relative_to(directory).as_posix()
-                archive.writestr(relative, content)
-                remaining -= len(content)
-                files.append({
-                    "path": relative,
-                    "size_bytes": size,
-                    "captured_bytes": len(content),
-                    "truncated": len(content) < size,
-                })
+        for path in paths:
+            if remaining == 0:
+                break
+            if path.is_symlink() or not path.is_file():
+                continue
+            relative = path.relative_to(directory).as_posix()
+            segments = []
+            captured = 0
+            with path.open("rb") as source:
+                size = source.seek(0, os.SEEK_END)
+                length = min(size, 4 * 1024 * 1024, remaining)
+                if length < size:
+                    head = length // 2
+                    ranges = [
+                        (f"head/{relative}", 0, head),
+                        (f"tail/{relative}", size - (length - head), length - head),
+                    ]
+                else:
+                    ranges = [(relative, 0, length)]
+                for entry, offset, count in ranges:
+                    if count == 0 and size:
+                        continue
+                    source.seek(offset)
+                    content = source.read(count)
+                    archive.writestr(entry, content)
+                    remaining -= len(content)
+                    captured += len(content)
+                    segments.append({"path": entry, "offset_bytes": offset, "captured_bytes": len(content)})
+            files.append({
+                "path": relative,
+                "size_bytes": size,
+                "captured_bytes": captured,
+                "truncated": captured < size,
+                "segments": segments,
+            })
     usage = shutil.disk_usage(directory)
     manifest = {
         "files": files,
