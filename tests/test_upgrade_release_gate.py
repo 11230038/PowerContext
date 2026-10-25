@@ -16,6 +16,12 @@
 
 import json
 import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
@@ -219,7 +225,7 @@ def test_missing_backend_evidence_fails_even_with_a_passing_report(tmp_path):
     report = tmp_path / "backend.json"
     report.write_text(json.dumps({"backend": "oceanbase", "engine_version": "4.6.3"}))
     with pytest.raises(gate.GateError, match="driver_version"):
-        gate.validate_backend_evidence(report, "oceanbase")
+        gate.validate_backend_evidence(report, "oceanbase", "full-server-no-vector")
 
 
 def test_old_evidence_directory_cannot_be_reused(release):
@@ -489,3 +495,234 @@ def test_artifact_hashes_do_not_normalize_bytes(tmp_path):
     before = gate.sha256(artifact)
     artifact.write_bytes(b"payload\r\n")
     assert gate.sha256(artifact) != before
+
+
+_PROCESS_FIXTURE = """
+import os, signal, subprocess, sys, time
+from pathlib import Path
+
+role, mode, control, evidence = sys.argv[1:]
+control, evidence = Path(control), Path(evidence)
+child = None
+if mode == "forced-timeout":
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+else:
+    def stop(_signal, _frame):
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, stop)
+try:
+    ready = evidence / (role + ".ready")
+    ready.write_text(str(os.getpid()))
+    ready.replace(evidence / (role + ".pid"))
+    if role != "engine":
+        next_role = "server" if role == "root" else "engine"
+        child = subprocess.Popen(
+            [sys.executable, __file__, next_role, mode, str(control), str(evidence)],
+            start_new_session=True,
+        )
+    if role == "root" and mode in {"success", "failure"}:
+        while not (evidence / "engine.pid").exists():
+            time.sleep(0.02)
+        # Deliberately leave both detached generations for the command owner.
+        os._exit(0 if mode == "success" else 7)
+    while control.exists():
+        time.sleep(0.02)
+finally:
+    if child is not None:
+        child.terminate()
+        try:
+            child.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait()
+    (evidence / (role + ".closed")).write_text("closed")
+"""
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="The upgrade supervisor uses Linux subreaper ownership")
+@pytest.mark.parametrize("mode", ["success", "failure", "timeout", "forced-timeout"])
+def test_upgrade_command_reaps_detached_descendants_before_workspace_cleanup(tmp_path, mode):
+    fixture = tmp_path / "process_fixture.py"
+    fixture.write_text(_PROCESS_FIXTURE)
+    control = tmp_path / "keep-running"
+    control.touch()
+    report = tmp_path / "evidence"
+    report.mkdir()
+    # This child belongs to the test, not the isolated command supervisor.
+    sentinel = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        with tempfile.TemporaryDirectory(dir=tmp_path) as directory:
+            work = Path(directory)
+            arguments = [sys.executable, str(fixture), "root", mode, str(control), str(report)]
+            options = {
+                "environment": dict(os.environ),
+                "cwd": work,
+                "log": report / "command.log",
+                "timeout": 5 if mode.endswith("timeout") else 20,
+                "shutdown_timeout": 0.5,
+            }
+            if mode == "success":
+                gate.run_owned(arguments, **options)
+            else:
+                with pytest.raises(gate.GateError, match="Command failed"):
+                    gate.run_owned(arguments, **options)
+            assert sentinel.poll() is None
+            for role in ("root", "server", "engine"):
+                pid = int((report / f"{role}.pid").read_text())
+                with pytest.raises(ProcessLookupError):
+                    os.kill(pid, 0)
+            if mode != "forced-timeout":
+                assert (report / "server.closed").is_file()
+                assert (report / "engine.closed").is_file()
+            if mode.endswith("timeout"):
+                assert "exceeded 5 seconds" in (report / "command.log").read_text()
+        assert not work.exists()
+    finally:
+        # Also let controlled fixture processes exit if the regression fails.
+        # Never signal a stale PID obtained from a fixture file.
+        control.unlink(missing_ok=True)
+        sentinel.terminate()
+        sentinel.wait(timeout=5)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="The upgrade supervisor uses Linux subreaper ownership")
+@pytest.mark.parametrize("cancellation", ["parent-term", "repeat-interrupt"])
+def test_upgrade_command_owner_finishes_cleanup_after_gate_cancellation(tmp_path, cancellation):
+    fixture = tmp_path / "process_fixture.py"
+    fixture.write_text(_PROCESS_FIXTURE)
+    control = tmp_path / "keep-running"
+    control.touch()
+    report = tmp_path / "evidence"
+    report.mkdir()
+    owner_script = tmp_path / "owner.py"
+    owner_script.write_text(
+        "import os,sys\nfrom pathlib import Path\n"
+        f"sys.path[:0] = {[str(Path(gate.__file__).parent), str(Path(matrix.__file__).parent)]!r}\n"
+        "import upgrade_release_gate as gate\n"
+        f"report = Path({str(report)!r})\n"
+        "from tempfile import TemporaryDirectory\n"
+        "with TemporaryDirectory() as directory:\n"
+        "    work = Path(directory)\n"
+        "    (report / 'workspace').write_text(str(work))\n"
+        f"    gate.run_owned({[sys.executable, str(fixture), 'root', 'forced-timeout', str(control), str(report)]!r}, "
+        "environment=dict(os.environ), cwd=work, log=report / 'command.log', timeout=60, shutdown_timeout=0.5)\n"
+    )
+    sentinel = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    with (report / "owner.log").open("w") as log:
+        owner = subprocess.Popen([sys.executable, str(owner_script)], stdout=log, stderr=subprocess.STDOUT)
+        pids = []
+        try:
+            deadline = time.monotonic() + 15
+            while not (report / "engine.pid").exists():
+                assert owner.poll() is None, (report / "owner.log").read_text()
+                assert time.monotonic() < deadline, "Controlled processes did not become ready"
+                time.sleep(0.02)
+            pids = [int((report / f"{role}.pid").read_text()) for role in ("root", "server", "engine")]
+            work = Path((report / "workspace").read_text())
+            owner.send_signal(signal.SIGTERM if cancellation == "parent-term" else signal.SIGINT)
+            if cancellation == "repeat-interrupt":
+                time.sleep(0.1)
+                assert owner.poll() is None, "Cancellation did not wait for owned processes"
+                owner.send_signal(signal.SIGINT)
+            assert owner.wait(timeout=10) != 0
+            if cancellation == "parent-term":
+                # The dead gate cannot await its owner; PDEATHSIG initiates cleanup.
+                deadline = time.monotonic() + 10
+                while any(_process_exists(pid) for pid in pids):
+                    assert time.monotonic() < deadline, "Detached descendants survived gate termination"
+                    time.sleep(0.02)
+            else:
+                # The second interrupt must not delete the workspace early.
+                assert not any(_process_exists(pid) for pid in pids)
+                assert not work.exists()
+            assert sentinel.poll() is None
+        finally:
+            control.unlink(missing_ok=True)
+            if owner.poll() is None:
+                owner.terminate()
+                owner.wait(timeout=5)
+            sentinel.terminate()
+            sentinel.wait(timeout=5)
+            if cancellation == "parent-term" and pids and not any(_process_exists(pid) for pid in pids):
+                shutil.rmtree(Path((report / "workspace").read_text()), ignore_errors=True)
+
+
+def _process_exists(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize("configuration", ["full-server-vector", "full-server-code", "full-server-vector-code", "typo"])
+def test_unimplemented_configuration_fails_before_opening_database(tmp_path, configuration):
+    work = tmp_path / "must-not-be-created"
+    suite = gate.ROOT / "tests/release_upgrades/test_full_server.py"
+    environment = dict(os.environ)
+    environment.update(
+        PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        PC_UPGRADE_CONFIGURATION=configuration,
+        PC_UPGRADE_SOURCE_VERSION="1.3.0",
+        PC_UPGRADE_SOURCE_PYTHON=str(tmp_path / "nonexistent-source"),
+        PC_UPGRADE_TARGET_PYTHON=str(tmp_path / "nonexistent-target"),
+        PC_UPGRADE_BACKEND="sqlite",
+        PC_UPGRADE_WORK=str(work),
+        PC_UPGRADE_REPORT_DIR=str(tmp_path / "report"),
+    )
+    environment.pop("PYTEST_ADDOPTS", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-c",
+            os.devnull,
+            "--confcutdir",
+            str(suite.parent),
+            "-p",
+            "no:cacheprovider",
+            "-k",
+            "test_source_release_database",
+            "-q",
+            str(suite),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert f"Unimplemented acceptance configuration: {configuration}" in result.stdout
+    assert not work.exists()
+
+
+@pytest.mark.parametrize("actual", [None, "full-server-vector", "full-server-no-vector"])
+def test_backend_evidence_must_match_executed_configuration(tmp_path, actual):
+    evidence = {
+        "backend": "sqlite",
+        "engine_version": "3",
+        "driver_version": "1",
+        "source_schema": "a",
+        "target_schema": "b",
+        "fresh_schema": "b",
+    }
+    if actual is not None:
+        evidence["configuration"] = actual
+    path = tmp_path / "backend.json"
+    path.write_text(json.dumps(evidence))
+    if actual == "full-server-no-vector":
+        assert gate.validate_backend_evidence(path, "sqlite", actual) == evidence
+    else:
+        with pytest.raises(gate.GateError, match="Configuration evidence"):
+            gate.validate_backend_evidence(path, "sqlite", "full-server-no-vector")
+
+
+@pytest.mark.skipif(sys.platform == "linux", reason="Linux supports the required process ownership")
+def test_full_acceptance_rejects_unsupported_host_before_installing(tmp_path):
+    with pytest.raises(gate.GateError, match="requires Linux"):
+        gate.run_case(tmp_path, tmp_path / "wheel", {}, tmp_path / "report")
+    assert not (tmp_path / "report").exists()

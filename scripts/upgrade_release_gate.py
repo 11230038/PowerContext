@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -205,7 +206,7 @@ def validate_junit(report: Path) -> None:
     require(names >= PHASES, f"Missing full Server acceptance phases: {sorted(PHASES - names)}")
 
 
-def validate_backend_evidence(path: Path, backend: str) -> dict[str, Any]:
+def validate_backend_evidence(path: Path, backend: str, configuration: str) -> dict[str, Any]:
     evidence = json.loads(path.read_text(encoding="utf-8"))
     require(evidence.get("backend") == backend, "Backend evidence does not match the declared case")
     for key in ("engine_version", "driver_version", "source_schema", "target_schema", "fresh_schema"):
@@ -216,6 +217,7 @@ def validate_backend_evidence(path: Path, backend: str) -> dict[str, Any]:
             isinstance(evidence.get("proxy_version"), str) and evidence["proxy_version"],
             "Record proxy version or direct",
         )
+    require(evidence.get("configuration") == configuration, "Configuration evidence differs from the declared case")
     return evidence
 
 
@@ -225,6 +227,51 @@ def run(command: list[str], *, environment: dict[str, str], cwd: Path, log: Path
             command, env=environment, cwd=cwd, stdout=output, stderr=subprocess.STDOUT, timeout=1800, check=False
         )
     require(result.returncode == 0, f"Command failed; inspect {log.name}")
+
+
+def run_owned(
+    command: list[str],
+    *,
+    environment: dict[str, str],
+    cwd: Path,
+    log: Path,
+    timeout: float = 1800,
+    shutdown_timeout: float = 30,
+) -> None:
+    require(sys.platform == "linux", "Installed-release acceptance requires Linux process ownership and cleanup")
+    supervised = [
+        sys.executable,
+        str(Path(__file__).with_name("upgrade_process.py")),
+        "--parent-pid",
+        str(os.getpid()),
+        "--timeout",
+        str(timeout),
+        "--shutdown-timeout",
+        str(shutdown_timeout),
+        "--",
+        *command,
+    ]
+    # The supervisor enforces the deadline and reaps every owned descendant,
+    # including detached native engines, before workspace cleanup can run.
+    with (
+        log.open("w", encoding="utf-8") as output,
+        subprocess.Popen(  # noqa: S603 -- fixed gate supervisor and reviewed command, no shell
+            supervised, env=environment, cwd=cwd, stdout=output, stderr=subprocess.STDOUT, start_new_session=True
+        ) as process,
+    ):
+        try:
+            returncode = process.wait()
+        except BaseException:
+            # Repeated interrupts must not release the workspace before the
+            # owner has finished closing descendants.
+            previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+            try:
+                process.terminate()
+                process.wait()
+            finally:
+                signal.signal(signal.SIGINT, previous)
+            raise
+    require(returncode == 0, f"Command failed; inspect {log.name}")
 
 
 def installed(python: Path, environment: dict[str, str], cwd: Path) -> dict[str, str]:
@@ -256,6 +303,7 @@ def wheel_version(wheel: Path) -> str:
 
 
 def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dict[str, Any]:
+    require(sys.platform == "linux", "Installed-release acceptance requires Linux process ownership and cleanup")
     output.mkdir(parents=True, exist_ok=False)
     # Never inherit a developer's live deployment or pytest selection overrides.
     environment = {
@@ -274,14 +322,14 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
         }
         for role, package in packages.items():
             venv = directory / role
-            run(
+            run_owned(
                 ["uv", "venv", "--python", sys.executable, str(venv)],
                 environment=environment,
                 cwd=directory,
                 log=output / f"{role}-venv.log",
             )
             python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-            run(
+            run_owned(
                 ["uv", "pip", "install", "--python", str(python), package],
                 environment=environment,
                 cwd=directory,
@@ -304,7 +352,7 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
             "PC_UPGRADE_EVIDENCE": str(output / "backend.json"),
         })
         report = output / "junit.xml"
-        run(
+        run_owned(
             [
                 sys.executable,
                 "-m",
@@ -327,7 +375,7 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
             log=output / "acceptance.log",
         )
         validate_junit(report)
-        backend = validate_backend_evidence(output / "backend.json", case["backend"])
+        backend = validate_backend_evidence(output / "backend.json", case["backend"], case["configuration"])
         return {"case": case, "installed": metadata, "database": backend, "status": "passed"}
 
 

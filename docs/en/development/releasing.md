@@ -155,6 +155,8 @@ make upgrade-release-test
 uv run python scripts/run_upgrade_release_gate.py --release --release-notes /path/to/release-notes.md
 ```
 
+Full installed-release acceptance requires Linux process ownership and cleanup. Run it on Linux or in the GitHub Actions upgrade job; other hosts can run the policy and publication regression checks.
+
 The publication input directory must contain exactly one wheel and one matching `.tar.gz` source distribution;
 leftover distributions and unexpected files fail validation (`uv`'s `.gitignore` is not an artifact). The runner checks
 source metadata and builds a wheel from the source archive, comparing all member contents except the derived

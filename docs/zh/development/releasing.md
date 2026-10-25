@@ -145,6 +145,8 @@ make upgrade-release-test
 uv run python scripts/run_upgrade_release_gate.py --release --release-notes /path/to/release-notes.md
 ```
 
+完整安装包升级验收需要 Linux 的进程归属和清理机制。请在 Linux 或 GitHub Actions 升级任务中执行；其他平台可运行策略检查和发布逻辑回归测试。
+
 发布输入目录必须只有一个 wheel 和一个配套的 `.tar.gz` 源码包；残留发行包和其他文件都会使检查失败，
 `uv` 生成的 `.gitignore` 不作为发行产物。门禁检查源码包元数据，并从该源码包实际重建 wheel，逐项比较归档中的
 文件内容，仅排除派生的 `RECORD` 哈希清单。因此，同版本但内容过期的源码包也无法绕过检查。归档时间戳和压缩

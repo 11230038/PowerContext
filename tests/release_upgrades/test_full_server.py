@@ -284,7 +284,11 @@ def seed(client, *, candidate_prefix):
 def case():
     # Missing gate inputs are errors, never skips or an implicit local database.
     assert os.environ["PC_UPGRADE_SOURCE_VERSION"] == "1.3.0", "Add a reviewed adapter for another source release"
+    configuration = os.environ["PC_UPGRADE_CONFIGURATION"]
+    if configuration != "full-server-no-vector":
+        pytest.fail(f"Unimplemented acceptance configuration: {configuration}")
     return {
+        "configuration": configuration,
         "source": Path(os.environ["PC_UPGRADE_SOURCE_PYTHON"]),
         "target": Path(os.environ["PC_UPGRADE_TARGET_PYTHON"]),
         "backend": os.environ["PC_UPGRADE_BACKEND"],
@@ -508,6 +512,7 @@ def test_fresh_upgrade_equivalence(case, migrated):
     )
     evidence = {
         "backend": case["backend"],
+        "configuration": case["configuration"],
         "engine_version": inventory["engine_version"],
         "driver_version": inventory["driver_version"],
         "source_schema": digest(migrated["historical"]["schema"]),

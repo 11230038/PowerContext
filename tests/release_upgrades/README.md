@@ -19,7 +19,11 @@ source wheels, invalid artifact metadata, catalog outages, and a target at or be
 Evidence records the catalog digest, exact source artifact, target artifact digest, and expanded matrix. The resolver
 requires universal `py3-none-any` wheels; a distribution format change must extend it explicitly.
 
-All three profiles use `test_full_server.py`. It starts the installed 1.3.0 Server, writes data through HTTP,
+All three profiles use `test_full_server.py`, which accepts only `full-server-no-vector`. Any other configuration
+fails before opening a database; adding a policy entry alone does not implement a new profile. Backend evidence
+records the executed configuration and the controller requires it to match the declaration.
+
+The suite starts the installed 1.3.0 Server, writes data through HTTP,
 stops it, seeds a pending processing intent using the installed SDK, and runs the target wheel's public
 `server db-migrate status/plan/apply/verify` commands. Verification must report `state=ready` and `server_ready=true`.
 The target Server must then start, preserve data and permissions, accept new writes, and support retrieval.
@@ -125,3 +129,14 @@ Acceptance uses a private copy of those files. Only a passing run creates `valid
 in its evidence directory. CI uploads that directory; local `make publish` calls the runner with `--release --publish`
 and uploads its exact returned paths, never a fresh glob of `dist/`. Failed acceptance produces no publication set.
 Managed persistence hashes normalize CRLF/LF checkout line endings; artifact SHA-256s remain byte-exact.
+
+## Process ownership
+
+Full installed-release acceptance runs on Linux, including local invocations of the complete gate.
+Other hosts can run policy, publication and schema regression checks, but cannot run full acceptance.
+Each installation or acceptance command runs under an isolated Linux child subreaper. It retains ownership
+of detached Server and embedded-engine descendants, allows graceful shutdown, then forces termination
+and reaps remaining processes before workspace deletion or the next backend. Timeout, failure, success
+with leaked children, and gate cancellation all use this cleanup. A parent-death signal starts cleanup
+if the gate itself exits. An uninterruptible kernel wait blocks cleanup rather than admitting another case
+while the previous processes still own storage.
