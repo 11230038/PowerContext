@@ -1061,3 +1061,21 @@ def test_parallel_passes_do_not_override_unreviewed_release_support(parallel_rep
     with pytest.raises(gate.GateError, match="support declaration"):
         parallel.collect(root, prepared, reports, root / "accepted")
     assert not (root / "accepted/validated-dist").exists()
+
+
+def test_parallel_worker_rejects_artifact_changed_during_execution(release, monkeypatch):
+    root, wheel, _ = release
+    dist = root / "dist"
+    dist.mkdir()
+    shutil.copyfile(wheel, dist / wheel.name)
+    prepared = root / "prepared"
+    parallel.prepare(root, dist, prepared, release=False, release_notes=None)
+
+    def replace_wheel(_root, tested_wheel, _case, _output):
+        tested_wheel.write_bytes(b"replaced while acceptance ran")
+        return {"status": "passed"}
+
+    monkeypatch.setattr(gate, "run_case", replace_wheel)
+    with pytest.raises(gate.GateError, match="distributions changed"):
+        parallel.execute_case(root, prepared, 0, root / "reports/case-0")
+    assert json.loads((root / "reports/case-0/result.json").read_text())["status"] == "failed"

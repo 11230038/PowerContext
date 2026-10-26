@@ -113,6 +113,7 @@ def execute_case(root: Path, prepared: Path, index: int, output: Path) -> None:
     try:
         evidence["result"] = gate.run_case(root, wheel, cases[index], output / "acceptance")
         gate.require(evidence["result"]["status"] == "passed", "Upgrade case failed")
+        read_plan(root, prepared)
         evidence["status"] = "passed"
     finally:
         # If provisioning failed before this command, the collector instead sees
