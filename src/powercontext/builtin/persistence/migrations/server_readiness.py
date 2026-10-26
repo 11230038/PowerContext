@@ -14,14 +14,19 @@
 
 """Full Server bootstrap and read-only admission for versioned storage."""
 
+from pathlib import Path
+
 from sqlalchemy import inspect
+from sqlalchemy.engine import make_url
 
 from .bundle import sqlite_inventory
 from .models import MigrationError, digest
 
 
-def check_server_schema(connection, *, _archive_recovery=False):
+def check_server_schema(connection, *, _archive_recovery=False, _startup=False):
     bundle = check_server_layout(connection)
+    if _startup and connection.dialect.name == "sqlite":
+        _check_sqlite_startup_history(connection, bundle)
     pending_restore = connection.exec_driver_sql(
         "SELECT 1 FROM pc_portable_restore_receipts WHERE projections_ready = false LIMIT 1"
     ).first()
@@ -76,12 +81,51 @@ def check_server_layout(connection):
     return bundle
 
 
-def prepare_server_storage(settings, *, injected_embedding=False, embedding_profile=None):
+def _check_sqlite_startup_history(connection, bundle):
+    """Honor observable local history without requiring an external journal to exist."""
+    from .connections import BackendIdentity
+    from .deployment import server_bundle
+    from .mysql import _Journal
+    from .sources import MigrationSources
+    from .sqlite import read_maintenance_evidence, verify_release_checksums, verify_retained_objects
+
+    filename = next(
+        (filename for _, name, filename in connection.exec_driver_sql("PRAGMA database_list") if name == "main"),
+        "",
+    )
+    if not filename:
+        return
+    target = Path(filename).resolve()
+    directory = target.with_name(target.name + ".pc-migration-state")
+    identity = BackendIdentity("sqlite", digest({"kind": "sqlite", "path": str(target)}), target.name)
+    evidence = read_maintenance_evidence(directory / "maintenance.json", identity.database_id)
+    if evidence is not None:
+        if evidence["state"] != "complete":
+            raise MigrationError("recovery_required", "Complete the recorded full Server maintenance before startup.")
+        profile = bundle.vector_profile.profile if bundle.vector_profile is not None else None
+        bundle = MigrationSources(
+            bundle, (server_bundle(embedding_profile=profile, source_release="1.4.0"),)
+        ).from_evidence(evidence)
+        verify_release_checksums(evidence["release_checksums"], bundle.checksums)
+        verify_retained_objects(sqlite_inventory(connection), bundle.head, bundle=bundle, evidence=evidence)
+    for operation in ("processing_configuration", "atomic_projection"):
+        previous = _Journal(directory / operation, identity).read()
+        if previous is not None and previous.state != "complete":
+            raise MigrationError("recovery_required", "Complete the recorded domain maintenance before startup.")
+
+
+def prepare_server_storage(settings, *, injected_embedding=False, embedding_profile=None):  # noqa: C901 -- Keep startup admission and bootstrap decisions together.
     from .deployment import configured_embedding_profile, deployment_runner
 
     database = settings.database
     if database.kind == "sqlite" and database.is_in_memory:
         return
+    if database.kind == "sqlite":
+        from .locking import assert_no_local_migration
+
+        url = make_url(database.url)
+        if url.database and not url.query:
+            assert_no_local_migration(Path(url.database).absolute())
     profile = embedding_profile or configured_embedding_profile(settings)
     if injected_embedding and profile is None:
         _check_unmanaged_optional_profile(database)

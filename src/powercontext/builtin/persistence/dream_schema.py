@@ -17,6 +17,8 @@
 This domain check does not replace RFC 1771's full-database readiness gate.
 """
 
+from pathlib import Path
+
 from sqlalchemy import CheckConstraint, Connection, inspect
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -41,6 +43,11 @@ async def assert_dream_schema_ready(engine: AsyncEngine, *, _archive_recovery: b
     """Check before create_all, domain initializers, or workers; never execute DDL."""
     async with engine.connect() as connection:
         if connection.dialect.name == "sqlite":
+            from powercontext.builtin.persistence.migrations.locking import assert_no_local_migration
+
+            for _, name, filename in await connection.exec_driver_sql("PRAGMA database_list"):
+                if name == "main" and filename:
+                    assert_no_local_migration(Path(filename))
             # SQLite's legacy transaction mode does not begin a transaction for
             # SELECTs. Pin one read snapshot before checking authority against
             # projections, while still allowing concurrent WAL writers.
@@ -56,7 +63,7 @@ def check_dream_schema(connection: Connection, *, _archive_recovery: bool = Fals
     if "pc_schema_revision" in names:
         from powercontext.builtin.persistence.migrations.server_readiness import check_server_schema
 
-        check_server_schema(connection, _archive_recovery=_archive_recovery)
+        check_server_schema(connection, _archive_recovery=_archive_recovery, _startup=True)
         return
     if names & {"pc_catalog_change_candidate_heads", "pc_catalog_change_candidate_versions"}:
         raise DreamSchemaNotReadyError("unknown_baseline", "Unpublished Catalog Change storage is unsupported")

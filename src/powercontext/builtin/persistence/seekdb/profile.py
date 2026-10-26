@@ -113,7 +113,10 @@ class SeekDBProfile:
     ) -> AsyncIterator[SeekDBProfile]:
         """Start seekdb locally and connect through its async Unix socket."""
 
+        from powercontext.builtin.persistence.migrations.locking import assert_no_local_migration
+
         path = config.path.expanduser().resolve()
+        assert_no_local_migration(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         module = _load_binding()
         instance = await _open_instance(module, path)

@@ -468,6 +468,15 @@ In this bundle, SQLite revision `p0003` recreates the tag table and retains its 
 deleting the business table, so it does not create the SQLite history copy. Neither path automatically deletes backup
 recovery points.
 
+Local startup probes an existing SQLite/embedded seekDB maintenance lock without creating or changing its file.
+An observed active lock blocks new runtimes with `migration_locked`. SQLite SDK and background admission also
+check the default adjacent migration evidence directory: unfinished maintenance, changed recorded revision checksums,
+and missing required retained tables block startup. A current-layout database without that journal is still accepted
+when its schema and domain checks pass; it has no recorded historical retention obligation. If maintenance uses a
+custom evidence directory, run explicit verification with that directory before starting services. Remote OceanBase
+coordinator locks are not observable from arbitrary service hosts. Deployment orchestration must keep all writers
+stopped and prevent restarts throughout maintenance; these checks do not fence existing clients or future maintenance.
+
 ## Stopping, starting, and upgrading services
 
 Personal services provide these commands while retaining registration and settings:
