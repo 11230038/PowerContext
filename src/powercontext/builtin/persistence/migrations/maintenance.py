@@ -31,7 +31,7 @@ from .backup import BackupContext, ForkBackupProvider, SQLiteBackupProvider
 from .bundle import MigrationBundle, sqlite_inventory
 from .connections import BackendIdentity, MaintenanceConnections
 from .models import MigrationError, MigrationPlan, MigrationResult, digest
-from .mysql import MySQLMigrationRunner, _Evidence, _Journal
+from .mysql import MySQLMigrationRunner, _Evidence, _Journal, require_completed_domain_maintenance
 from .server_readiness import check_server_schema
 from .sources import MigrationSources
 from .sqlite import SQLiteMigrationRunner, read_maintenance_evidence, verify_release_checksums, verify_retained_objects
@@ -267,13 +267,7 @@ class ManagedMaintenanceRunner:
         raise NotImplementedError
 
     def _check_previous_maintenance(self, connection: Connection, identity: BackendIdentity) -> None:
-        for operation in ("processing_configuration", "atomic_projection"):
-            if operation != self.operation:
-                previous = _Journal(self.directory / operation, identity).read()
-                if previous is not None and previous.state != "complete":
-                    raise MigrationError(
-                        "recovery_required", "Complete the previous registered maintenance operation first."
-                    )
+        require_completed_domain_maintenance(self.directory, identity, excluding=self.operation)
         main_path = (
             self.directory / "maintenance.json"
             if isinstance(self.connections.config, SQLiteConfig)

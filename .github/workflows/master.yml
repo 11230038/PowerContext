@@ -16,10 +16,66 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  seekdb-managed-startup:
+    name: SeekDB managed startup regression (priority)
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    env:
+      POWERCONTEXT_TEST_MIGRATION_SEEKDB: "1"
+      PYTHONUNBUFFERED: "1"
+      MIGRATION_REPORTS: ${{ github.workspace }}/.powercontext/managed-startup-seekdb
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up the environment
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: "3.12"
+
+      - name: Test concurrent managed startup without skips
+        # Collection and three isolated cases retain their 180s process deadlines.
+        timeout-minutes: 15
+        env:
+          TMPDIR: ${{ runner.temp }}/am-seekdb
+        run: |
+          mkdir -p "$TMPDIR"
+          uv run --locked --extra seekdb --extra server python scripts/run_atomic_memory_clean_migration.py \
+            seekdb --output "$MIGRATION_REPORTS" --tests \
+            tests/e2e/test_managed_startup_read_consistency.py
+          test "$(wc -l < "$MIGRATION_REPORTS/nodes.txt")" -eq 3
+
+      - name: Collect native diagnostics
+        if: always()
+        env:
+          TMPDIR: ${{ runner.temp }}/am-seekdb
+        run: |
+          mkdir -p "$MIGRATION_REPORTS"
+          df -h . /tmp > "$MIGRATION_REPORTS/disk.txt"
+          if [ -d "$TMPDIR" ]; then
+            find "$TMPDIR" -type f \( -name '*.log' -o -name '*.log.wf' \) \
+              -print -exec tail -c 8388608 {} \; > "$MIGRATION_REPORTS/seekdb-native.log"
+          fi
+
+      - name: Save managed startup reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: managed-startup-seekdb-${{ github.sha }}
+          path: ${{ env.MIGRATION_REPORTS }}/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
   changes:
     uses: ./.github/workflows/ci-changes.yml
 
   upgrade-acceptance:
+    needs: seekdb-managed-startup
+    # Collect all upgrade cases even when the priority regression fails.
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/upgrade-release.yml
 
   upgrade-release-gate:
@@ -433,10 +489,10 @@ jobs:
           if-no-files-found: ignore
 
   atomic-memory-clean-seekdb:
-    needs: changes
+    needs: [changes, seekdb-managed-startup]
     if: ${{ !cancelled() && (needs.changes.result != 'success' || fromJSON(needs.changes.outputs.suites || '{}').database) }}
     name: Atomic Memory clean migration (SeekDB)
-    timeout-minutes: 70
+    timeout-minutes: 55
     runs-on: ubuntu-latest
     env:
       POWERCONTEXT_TEST_MIGRATION_SEEKDB: "1"
@@ -461,17 +517,6 @@ jobs:
           mkdir -p "$TMPDIR"
           uv run --locked --extra seekdb python scripts/run_atomic_memory_clean_migration.py \
             seekdb --output "$MIGRATION_REPORTS"
-
-      - name: Test concurrent managed startup without skips
-        # Collection and three isolated cases retain their 180s process deadlines.
-        timeout-minutes: 15
-        env:
-          TMPDIR: ${{ runner.temp }}/am-seekdb
-        run: |
-          uv run --locked --extra seekdb --extra server python scripts/run_atomic_memory_clean_migration.py \
-            seekdb --output "$MIGRATION_REPORTS/startup-snapshot" --tests \
-            tests/e2e/test_managed_startup_read_consistency.py
-          test "$(wc -l < "$MIGRATION_REPORTS/startup-snapshot/nodes.txt")" -eq 3
 
       - name: Test long-query retrieval and admission without skips
         timeout-minutes: 10

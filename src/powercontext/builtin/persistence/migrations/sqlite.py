@@ -170,6 +170,13 @@ class SQLiteMigrationRunner:
     ) -> MigrationPlan:
         """Inspect without creating a database, parent, lock or external evidence."""
         self.bundle.assert_unchanged()
+        if self.bundle.readiness_scope == "server":
+            from .connections import BackendIdentity
+            from .mysql import require_completed_domain_maintenance
+
+            require_completed_domain_maintenance(
+                self.evidence_path.parent, BackendIdentity("sqlite", self._database_id(), self.database.name)
+            )
         if backup_policy not in {"auto", "manual", "skip"}:
             raise MigrationError("invalid_backup_policy", "Choose auto, manual or skip.")
         if not self.database.exists():

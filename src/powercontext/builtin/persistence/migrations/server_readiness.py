@@ -85,7 +85,7 @@ def _check_sqlite_startup_history(connection, bundle):
     """Honor observable local history without requiring an external journal to exist."""
     from .connections import BackendIdentity
     from .deployment import server_bundle
-    from .mysql import _Journal
+    from .mysql import require_completed_domain_maintenance
     from .sources import MigrationSources
     from .sqlite import read_maintenance_evidence, verify_release_checksums, verify_retained_objects
 
@@ -108,10 +108,7 @@ def _check_sqlite_startup_history(connection, bundle):
         ).from_evidence(evidence)
         verify_release_checksums(evidence["release_checksums"], bundle.checksums)
         verify_retained_objects(sqlite_inventory(connection), bundle.head, bundle=bundle, evidence=evidence)
-    for operation in ("processing_configuration", "atomic_projection"):
-        previous = _Journal(directory / operation, identity).read()
-        if previous is not None and previous.state != "complete":
-            raise MigrationError("recovery_required", "Complete the recorded domain maintenance before startup.")
+    require_completed_domain_maintenance(directory, identity)
 
 
 def prepare_server_storage(settings, *, injected_embedding=False, embedding_profile=None):  # noqa: C901 -- Keep startup admission and bootstrap decisions together.

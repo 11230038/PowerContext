@@ -182,3 +182,9 @@ collecting native logs, deleting the workspace, or starting the next case. Norma
 success and failure also clean up leftover descendants. If the gate is terminated,
 the owner receives a Linux parent-death signal and completes the same cleanup.
 Policy and documentation checks remain available on other platforms.
+
+Main first runs the previously failing embedded seekDB concurrent-startup regression in
+`SeekDB managed startup regression (priority)`. Its three isolated Server/SDK scenarios run
+once, before the installed-release workflow and the remaining seekDB clean-migration job.
+Those jobs still run after a failed priority check unless the workflow is cancelled; the
+12 installed-release cases remain disjoint and parallel. Other CI suites can run concurrently.

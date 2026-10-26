@@ -137,6 +137,20 @@ class _Journal:
             ) from error
 
 
+def require_completed_domain_maintenance(
+    directory: Path, identity: BackendIdentity, *, excluding: str | None = None
+) -> None:
+    """Block admission until recorded domain work completes; its own runner may resume it."""
+    for operation in ("processing_configuration", "atomic_projection"):
+        if operation == excluding:
+            continue
+        evidence = _Journal(directory / operation, identity).read()
+        if evidence is not None and evidence.state != "complete":
+            raise MigrationError(
+                "recovery_required", f"Resume the recorded {operation} maintenance before full Server admission."
+            )
+
+
 class MySQLMigrationRunner:
     """Use one version table, a pinned backend lock, and persistent external intent.
 
@@ -520,6 +534,8 @@ class MySQLMigrationRunner:
     ) -> MigrationPlan:
         if backup_policy not in {"auto", "manual", "skip"}:
             raise MigrationError("invalid_backup_policy", "Choose auto, manual or skip.")
+        if self.bundle.readiness_scope == "server":
+            require_completed_domain_maintenance(self.evidence_directory, identity)
         journal = _Journal(self.evidence_directory, identity)
         evidence = journal.read()
         inventory = (

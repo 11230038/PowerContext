@@ -358,6 +358,10 @@ SQLite 安装版本验收套件将自动备份还原到独立数据库，比较�
 
 本 bundle 的 SQLite `p0003` 会重建标签表，将旧结构和数据保存在 `pc_retained_p0002_artifact_tags`。seekdb／OceanBase 的 `p0003` 原地修改 CHECK，不替换或删除业务表，因此不创建 SQLite 的历史副本。两条路径均不自动删除备份恢复点。
 
+完整 Server 的 `db-migrate status`、`plan`、`apply`、`verify` 在三个后端都会检查所选证据目录中的
+Processing 配置维护和 Atomic Memory 投影维护记录。即使数据库结构已符合目标，存在未完成记录时仍返回
+`recovery_required`。应使用原配置和恢复证据继续原维护操作；完整迁移不能绕过这项检查。
+
 本地启动只读探测已存在的 SQLite／嵌入式 seekDB 维护锁，不创建或修改锁文件。发现活动锁时，
 新运行实例返回 `migration_locked`。SQLite SDK 和后台启动还会检查默认相邻迁移证据目录：未完成的维护、
 已登记 revision 校验和变化、必留历史表缺失都会阻止启动。没有该记录的当前结构数据库，只要结构和领域校验通过，

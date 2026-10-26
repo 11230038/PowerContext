@@ -22,12 +22,15 @@ import sys
 from contextlib import closing
 
 import pytest
+from typer.testing import CliRunner
 
 from powercontext.builtin.persistence.migrations.backup import SQLiteBackupProvider
 from powercontext.builtin.persistence.migrations.deployment import deployment_runner
 from powercontext.builtin.persistence.migrations.models import MigrationError
 from powercontext.builtin.runtime import BuiltinConfig, open_builtin_contexts
 from powercontext.builtin.runtime.config import RuntimeConfig
+from powercontext.cli.app import create_cli
+from powercontext.server.cli import app
 from tests.test_managed_maintenance_evidence import _managed
 
 
@@ -136,7 +139,7 @@ def test_new_process_cannot_start_after_backup_while_maintenance_owns_lock(tmp_p
 
 
 def test_interrupted_partial_maintenance_blocks_startup_after_lock_release(tmp_path, monkeypatch):
-    _, settings, _ = _managed(tmp_path, None)
+    path, settings, full = _managed(tmp_path, None)
     target = settings.model_copy(update={"runtime": RuntimeConfig(artifact_processing_supervisor_mode="dedicated")})
     runner = deployment_runner(target, bundle="processing")
     plan = runner.plan()
@@ -152,8 +155,23 @@ def test_interrupted_partial_maintenance_blocks_startup_after_lock_release(tmp_p
             runner.apply(plan_id=plan.plan_id, accepted=True, maintenance_confirmed=True)
     with pytest.raises(MigrationError, match="recovery_required"):
         open_runtime(settings.database)
+    environment = tmp_path / "server.env"
+    environment.write_text(
+        f"POWERCONTEXT_SERVER_DATABASE_KIND=sqlite\nPOWERCONTEXT_SERVER_DATABASE_URL={settings.database.url}\n"
+    )
+    database_before = path.read_bytes()
+    journals_before = {entry: entry.read_bytes() for entry in full.evidence_path.parent.rglob("maintenance.json")}
+    for action in ("status", "plan", "verify", "apply"):
+        result = CliRunner().invoke(create_cli([app]), ["server", "db-migrate", action, "--env-file", str(environment)])
+        assert result.exit_code == 1, result.output
+        assert json.loads(result.output)["error"] == "recovery_required", result.output
+    assert path.read_bytes() == database_before
+    assert {
+        entry: entry.read_bytes() for entry in full.evidence_path.parent.rglob("maintenance.json")
+    } == journals_before
     resumed = runner.plan()
     assert runner.apply(plan_id=resumed.plan_id, accepted=True, maintenance_confirmed=True).state == "ready"
+    assert deployment_runner(target).verify().state == "ready"
 
 
 def test_seekdb_startup_rejects_local_maintenance_before_opening_engine(tmp_path):
@@ -169,3 +187,58 @@ def test_seekdb_startup_rejects_local_maintenance_before_opening_engine(tmp_path
     with local_migration_lock(target), pytest.raises(MigrationError, match="migration_locked"):
         asyncio.run(start())
     assert not target.exists()
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "seekdb", "oceanbase"])
+@pytest.mark.parametrize("operation", ["processing_configuration", "atomic_projection"])
+@pytest.mark.parametrize("state", ["preparing", "active"])
+def test_full_admission_rejects_unfinished_domain_journals(tmp_path, monkeypatch, backend, operation, state):
+    """Native cases model the connection identity; they do not claim native engine acceptance."""
+    from pydantic import SecretStr
+
+    from powercontext.builtin.persistence.migrations.connections import BackendIdentity, MaintenanceConnections
+    from powercontext.builtin.persistence.migrations.models import digest
+    from powercontext.builtin.persistence.migrations.mysql import MySQLMigrationRunner, _Evidence, _Journal
+    from powercontext.builtin.persistence.oceanbase import OceanBaseConfig
+    from powercontext.builtin.persistence.seekdb import SeekDBConfig
+
+    path, _settings, full = _managed(tmp_path, None)
+    directory = full.evidence_path.parent
+    identity = BackendIdentity("sqlite", digest({"kind": "sqlite", "path": str(path.resolve())}), path.name)
+    if backend != "sqlite":
+        config = (
+            SeekDBConfig(path=tmp_path / "seekdb")
+            if backend == "seekdb"
+            else OceanBaseConfig(url=SecretStr("mysql+aoceanbase://root@localhost:2881/test?charset=utf8mb4"))
+        )
+        connections = MaintenanceConnections(
+            config, evidence_directory=directory, lock_coordination="single-host" if backend == "oceanbase" else None
+        )
+        full = MySQLMigrationRunner(connections, full.bundle, evidence_directory=directory)
+        identity = BackendIdentity(backend, "modeled-native-database", "test")
+        monkeypatch.setattr(connections, "run", lambda callback, **_options: callback(None, identity, lambda: None))
+        assert full.plan().state == "uninitialized"
+    else:
+        assert full.verify().state == "ready"
+    journal = _Journal(directory / operation, identity)
+    journal.write(
+        _Evidence(
+            state=state,
+            database_id=identity.database_id,
+            source_revision=full.bundle.head,
+            source_fingerprint="interrupted-domain-maintenance",
+            bundle_checksum="domain-bundle",
+            configuration_digest="domain-configuration",
+            last_revision=full.bundle.head,
+            maintenance_window_id="interrupted-domain-window",
+            backup_policy="skip",
+            backup_state="skipped",
+        )
+    )
+    before = journal.path.read_bytes()
+    database_before = path.read_bytes()
+    for inspect in (full.plan, full.verify, lambda: full.apply(accepted=True, maintenance_confirmed=True)):
+        with pytest.raises(MigrationError, match="recovery_required"):
+            inspect()
+    assert journal.path.read_bytes() == before
+    assert path.read_bytes() == database_before

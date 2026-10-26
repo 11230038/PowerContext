@@ -468,6 +468,11 @@ In this bundle, SQLite revision `p0003` recreates the tag table and retains its 
 deleting the business table, so it does not create the SQLite history copy. Neither path automatically deletes backup
 recovery points.
 
+Full Server `db-migrate status`, `plan`, `apply`, and `verify` also inspect the selected evidence directory for
+unfinished Processing configuration and Atomic Memory projection maintenance on all three backends. They return
+`recovery_required` until the original domain operation completes, even if the schema already matches the target.
+Resume that operation with its original configuration and recovery evidence; full migration cannot bypass it.
+
 Local startup probes an existing SQLite/embedded seekDB maintenance lock without creating or changing its file.
 An observed active lock blocks new runtimes with `migration_locked`. SQLite SDK and background admission also
 check the default adjacent migration evidence directory: unfinished maintenance, changed recorded revision checksums,
