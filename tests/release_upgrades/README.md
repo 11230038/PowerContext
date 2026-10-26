@@ -13,7 +13,7 @@ these names while retaining the original revision IDs in execution and recovery 
 
 The `automatic_sources` policy uses `strategy: "fixed-version"` and `source_version: "1.3.0"`.
 Explicit `cases` are empty. CI requires twelve configurations of the 1.3.0 source across SQLite,
-embedded seekDB, and OceanBase. The target is the **actual wheel built by this job**, not the latest published
+embedded seekDB, and OceanBase. The target is the **actual wheel built by the shared preparation job**, not the latest published
 PyPI package. Later target releases keep the same 1.3.0 baseline; intermediate releases are not added automatically.
 The framework and fixture retain the independently registered 1.4.0 adapter, but CI does not execute its
 installed-release upgrade path. Passing this gate does not establish 1.4.0 upgrade acceptance. This matrix does not establish support for every intermediate release's database or
@@ -60,9 +60,25 @@ runs directly in a temporary runner directory. A backend startup failure fails t
 OceanBase reserves separate upgraded and fresh databases for every source/configuration pair. The default
 connection URLs remain `pc_upgrade_test` and `pc_upgrade_fresh`; the suite selects the corresponding configuration
 and, for 1.4.0, the `pc_upgrade_140` prefix before either Server is started. Every selected database must be empty.
-The PR and publication jobs allow six hours for the twelve cases and environment setup. The thirty-minute
-per-case deadline and descendant cleanup are unchanged; increasing the overall budget does not turn a timeout
-into successful acceptance.
+PR and publication CI use the same reusable workflow, `upgrade-release.yml`:
+
+1. **Prepare once:** build the wheel and source archive, rebuild the source archive to verify matching contents,
+   validate release metadata, and resolve the source catalog into one frozen twelve-case plan.
+2. **Run independent cases:** twelve matrix jobs each execute exactly one source/backend/configuration tuple.
+   Every job downloads the same prepared artifacts and verifies their hashes. Each OceanBase job owns a separate
+   container; SQLite and embedded seekDB run in their own runners. `fail-fast: false` allows other cases to finish
+   after a failure. There is no second serial execution of the matrix.
+3. **Collect once:** require exactly one passing result for every planned case, revalidate JUnit phases, installed
+   versions and backend evidence, and reject duplicate, missing, skipped, failed or mixed-plan reports. The plan
+   binds the workflow run, checkout, reviewed policy and distribution hashes. A new preparation gets a new identity;
+   rerunning only failed cases can reuse the unchanged prepared plan and the other cases' results from that run.
+4. **Gate publication:** require all case jobs, including cleanup and artifact upload, to succeed. Only the accepted
+   distribution snapshot can reach PyPI or GitHub Release assets. `upgrade-required` still blocks publication.
+
+The fixed required check remains **Upgrade release gate**. It fails if the shared workflow fails or is cancelled.
+Each case job has a sixty-minute budget including provisioning; existing thirty-minute command deadlines and
+owned-descendant cleanup remain unchanged. Wall time depends on the slowest case and available runner capacity,
+not the sum of twelve cases. This increases concurrent runner use and does not promise a fixed speedup.
 
 The runner creates separate source/target environments, installs the exact published source package and the built
 target wheel, verifies their versions, then executes the reviewed suite in an isolated working directory. Repository
@@ -108,7 +124,9 @@ inventories or their digests in `source_schema`, `target_schema`, and `fresh_sch
 `tenant_mode: "mysql"` and `proxy_version` (or `direct`). Do not record credentials or business payloads. The controller
 records installed Python/package versions, target wheel SHA-256, policy SHA-256, and the individual case result.
 
-Evidence is created during the gate run in a new directory. There is no option to import old successful reports.
+Evidence is created during the gate run in new directories. Parallel collection accepts only reports bound to
+that preparation plan; unrelated historical results cannot satisfy the gate. The local serial runner does not
+import reports.
 Test names and metadata do not themselves prove correctness: reviewers must inspect the assertions and confirm
 they follow actual installed operations and compare persisted data. The profile exercises explicit writes, FTS and
 actual background Memory processing with controlled model responses. Both installed releases declare the Memory
@@ -140,12 +158,12 @@ not the earlier manual creation of a GitHub Release; run the prepublication comm
 
 `scripts/ci_legacy_upgrade_rejection.py` remains a diagnostic tool for historical rejection behavior. PR and release
 workflows do not invoke it as upgrade acceptance. An expected rejection or its `--respect-policy` result can never
-replace a successful positive upgrade. The gate attempts every required backend even after an earlier case fails,
-then fails overall and archives each case's logs and result. Empty matrices and missing suites are errors.
+replace a successful positive upgrade. Independent CI jobs attempt every required combination even after another case fails; the local serial runner
+continues through the same matrix. Both fail overall and preserve each case's logs and result. Empty matrices and missing suites are errors.
 
 ## Publication artifacts
 
-The runner validates every distribution input. Publication requires exactly one wheel and one source archive with
+Preparation validates every distribution input once before parallel execution. Publication requires exactly one wheel and one source archive with
 matching names and metadata. It rebuilds the source archive with `uv build --wheel` and compares wheel member bytes,
 excluding only the derived `RECORD` file. A same-version stale source archive fails just like an older-version one.
 PRs may test a wheel alone, but the PR workflow builds both formats to exercise this validation too.

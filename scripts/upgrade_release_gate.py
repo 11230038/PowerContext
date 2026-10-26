@@ -453,44 +453,49 @@ def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dic
             cwd=directory,
             log=output / "acceptance.log",
         )
-        validate_junit(report)
-        backend = validate_backend_evidence(output / "backend.json", case["backend"])
-        require(backend.get("configuration") == case["configuration"], "Configuration evidence differs from the case")
-        if case["configuration"] in {"full-server-code", "full-server-vector-code"}:
-            code = backend.get("code")
-            if not isinstance(code, dict):
-                raise GateError("Installed Code acceptance evidence required")  # noqa: TRY003 -- operator diagnostic
-            require(
-                re.fullmatch(r"[0-9a-f]{64}", str(code.get("fingerprint", "")))
-                and all(
-                    code.get(field) is True
-                    for field in ("immutable_cache_files_preserved", "symbol_ids_preserved", "server_query_ready")
-                ),
-                "The installed Code index must remain queryable with its original immutable identity",
-            )
-        if case["configuration"] in {"full-server-vector", "full-server-vector-code"}:
-            vectors = backend.get("vectors")
-            if not isinstance(vectors, dict):
-                raise GateError("Installed vector acceptance evidence required")  # noqa: TRY003 -- operator diagnostic
-            require(
-                vectors.get("dimension") == (4 if case["configuration"].endswith("-code") else 3)
-                and vectors.get("maintenance_embedding_requests") == 0
-                and all(
-                    vectors.get(field) is True
-                    for field in (
-                        "historical_atomic_and_topic_embeddings_preserved",
-                        "historical_and_new_vector_reads",
-                        "fresh_vector_read",
-                        "profile_drift_rejected",
-                    )
-                )
-                and (case["backend"] != "sqlite" or vectors.get("missing_sqlite_helper_rejected") is True),
-                "Installed vector acceptance must preserve and retrieve the original embedding space",
-            )
+        backend = validate_case_output(case, output)
         return {"case": case, "installed": metadata, "database": backend, "status": "passed"}
 
 
-def gate(root: Path, wheel: Path, output: Path, *, release: bool = False, release_notes: str | None = None) -> None:
+def validate_case_output(case: dict[str, Any], output: Path) -> dict[str, Any]:
+    validate_junit(output / "junit.xml")
+    backend = validate_backend_evidence(output / "backend.json", case["backend"])
+    require(backend.get("configuration") == case["configuration"], "Configuration evidence differs from the case")
+    if case["configuration"] in {"full-server-code", "full-server-vector-code"}:
+        code = backend.get("code")
+        if not isinstance(code, dict):
+            raise GateError("Installed Code acceptance evidence required")  # noqa: TRY003 -- operator diagnostic
+        require(
+            re.fullmatch(r"[0-9a-f]{64}", str(code.get("fingerprint", "")))
+            and all(
+                code.get(field) is True
+                for field in ("immutable_cache_files_preserved", "symbol_ids_preserved", "server_query_ready")
+            ),
+            "The installed Code index must remain queryable with its original immutable identity",
+        )
+    if case["configuration"] in {"full-server-vector", "full-server-vector-code"}:
+        vectors = backend.get("vectors")
+        if not isinstance(vectors, dict):
+            raise GateError("Installed vector acceptance evidence required")  # noqa: TRY003 -- operator diagnostic
+        require(
+            vectors.get("dimension") == (4 if case["configuration"].endswith("-code") else 3)
+            and vectors.get("maintenance_embedding_requests") == 0
+            and all(
+                vectors.get(field) is True
+                for field in (
+                    "historical_atomic_and_topic_embeddings_preserved",
+                    "historical_and_new_vector_reads",
+                    "fresh_vector_read",
+                    "profile_drift_rejected",
+                )
+            )
+            and (case["backend"] != "sqlite" or vectors.get("missing_sqlite_helper_rejected") is True),
+            "Installed vector acceptance must preserve and retrieve the original embedding space",
+        )
+    return backend
+
+
+def validate_target(root: Path, wheel: Path, *, release: bool, release_notes: str | None) -> dict[str, Any]:
     policy = load_policy(root)
     check_docs(root, policy)
     actual_version = wheel_version(wheel)
@@ -501,6 +506,12 @@ def gate(root: Path, wheel: Path, output: Path, *, release: bool = False, releas
             support_text(policy, "en") in (release_notes or ""),
             "GitHub Release notes must include the exact upgrade support declaration",
         )
+    return policy
+
+
+def gate(root: Path, wheel: Path, output: Path, *, release: bool = False, release_notes: str | None = None) -> None:
+    policy = validate_target(root, wheel, release=release, release_notes=release_notes)
+    actual_version = wheel_version(wheel)
     # A fresh output directory prevents accepting stale reports from another build.
     output.mkdir(parents=True, exist_ok=False)
     evidence: dict[str, Any] = {

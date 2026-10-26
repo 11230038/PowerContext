@@ -27,6 +27,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from xml.etree import ElementTree
 
+import parallel_upgrade_release_gate as parallel
 import pytest
 import upgrade_release_gate as gate
 import upgrade_release_matrix as matrix
@@ -415,15 +416,30 @@ def test_publishing_jobs_depend_on_nonoptional_preupload_upgrade_gate():
     root = Path(__file__).parents[1]
     workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
     build = workflow["jobs"]["release-build"]
-    steps = build["steps"]
-    index = next(i for i, step in enumerate(steps) if "run_upgrade_release_gate.py" in step.get("run", ""))
+    assert build["uses"] == "./.github/workflows/upgrade-release.yml"
+    assert build["with"]["release"] is True
+    assert not build.get("continue-on-error")
+    shared = yaml.safe_load((root / ".github/workflows/upgrade-release.yml").read_text())["jobs"]
+    prepare = shared["prepare"]["steps"]
+    freeze = next(step for step in prepare if "parallel_upgrade_release_gate.py prepare" in step.get("run", ""))
+    assert "--release --release-event" in freeze["run"]
+    steps = shared["collect"]["steps"]
+    index = next(i for i, step in enumerate(steps) if "parallel_upgrade_release_gate.py collect" in step.get("run", ""))
     assert "if" not in steps[index] and not steps[index].get("continue-on-error")
-    assert "--release --release-event" in steps[index]["run"]
     upload = next(i for i, step in enumerate(steps) if step.get("with", {}).get("name") == "release-dists")
     assert index < upload
+    assert steps[upload]["if"] == "success() && inputs.release"
     assert steps[upload]["with"]["path"] == "${{ runner.temp }}/upgrade-release-evidence/validated-dist/*"
+    assert shared["collect"]["needs"] == ["prepare", "cases"]
+    assert any('test "$CASE_JOBS_RESULT" = success' in step.get("run", "") for step in steps)
     for name in ("pypi-publish", "release-assets"):
         assert workflow["jobs"][name]["needs"] == "release-build"
+    main = yaml.safe_load((root / ".github/workflows/master.yml").read_text())["jobs"]
+    assert main["upgrade-acceptance"]["uses"] == build["uses"]
+    verdict = main["upgrade-release-gate"]
+    assert verdict["name"] == "Upgrade release gate" and verdict["if"] == "always()"
+    assert verdict["needs"] == "upgrade-acceptance"
+    assert verdict["steps"][0]["run"] == 'test "$UPGRADE_RESULT" = success'
 
 
 @pytest.mark.parametrize(
@@ -451,24 +467,29 @@ def test_repository_baseline_covers_all_three_databases(configuration, monkeypat
     }
 
 
-@pytest.mark.parametrize("workflow_name,job_name", [("master", "upgrade-release-gate"), ("release", "release-build")])
-def test_upgrade_jobs_require_real_backends_and_always_clean_up(workflow_name, job_name):
+def test_upgrade_cases_require_isolated_backends_and_always_clean_up():
     root = Path(__file__).parents[1]
-    workflow = yaml.safe_load((root / f".github/workflows/{workflow_name}.yml").read_text())
-    job = workflow["jobs"][job_name]
+    workflow = yaml.safe_load((root / ".github/workflows/upgrade-release.yml").read_text())
+    job = workflow["jobs"]["cases"]
+    assert job["needs"] == "prepare"
+    assert job["strategy"]["fail-fast"] is False
+    assert job["strategy"]["matrix"] == "${{ fromJSON(needs.prepare.outputs.matrix) }}"
     steps = job["steps"]
     setup_index = next(
         i for i, step in enumerate(steps) if step.get("uses") == "./.github/actions/setup-upgrade-oceanbase"
     )
-    gate_index = next(i for i, step in enumerate(steps) if "run_upgrade_release_gate.py" in step.get("run", ""))
+    gate_index = next(
+        i for i, step in enumerate(steps) if "parallel_upgrade_release_gate.py case" in step.get("run", "")
+    )
     assert setup_index < gate_index
-    for index in (setup_index, gate_index):
-        assert "if" not in steps[index] and not steps[index].get("continue-on-error")
+    assert steps[setup_index]["if"] == "matrix.backend == 'oceanbase'"
+    assert "if" not in steps[gate_index]
+    assert not any(step.get("continue-on-error") for step in steps)
     assert not any("ci_legacy_upgrade_rejection.py" in step.get("run", "") for step in steps)
     assert "/pc_upgrade_test?" in job["env"]["PC_UPGRADE_OCEANBASE_URL"]
     assert "/pc_upgrade_fresh?" in job["env"]["PC_UPGRADE_OCEANBASE_FRESH_URL"]
     cleanup = next(step for step in steps if "docker rm --force upgrade-oceanbase" in step.get("run", ""))
-    assert cleanup["if"] == "always()"
+    assert cleanup["if"] == "always() && matrix.backend == 'oceanbase'"
 
 
 def test_oceanbase_sources_and_profiles_use_separate_provisioned_databases(tmp_path, monkeypatch):
@@ -871,3 +892,172 @@ def _process_exists(pid):
     except ProcessLookupError:
         return False
     return True
+
+
+@pytest.fixture
+def parallel_reports(release, monkeypatch):
+    root, wheel, policy = release
+    dist = root / "dist"
+    dist.mkdir()
+    shutil.copyfile(wheel, dist / wheel.name)
+    prepared = root / "prepared"
+    scheduled = parallel.prepare(root, dist, prepared, release=False, release_notes=None)
+    executed = []
+
+    def execute(_root, tested_wheel, case, output):
+        executed.append(case)
+        assert gate.sha256(tested_wheel) == gate.sha256(wheel)
+        output.mkdir()
+        installed = {"source": {"powercontext": case["source_version"]}, "target": {"powercontext": "2.0.0"}}
+        backend = {
+            "backend": case["backend"],
+            "configuration": case["configuration"],
+            "engine_version": "fixture",
+            "driver_version": "fixture",
+            "source_schema": "source",
+            "target_schema": "target",
+            "fresh_schema": "fresh",
+            "tenant_mode": "mysql",
+            "proxy_version": "direct",
+        }
+        parallel.write_json(output / "installed.json", installed)
+        parallel.write_json(output / "backend.json", backend)
+        tree = ElementTree.Element("testsuite")
+        for phase in gate.PHASES:
+            ElementTree.SubElement(tree, "testcase", name=phase)
+        ElementTree.ElementTree(tree).write(output / "junit.xml")
+        return {"case": case, "status": "passed", "installed": installed, "database": backend}
+
+    monkeypatch.setattr(gate, "run_case", execute)
+    # Source discovery must not recur on independent workers or during collection.
+    monkeypatch.setattr(matrix, "fetch_catalog", lambda: pytest.fail("Catalog resolved twice"))
+    reports = root / "reports"
+    for entry in reversed(scheduled["include"]):
+        parallel.execute_case(root, prepared, entry["index"], reports / f"case-{entry['index']}")
+    assert len(executed) == len(scheduled["include"]) == 3
+    assert len({(case["source_version"], case["backend"], case["configuration"]) for case in executed}) == 3
+    return root, prepared, reports, policy
+
+
+def test_parallel_collection_accepts_each_case_once_and_keeps_exact_artifacts(parallel_reports):
+    root, prepared, reports, _ = parallel_reports
+    accepted = parallel.collect(root, prepared, reports, root / "accepted")
+    plan = json.loads((prepared / "plan.json").read_text())
+    assert {path.name: gate.sha256(path) for path in accepted} == plan["artifacts"]
+    verdict = json.loads((root / "accepted/result.json").read_text())
+    assert verdict["status"] == "passed"
+    assert [result["case"] for result in verdict["cases"]] == plan["resolved_matrix"]["required_cases"]
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        "missing",
+        "duplicate",
+        "stale",
+        "failed",
+        "wrong-case",
+        "skipped",
+        "missing-phase",
+        "installed",
+        "backend",
+        "artifact",
+    ],
+)
+def test_parallel_collection_rejects_incomplete_or_mixed_evidence(parallel_reports, broken):
+    root, prepared, reports, _ = parallel_reports
+    path = reports / "case-0/result.json"
+    result = json.loads(path.read_text())
+    if broken == "missing":
+        path.unlink()
+    elif broken == "duplicate":
+        another = reports / "case-1/result.json"
+        parallel.write_json(another, result)
+    elif broken == "stale":
+        result["plan_sha256"] = "0" * 64
+        parallel.write_json(path, result)
+    elif broken == "failed":
+        result["status"] = "failed"
+        parallel.write_json(path, result)
+    elif broken == "wrong-case":
+        result["result"]["case"]["configuration"] = "different-profile"
+        parallel.write_json(path, result)
+    elif broken in {"skipped", "missing-phase"}:
+        report = path.parent / "acceptance/junit.xml"
+        tree = ElementTree.parse(report)  # noqa: S314 -- disposable locally generated test report
+        if broken == "skipped":
+            ElementTree.SubElement(next(tree.iter("testcase")), "skipped")
+        else:
+            tree.getroot().remove(next(tree.iter("testcase")))
+        tree.write(report)
+    elif broken == "installed":
+        parallel.write_json(path.parent / "acceptance/installed.json", {"target": {"powercontext": "old"}})
+    elif broken == "backend":
+        parallel.write_json(path.parent / "acceptance/backend.json", {"backend": "sqlite"})
+    else:
+        wheel = next((prepared / "inputs").glob("*.whl"))
+        wheel.write_bytes(b"a different build")
+    with pytest.raises(gate.GateError):
+        parallel.collect(root, prepared, reports, root / "accepted")
+    assert not (root / "accepted/validated-dist").exists()
+
+
+def test_parallel_workers_reject_another_run(parallel_reports, monkeypatch):
+    root, prepared, reports, _ = parallel_reports
+    monkeypatch.setenv("GITHUB_RUN_ID", "another-run")
+    with pytest.raises(gate.GateError, match="another workflow"):
+        parallel.collect(root, prepared, reports, root / "accepted")
+
+
+def test_parallel_failed_case_still_records_failure_and_allows_other_workers(release, monkeypatch):
+    root, wheel, _ = release
+    dist = root / "dist"
+    dist.mkdir()
+    shutil.copyfile(wheel, dist / wheel.name)
+    prepared = root / "prepared"
+    parallel.prepare(root, dist, prepared, release=False, release_notes=None)
+
+    def fail(*_args):
+        raise gate.GateError("migration_required")
+
+    monkeypatch.setattr(gate, "run_case", fail)
+    with pytest.raises(gate.GateError, match="migration_required"):
+        parallel.execute_case(root, prepared, 0, root / "reports/case-0")
+    assert json.loads((root / "reports/case-0/result.json").read_text())["status"] == "failed"
+    monkeypatch.setattr(gate, "run_case", lambda *_args: {"status": "passed"})
+    parallel.execute_case(root, prepared, 1, root / "reports/case-1")
+    assert json.loads((root / "reports/case-1/result.json").read_text())["status"] == "passed"
+
+
+@pytest.mark.parametrize("changed", ["policy", "checkout", "matrix"])
+def test_parallel_workers_reject_changed_preparation_inputs(parallel_reports, monkeypatch, changed):
+    root, prepared, _reports, policy = parallel_reports
+    if changed == "policy":
+        policy["schema_review"]["rationale"] += " Changed review."
+        parallel.write_json(root / gate.MANIFEST, policy)
+    elif changed == "checkout":
+        monkeypatch.setenv("GITHUB_SHA", "another-commit")
+    else:
+        plan = json.loads((prepared / "plan.json").read_text())
+        plan["resolved_matrix"]["required_cases"].pop()
+        parallel.write_json(prepared / "plan.json", plan)
+    with pytest.raises(gate.GateError):
+        parallel.execute_case(root, prepared, 0, root / "another-case")
+    assert not (root / "another-case").exists()
+
+
+def test_parallel_passes_do_not_override_unreviewed_release_support(parallel_reports):
+    root, prepared, reports, policy = parallel_reports
+    # Model the release preparation metadata; distribution validation itself is
+    # exercised with real sdist rebuilds in test_upgrade_publication.py.
+    plan = json.loads((prepared / "plan.json").read_text())
+    plan["release"] = True
+    plan["release_notes"] = gate.support_text(policy, "en")
+    parallel.write_json(prepared / "plan.json", plan)
+    for path in reports.glob("*/result.json"):
+        result = json.loads(path.read_text())
+        result["plan_sha256"] = gate.sha256(prepared / "plan.json")
+        parallel.write_json(path, result)
+    with pytest.raises(gate.GateError, match="support declaration"):
+        parallel.collect(root, prepared, reports, root / "accepted")
+    assert not (root / "accepted/validated-dist").exists()
