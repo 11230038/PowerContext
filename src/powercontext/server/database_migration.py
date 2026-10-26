@@ -28,6 +28,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from powercontext.builtin.persistence.migrations import MigrationError, MigrationPlan, MigrationResult
 from powercontext.builtin.persistence.migrations.deployment import MigrationRunner, deployment_runner
+from powercontext.builtin.persistence.migrations.revision_names import describe_revision
 from powercontext.server.configuration import (
     ServerConfigurationError,
     resolve_server_environment_file,
@@ -271,15 +272,19 @@ def _interactive() -> bool:
 
 
 def _write_payload(value: MigrationPlan | MigrationResult, *, indent: int | None = None) -> None:
-    typer.echo(
-        json.dumps(
-            {
-                **value.model_dump(mode="json"),
-                "server_ready": value.readiness_scope == "server" and value.state == "ready",
-            },
-            indent=indent,
-        )
-    )
+    payload: dict[str, object] = {}
+    if value.readiness_scope == "server":
+        if isinstance(value, MigrationPlan):
+            payload.update(
+                source_migration=describe_revision(value.source_revision),
+                target_migration=describe_revision(value.target_revision),
+                pending_migrations=[describe_revision(revision) for revision in value.revisions],
+            )
+        else:
+            payload["migration"] = describe_revision(value.revision)
+    payload.update(value.model_dump(mode="json"))
+    payload["server_ready"] = value.readiness_scope == "server" and value.state == "ready"
+    typer.echo(json.dumps(payload, indent=indent))
 
 
 def _write_confirmation(reviewed: MigrationPlan, policy: BackupPolicy) -> None:

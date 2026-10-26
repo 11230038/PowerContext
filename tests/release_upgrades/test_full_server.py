@@ -606,10 +606,17 @@ def migrated(case, historical, rejected_legacy_startup):
         assert not result.get("error"), result
         return result
 
-    migration("status")
+    status = migration("status")
     backup_policy = "auto" if case["backend"] == "sqlite" else "skip"
     plan = migration("plan", "--backup", backup_policy)
     assert plan.get("plan_id"), "The public plan must identify exactly what will be applied"
+    expected_source_name = "v" + case["source_version"].replace(".", "_") + "_000"
+    assert status["source_migration"] == plan["source_migration"]
+    assert plan["source_migration"]["name"] == expected_source_name
+    assert plan["source_migration"]["revision"] == SOURCE_ADAPTERS[case["source_version"]]["revision"]
+    assert [item["revision"] for item in plan["pending_migrations"]] == plan["revisions"]
+    assert [item["name"] for item in plan["pending_migrations"][:3]] == ["v1_4_1_001", "v1_4_1_002", "v1_4_1_003"]
+    assert plan["target_migration"] == plan["pending_migrations"][-1]
     # SQLite exercises its supported automatic recovery point. The other
     # disposable backend fixtures explicitly accept no backup.
     applied = migration(
@@ -623,6 +630,7 @@ def migrated(case, historical, rejected_legacy_startup):
         *(["--accept-no-backup"] if backup_policy == "skip" else []),
     )
     verified = migration("verify")
+    assert applied["migration"] == verified["migration"] == plan["target_migration"]
     assert verified.get("state") == "ready" and verified.get("server_ready") is True, (
         "Full Server readiness is required; registered-bundle verification is insufficient",
         verified,

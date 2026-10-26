@@ -14,7 +14,7 @@ The design follows [RFC #1771](https://github.com/oceanbase/powercontext/pull/17
 
 `powercontext server db-migrate status/plan/apply/verify` default to `--bundle server` and use the configured persistent SQLite, embedded seekDB, or OceanBase MySQL database. Explicit environment files are authoritative; arbitrary bundle paths are not accepted.
 
-The full Server framework registers two installed-release sources:
+The full Server framework registers two installed-release sources for the PowerContext 1.4.1 target (stored compatibility IDs shown below):
 
 - **1.3.0:** `s1300 → s1400 → s1401 → s1402`.
 - **1.4.0:** `r1400 → s1400 → s1401 → s1402` through a separate frozen source bridge.
@@ -81,6 +81,50 @@ See [Deploy the Server](deploy-server.md) for service deployment.
 conversion for unmanaged legacy Memory layouts. Decision files for that conversion cannot modify the registered Server
 chain. The compatibility command returns the shared Server plan/result for managed storage; an already-ready apply is a
 read-only no-op. See [Migrate to Atomic Memory](atomic-memory-migration.md).
+
+## Migration names and software versions
+
+The target release is **PowerContext 1.4.1**. Migration names use
+`v<major>_<minor>_<patch>_<sequence>`, with a three-digit sequence within the release.
+Sequence `000` identifies a registered historical baseline; upgrade steps start at `001`.
+
+| Migration name | Software release | Step | Compatible stored revision | Meaning |
+| --- | --- | --- | --- | --- |
+| `v1_3_0_000` | 1.3.0 | Baseline | `s1300` | Released 1.3.0 Server storage |
+| `v1_4_0_000` | 1.4.0 | Baseline | `r1400` | Released 1.4.0 Server storage |
+| `v1_4_1_001` | 1.4.1 | 1 | `s1400` | Complete Server storage transition |
+| `v1_4_1_002` | 1.4.1 | 2 | `s1401` | Offline Memory history archive |
+| `v1_4_1_003` | 1.4.1 | 3 | `s1402` | Portable restore receipts and timestamp adaptation |
+
+Both supported sources reach `v1_4_1_003`:
+
+```text
+1.3.0: v1_3_0_000 -> v1_4_1_001 -> v1_4_1_002 -> v1_4_1_003
+1.4.0: v1_4_0_000 -> v1_4_1_001 -> v1_4_1_002 -> v1_4_1_003
+```
+
+`status` and `plan` show `source_migration`, `target_migration` and `pending_migrations`
+before the existing machine fields. `apply` and `verify` show `migration`. Each descriptor
+contains `name`, `software_version`, `sequence` and the compatible `revision` ID. For example:
+
+```json
+{"revision":"s1402","name":"v1_4_1_003","software_version":"1.4.1","sequence":3}
+```
+
+The software version describes the registered database state, not the currently running binary
+or the source of an interrupted maintenance window. A release without storage changes may reuse
+the same database revision. Names do not prove upgrade acceptance; the full release gate still applies.
+
+The existing `s1300`, `r1400` and `s1400`–`s1402` IDs remain in version tables, plan IDs,
+frozen resources and recovery evidence. Their release-based names are display aliases, not
+additional executable revisions or accepted replacement IDs for stamping a database. This keeps
+existing plans and original backups usable. Partial prototype bundles keep their own opaque IDs.
+
+For a new Server migration, use the release-based name directly as its Alembic `revision` and
+register its schema, domain steps and recovery checkpoints as usual. `down_revision` must reference
+the actual preceding ID (`s1402` when appending directly to the current head), even if that ID has
+a display alias. The framework follows this registered chain, not lexical name ordering. Already
+registered names and release assignments stay immutable; a version bump must not rename history.
 
 ## Initialization and maintenance ownership
 
