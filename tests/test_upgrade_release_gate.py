@@ -429,7 +429,7 @@ def test_publishing_jobs_depend_on_nonoptional_preupload_upgrade_gate():
 @pytest.mark.parametrize(
     "configuration", ["full-server-no-vector", "full-server-code", "full-server-vector", "full-server-vector-code"]
 )
-def test_repository_baseline_covers_all_three_databases(configuration):
+def test_repository_baseline_covers_all_three_databases(configuration, monkeypatch):
     policy = gate.load_policy(Path(__file__).parents[1])
     selection = policy["automatic_sources"]
     assert selection["strategy"] == "fixed-version"
@@ -440,8 +440,11 @@ def test_repository_baseline_covers_all_three_databases(configuration):
         "seekdb",
         "oceanbase",
     }
-    assert {case["source_version"] for case in policy["cases"]} == {"1.4.0"}
-    assert {case["backend"] for case in policy["cases"] if case["configuration"] == configuration} == {
+    monkeypatch.setattr(matrix, "fetch_catalog", lambda: catalog_for("1.3.0", "1.4.0", "1.4.1"))
+    resolved = matrix.resolve_matrix(policy, policy["target_version"])
+    assert len(resolved["required_cases"]) == 12
+    assert {case["source_version"] for case in resolved["required_cases"]} == {"1.3.0"}
+    assert {case["backend"] for case in resolved["required_cases"] if case["configuration"] == configuration} == {
         "sqlite",
         "seekdb",
         "oceanbase",

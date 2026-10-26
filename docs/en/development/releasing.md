@@ -130,10 +130,11 @@ installation pins are synchronized.
 ### Database upgrade support
 
 `release/upgrade-support.json` declares the target version, source-version selection policy, backends, and
-configurations. `automatic_sources` keeps 1.3.0 as its fixed baseline; explicit cases also register the actual 1.4.0
-release. Together they require 24 cases: two sources × three backends × vectors enabled/disabled × Code
-enabled/disabled. The target is always the actual wheel built by CI. Future target releases keep testing both
-registered sources; an intervening release is not added automatically. Source wheel URLs and SHA-256s are resolved
+configurations. `automatic_sources` keeps 1.3.0 as its fixed baseline; explicit `cases` are empty.
+The gate requires twelve cases: one source × three backends × vectors enabled/disabled × Code enabled/disabled.
+The target is always the actual wheel built by CI. Future target releases keep testing 1.3.0;
+intervening releases are not added automatically. The registered 1.4.0 bridge remains implemented but is outside
+CI upgrade acceptance, so a passing gate does not certify its upgrade path. Source wheel URLs and SHA-256s are resolved
 from public PyPI and recorded with the target artifact.
 
 The source-specific chains are `s1300 → s1400 → s1401 → s1402` for 1.3.0 and
@@ -182,7 +183,7 @@ policy validation alone does not establish an upgrade path. Ordinary PR builds m
 version; the `--release` check must run against the final tagged wheel without overriding its version.
 
 The **Upgrade release gate** CI job requires successful public migration commands, full Server readiness, target
-startup, preserved records and new writes on real 1.3.0 and 1.4.0 databases in all 24 declared cases. Limited bundle verification with
+startup, preserved records and new writes on real 1.3.0 databases in all twelve declared cases. Limited bundle verification with
 `server_ready=false` fails. Every backend runs even if another backend fails, with separate logs and results.
 seekDB runs embedded in a temporary runner directory. PR and publication jobs start a disposable OceanBase CE
 container, wait for its MySQL tenant, archive diagnostics, and remove it even on failure. No external database
