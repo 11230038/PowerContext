@@ -952,6 +952,31 @@ class RelationalContexts:
                 )
         return pending is not None
 
+    async def request_source_count_processing(
+        self,
+        scope_id: str,
+        binding_name: str,
+        minimum_sources: int,
+        /,
+    ) -> bool:
+        """Accept one processing request only after enough new journal identities exist.
+
+        The count spans the persisted journal identities after this binding's last
+        successfully committed cursor, so duplicate captures and receipt trust upgrades
+        that reuse an identity never advance it.
+        """
+
+        scope = validate_scope_id(scope_id)
+        if type(minimum_sources) is not int or minimum_sources < 1:
+            raise ValueError("minimum_sources must be a positive integer")  # noqa: TRY003
+        async with self.database.transaction() as connection:
+            head = await self.repositories.sources.journal_position(connection, scope)
+            cursor = await SourceCursorRepository().load(connection, scope, binding_name)
+            if head - (0 if cursor is None else cursor.cursor.sequence) < minimum_sources:
+                return False
+            await ArtifactProcessingIntentRepository().request(connection, scope, binding_name)
+        return True
+
     async def browse_topic_memories(
         self,
         scope_id: str,

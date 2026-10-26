@@ -166,6 +166,7 @@ from powercontext.builtin.runtime._scope_cache import (
     ScopeCacheObserver,
     ScopeEvictor,
 )
+from powercontext.builtin.runtime.context_pack import ContextPack, ContextPackDelta, ContextPackError
 from powercontext.builtin.runtime.decision_model import DecisionModel
 from powercontext.builtin.runtime.errors import InvalidRuntimeRequestError, TopicMemoryProcessingUnavailableError
 from powercontext.builtin.runtime.models import (
@@ -323,6 +324,7 @@ TopicMemoryGet = Callable[[str, ArtifactRef], Awaitable[PublishedTopicMemory]]
 TopicMemoryBrowse = Callable[..., Awaitable[tuple[TopicMemoryCurrentItem, ...]]]
 TopicMemoryFlush = Callable[[str], Awaitable[bool]]
 TopicMemorySearchObserver = Callable[[str, bool], None]
+SourceCountAdmission = Callable[[str], Awaitable[tuple[str, ...]]]
 
 logger = logging.getLogger(__name__)
 
@@ -488,10 +490,12 @@ class ScopedSourceApplication:
                             span.set_attributes({_MEMORY_CAPTURE_SOURCE_COUNT: 1})
             except BaseValueConflictError as error:
                 raise SourceConflictError("identity", error.identity) from None
-            return SourceReceipt(
+            receipt = SourceReceipt(
                 source_ref=SourceRef(source_type=record.source_type, source_id=record.source_id),
                 sequence=record.position,
             )
+            await self._runtime._admit_source_count(self.scope_id)
+            return receipt
         async with self._runtime._context(self.scope_id) as context:
             with self._runtime._stage(_MEMORY_CAPTURE_STAGE, attributes={}) as span:
                 source, sequence = await context.sources.capture(
@@ -504,7 +508,9 @@ class ScopedSourceApplication:
                 )
                 if span is not None:
                     span.set_attributes({_MEMORY_CAPTURE_SOURCE_COUNT: 1})
-            return SourceReceipt(source_ref=context.sources.catalog.as_ref(source), sequence=sequence)
+            receipt = SourceReceipt(source_ref=context.sources.catalog.as_ref(source), sequence=sequence)
+        await self._runtime._admit_source_count(self.scope_id)
+        return receipt
 
 
 class SourceApplication:
@@ -531,11 +537,13 @@ class ScopedRecordApplication:
         /,
     ) -> SourceRecord:
         async with self._runtime._scope_operation(self.scope_id), self._runtime._locked(self.scope_id):
-            return await self._runtime._records().create_source(
+            record = await self._runtime._records().create_source(
                 self.scope_id,
                 source_type,
                 content,
             )
+        await self._runtime._admit_source_count(self.scope_id)
+        return record
 
     async def get_source(self, source_type: str, source_id: str, /) -> SourceRecord:
         async with self._runtime._scope_operation(self.scope_id):
@@ -563,7 +571,9 @@ class ScopedRecordApplication:
         /,
     ) -> ArtifactCreated:
         async with self._runtime._scope_operation(self.scope_id), self._runtime._locked(self.scope_id):
-            return await self._runtime._records().create_artifact(self.scope_id, family, write)
+            created = await self._runtime._records().create_artifact(self.scope_id, family, write)
+        await self._runtime._admit_source_count(self.scope_id)
+        return created
 
     async def get_artifact(self, family: str, artifact_id: str, /) -> ArtifactRecord:
         async with self._runtime._scope_operation(self.scope_id):
@@ -846,6 +856,25 @@ class ScopedContextApplication:
             if authorize_scopes is not None:
                 await authorize_scopes((self.scope_id, *scope.context_references))
             return await self._prepare(request, scope)
+
+    async def prepare_incremental(
+        self,
+        request: PrepareContextRequest,
+        base_pack: ContextPack | None = None,
+    ) -> ContextPack | ContextPackDelta:
+        """Prepare the same context as ``prepare`` and express it against ``base_pack``."""
+
+        prepared = await self.prepare(request)
+        target = (
+            ContextPack.build(())
+            if prepared.content is None or not prepared.content
+            else ContextPack.from_content(prepared.content)
+        )
+        if base_pack is None:
+            return target
+        if not isinstance(base_pack, ContextPack):
+            raise ContextPackError("base_pack must be a ContextPack")  # noqa: TRY003
+        return ContextPackDelta.between(base_pack, target)
 
     async def _prepare(self, request: PrepareContextRequest, scope: ScopeDescriptor, /) -> PreparedContext:
         build, effort = await self._prepare_build(request, scope)
@@ -3004,6 +3033,7 @@ class BuiltinRuntime:
         topic_memory_get: TopicMemoryGet | None = None,
         topic_memory_browse: TopicMemoryBrowse | None = None,
         topic_memory_flush: TopicMemoryFlush | None = None,
+        source_count_admission: SourceCountAdmission | None = None,
         topic_memory_embedding_model: EmbeddingModel | None = None,
         topic_memory_processing_available: bool = False,
         topic_memory_search_observer: TopicMemorySearchObserver | None = None,
@@ -3060,6 +3090,7 @@ class BuiltinRuntime:
         self._topic_memory_get = topic_memory_get
         self._topic_memory_browse = topic_memory_browse
         self._topic_memory_flush = topic_memory_flush
+        self._source_count_admission = source_count_admission
         self._topic_memory_embedding_model = topic_memory_embedding_model
         self._topic_memory_processing_available = topic_memory_processing_available
         self._topic_memory_search_observer = topic_memory_search_observer
@@ -3378,6 +3409,37 @@ class BuiltinRuntime:
             with self._stage("scope.context", attributes={}):
                 context = await self._provider.get(validate_scope_id(scope_id))
             yield context
+
+    async def _admit_source_count(self, scope_id: str) -> None:
+        """Accept one automatic processing call after enough new journal identities arrive.
+
+        Admission is advisory: a persistence failure here must never fail the Source write
+        that triggered it, and an accepted request remains durable for later recovery.
+        """
+
+        admission = self._source_count_admission
+        supervisor = self.artifact_processing_supervisor
+        if admission is None or supervisor is None:
+            return
+        try:
+            bindings = await admission(scope_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            log_safely(
+                logger,
+                logging.WARNING,
+                "Source count admission failed",
+                exc_info=error,
+                extra={
+                    "event": "source_count.admission_failed",
+                    "outcome": "failure",
+                    "unit": "source",
+                },
+            )
+            return
+        for binding_name in bindings:
+            supervisor.wake(binding_name)
 
     def _lock(self, scope_id: str) -> asyncio.Lock:
         return self._scope_cache.lock(validate_scope_id(scope_id))

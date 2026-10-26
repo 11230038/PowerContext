@@ -119,6 +119,7 @@ from powercontext.builtin.runtime.application import (
     RecallEffortSink,
     ScheduledExperienceRunner,
     ScheduledSourceRunner,
+    SourceCountAdmission,
 )
 from powercontext.builtin.runtime.artifact_processing import (
     ArtifactProcessingBinding,
@@ -581,6 +582,7 @@ async def open_builtin_runtime(
                 if family in registered_families
             )
         topic_memory_processing_available = _topic_memory_processing_available(config, processing_bindings)
+        source_count_admission = _source_count_admission(config, contexts, processing_bindings)
         runtime = await resources.enter_async_context(
             BuiltinRuntime(
                 code_service=await resources.enter_async_context(open_code_service(config.code, config.database)),
@@ -631,6 +633,7 @@ async def open_builtin_runtime(
                 topic_memory_get=contexts.get_topic_memory,
                 topic_memory_browse=contexts.browse_topic_memories,
                 topic_memory_flush=contexts.request_topic_memory_flush,
+                source_count_admission=source_count_admission,
                 topic_memory_embedding_model=configured_embedding,
                 topic_memory_processing_available=topic_memory_processing_available,
                 topic_memory_search_observer=topic_memory_search_observer,
@@ -798,6 +801,35 @@ def _validate_processing_registrations(configured: Sequence[ArtifactProcessingBi
         identifiers = [getattr(binding, attribute) for binding in configured]
         if len(identifiers) != len(set(identifiers)):
             raise BuiltinConfigurationError("artifact-processing-families")
+
+
+def _source_count_admission(
+    config: BuiltinConfig,
+    contexts: RelationalContexts,
+    bindings: Sequence[ArtifactProcessingBinding],
+) -> SourceCountAdmission | None:
+    """Bind Count-trigger admission to the Families this deployment can process."""
+
+    local = {binding.binding_name for binding in bindings}
+    enabled = tuple(
+        (threshold, binding_name)
+        for threshold, binding_name in (
+            (config.runtime.memory_source_count_threshold, FAMILY_BINDINGS["memory"]),
+            (config.runtime.topic_memory_source_count_threshold, TOPIC_MEMORY_SOURCE_WINDOW_BINDING),
+        )
+        if threshold is not None and binding_name in local
+    )
+    if not enabled:
+        return None
+
+    async def admit(scope_id: str) -> tuple[str, ...]:
+        accepted: list[str] = []
+        for threshold, binding_name in enabled:
+            if await contexts.request_source_count_processing(scope_id, binding_name, threshold):
+                accepted.append(binding_name)
+        return tuple(accepted)
+
+    return admit
 
 
 def _topic_memory_processing_available(

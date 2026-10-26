@@ -212,6 +212,10 @@ async def _process_family_invocation(  # noqa: C901 - one guarded dispatch per r
             )
             if result.held_count:
                 return ArtifactProcessingWorkerCompletion(held_count=result.held_count, hold_codes=result.hold_codes)
+            # One window per accepted call; a still-full backlog earns the next call on its own.
+            threshold = config.runtime.memory_source_count_threshold
+            if threshold is not None and result.processed:
+                await contexts.request_source_count_processing(scope, SOURCE_WINDOW_TRIGGER_NAME, threshold)
         elif assignment.artifact_family == "experience":
             await contexts.incubate_experience(
                 scope,
