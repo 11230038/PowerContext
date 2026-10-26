@@ -556,6 +556,8 @@ SQL literals reach the backend unchanged.
 
 Repositories run after schema checks. Both full Server source chains register exact per-statement schema transitions and recovery prefixes through `mysql_state_layouts`. Domain steps attach to the shared revision and use its connection, lock, and recovery point; verification precedes version advancement. Read-only live checks are separate from migration-copy validation. Vector configurations still require separate registration.
 
+Online readiness reads Atomic Memory authority and projections from the same snapshot without locking business head rows. Offline projection repair retains its locked state comparison and write-side concurrency protection.
+
 The 1.4.0 bridge is assembled from immutable shared resources and its `server_sources/1.4.0` overlay. Source
 selection uses the complete unversioned inventory or the original lineage in the main maintenance evidence; it
 neither adds another version table nor rewrites a completed backup's source revision. Repeated maintenance and

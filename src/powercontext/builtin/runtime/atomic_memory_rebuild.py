@@ -117,11 +117,17 @@ async def _identity_batch(
 
 
 async def _record(
-    connection: AsyncConnection, artifacts: ArtifactRepository, scope_id: str, artifact_id: str
+    connection: AsyncConnection,
+    artifacts: ArtifactRepository,
+    scope_id: str,
+    artifact_id: str,
+    *,
+    for_update: bool,
 ) -> AtomicMemoryRecord:
     state_repository = AtomicMemoryStateRepository()
     state = await state_repository.get(connection, scope_id, artifact_id)
-    await state_repository.require_summary(connection, scope_id, artifact_id, state)
+    if for_update:
+        await state_repository.require_summary(connection, scope_id, artifact_id, state)
     artifact = await artifacts.latest(connection, scope_id, AtomicMemory.family, artifact_id)
     if not isinstance(artifact, AtomicMemory):
         raise AtomicMemoryIndexError("authority-content", "Atomic Memory has an unsupported authoritative content type")
@@ -179,7 +185,11 @@ async def _projection_differences(
 async def verify_atomic_memory_current(
     connection: AsyncConnection, index: AtomicMemoryIndex, /, *, batch_size: int = 100
 ) -> AtomicMemoryProjectionRebuildReport:
-    """Check every current identity against authority, including post-migration creations."""
+    """Check current identities without taking business row locks.
+
+    The caller owns a consistent read snapshot or an exclusive maintenance
+    transaction, including for identities created after migration.
+    """
 
     await _require_authority(connection)
     artifacts = ArtifactRepository((AtomicMemory,))
@@ -190,7 +200,7 @@ async def verify_atomic_memory_current(
     active = 0
     while batch := await _identity_batch(connection, after, batch_size):
         for scope_id, artifact_id in batch:
-            record = await _record(connection, artifacts, scope_id, artifact_id)
+            record = await _record(connection, artifacts, scope_id, artifact_id, for_update=False)
             after = scope_id, artifact_id
             if record.state.state is not AtomicMemoryStateValue.ACTIVE:
                 continue
@@ -258,7 +268,7 @@ async def rebuild_atomic_memory_current(
     while batch := await _identity_batch(connection, after, batch_size):
         guard()
         for scope_id, artifact_id in batch:
-            record = await _record(connection, artifacts, scope_id, artifact_id)
+            record = await _record(connection, artifacts, scope_id, artifact_id, for_update=True)
             if record.state.state is AtomicMemoryStateValue.ACTIVE:
                 await publisher.publish(connection, scope_id, record, await publisher.prepare(record.artifact.content))
             else:
@@ -311,7 +321,7 @@ async def rebuild_atomic_memory_projection(
             break
         for scope_id, artifact_id in batch:
             async with database.transaction() as connection:
-                before = await _record(connection, artifacts, scope_id, artifact_id)
+                before = await _record(connection, artifacts, scope_id, artifact_id, for_update=True)
             prepared = (
                 await publisher.prepare(before.artifact.content)
                 if before.state.state is AtomicMemoryStateValue.ACTIVE
@@ -319,7 +329,7 @@ async def rebuild_atomic_memory_projection(
             )
             async with database.transaction() as connection:
                 await artifacts.lock_heads(connection, scope_id, (before.ref,))
-                current = await _record(connection, artifacts, scope_id, artifact_id)
+                current = await _record(connection, artifacts, scope_id, artifact_id, for_update=True)
                 if current.as_read() != before.as_read():
                     raise AtomicMemoryIndexError(
                         "rebuild-conflict", "Atomic Memory authority changed during projection preparation"

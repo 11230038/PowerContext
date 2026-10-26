@@ -15,11 +15,15 @@
 """Concurrent publication remains valid across actual backend startup boundaries."""
 
 import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event
+from sqlalchemy.dialects import mysql
+from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from powercontext.builtin.persistence.migrations import connections
@@ -52,6 +56,26 @@ def _read_committed_engine(*args, **kwargs):
                 cursor.close()
 
     return engine
+
+
+@contextmanager
+def _nonlocking_reads():
+    checking_record = ContextVar("checking_record", default=False)
+
+    def reject_locking_read(_connection, statement, _multiparams, _params, _options):
+        if checking_record.get():
+            # SQLite omits locking clauses. Check the native SQL contract
+            # as well so local runs catch locks before native concurrency CI.
+            sql = str(statement.compile(dialect=mysql.dialect())).upper()
+            assert "FOR UPDATE" not in sql and "LOCK IN SHARE MODE" not in sql
+
+    token = checking_record.set(True)
+    event.listen(Engine, "before_execute", reject_locking_read)
+    try:
+        yield
+    finally:
+        event.remove(Engine, "before_execute", reject_locking_read)
+        checking_record.reset(token)
 
 
 @pytest.mark.parametrize("entry,vector", [("server", False), ("sdk", True), ("background", False)])
@@ -92,7 +116,8 @@ def test_concurrent_publication_does_not_reject_managed_startup(migration_backen
 
         async def interleaved_record(*args, **kwargs):
             nonlocal updated
-            record = await original(*args, **kwargs)
+            with _nonlocking_reads():
+                record = await original(*args, **kwargs)
             if not updated:
                 updated = True
                 connection = args[0]
