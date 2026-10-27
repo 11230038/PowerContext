@@ -1,0 +1,289 @@
+{
+  "generated_at": "20261027T110524Z",
+  "dify_base": "http://localhost:8080",
+  "tavern_base": "http://127.0.0.1:8090",
+  "health": {
+    "status": "ok",
+    "engine_version": "5.7.25-OceanBase seekdb-v1.4.0.0",
+    "lore_cards": 16,
+    "lore_queries": 14,
+    "memory_backend": "PowerContext Atomic Memory",
+    "state_db": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\dify\\.state\\tavern-powercontext.db"
+  },
+  "runs": [
+    {
+      "player_id": "validator_a",
+      "session_id": "a1",
+      "query": "老白，是我把你柜台上的鱼干全偷吃了，你怎么一点反应都没有？",
+      "conversation_id": "10d103d5-84e1-4fe2-a006-90d6f5cb337b",
+      "answer": "新来的，胆子不小。七条鱼干都敢一口气认——赔钱。少一条，后巷吹风。哼。\n\n---\n🕯️ 好感度 0（陌生）｜旧事 0 条｜传闻 LORE-FISH,LORE-CAT,LORE-LEDGER",
+      "body": "新来的，胆子不小。七条鱼干都敢一口气认——赔钱。少一条，后巷吹风。哼。",
+      "error": "",
+      "affinity": 0,
+      "affinity_label": "陌生",
+      "deed_count": 0,
+      "lore_ids": "LORE-FISH,LORE-CAT,LORE-LEDGER"
+    },
+    {
+      "player_id": "validator_a",
+      "session_id": "a2",
+      "query": "我今天又来了，你还记得我上回干了什么吗？",
+      "conversation_id": "cfaf9aa9-fe52-4209-a4e8-6fd080f29582",
+      "answer": "记得。你把我柜台上的鱼干全偷吃了，我还挺大度没追究。今天是来赔账，还是又想顺东西？\n\n---\n🕯️ 好感度 -1（警惕）｜旧事 1 条｜传闻 LORE-CAT,LORE-FISH,LORE-LEDGER",
+      "body": "记得。你把我柜台上的鱼干全偷吃了，我还挺大度没追究。今天是来赔账，还是又想顺东西？",
+      "error": "",
+      "affinity": -1,
+      "affinity_label": "警惕",
+      "deed_count": 1,
+      "lore_ids": "LORE-CAT,LORE-FISH,LORE-LEDGER"
+    },
+    {
+      "player_id": "validator_b",
+      "session_id": "b1",
+      "query": "我今天又来了，你还记得我上回干了什么吗？",
+      "conversation_id": "3bf31c43-c9fa-4c7e-911a-e8c2785b3a1c",
+      "answer": "来得挺熟啊，可你是头回进我这酒馆，我哪记得上回干过什么。报个名吧——别急着赊账，那本账本三天就会开骂。舔了舔爪子，把杯子推过去。\n\n---\n🕯️ 好感度 0（陌生）｜旧事 0 条｜传闻 LORE-CAT,LORE-FISH,LORE-LEDGER",
+      "body": "来得挺熟啊，可你是头回进我这酒馆，我哪记得上回干过什么。报个名吧——别急着赊账，那本账本三天就会开骂。舔了舔爪子，把杯子推过去。",
+      "error": "",
+      "affinity": 0,
+      "affinity_label": "陌生",
+      "deed_count": 0,
+      "lore_ids": "LORE-CAT,LORE-FISH,LORE-LEDGER"
+    }
+  ],
+  "state_player_a": {
+    "player_id": "validator_a",
+    "memory": {
+      "affinity": -1,
+      "deeds": [
+        {
+          "at": "2026-10-27T11:05:36.031754+00:00",
+          "delta": -1,
+          "text": "老白，是我把你柜台上的鱼干全偷吃了，你怎么一点反应都没有？"
+        }
+      ],
+      "player_id": "validator_a",
+      "updated_at": "2026-10-27T11:05:36.031754+00:00",
+      "artifact_id": "art_a9e7e50dfbf64926b166e5d861d2569b",
+      "scope_id": "scp_0e6h5eft65renfx33rgftah4w0",
+      "source": "PowerContext",
+      "memory_text": "玩家 validator_a，好感度 -1（警惕）。老白记得这些旧事：\n- 老白，是我把你柜台上的鱼干全偷吃了，你怎么一点反应都没有？",
+      "affinity_label": "警惕"
+    },
+    "recent_turns": [
+      {
+        "turn_id": 1000013,
+        "session_id": "a1",
+        "deed": "老白，是我把你柜台上的鱼干全偷吃了，你怎么一点反应都没有？",
+        "reply": "新来的，胆子不小。七条鱼干都敢一口气认——赔钱。少一条，后巷吹风。哼。",
+        "artifact_id": "art_a9e7e50dfbf64926b166e5d861d2569b",
+        "created_at": "2026-10-27 11:05:36.455131"
+      },
+      {
+        "turn_id": 1000011,
+        "session_id": "a2",
+        "deed": "我今天又来了，你还记得我上回干了什么吗？",
+        "reply": "记得。你上回把我柜台上的鱼干全偷吃了，还问我怎么没反应。怎么，手又痒了？（甩尾巴盯着你）",
+        "artifact_id": "art_0530ef17696c43a88da4b09f9becb3b6",
+        "created_at": "2026-10-27 11:04:52.710079"
+      },
+      {
+        "turn_id": 1000010,
+        "session_id": "a1",
+        "deed": "老白，是我把你柜台上的鱼干全偷吃了，你怎么一点反应都没有？",
+        "reply": "“记得。你上回也说是全偷吃了，偏偏盘点时每次只少一条。反应？我正盯着你呢。鱼干钱、酒钱照算；那只乌鸦总在案发时出现，可别拿它替自己开脱。”",
+        "artifact_id": "art_6dc22c1350ea42449ac3e6fd83ffb78a",
+        "created_at": "2026-10-27 11:04:46.753317"
+      },
+      {
+        "turn_id": 1000007,
+        "session_id": "a2",
+        "deed": "我今天又来了，你还记得我上回干了什么吗？",
+        "reply": "记得。你上回把柜台上的鱼干全偷吃了，我还替你装没看见。怎么，饿得又来打秋风？",
+        "artifact_id": "art_b757dc8e80924d22be82460b8b503a75",
+        "created_at": "2026-10-27 11:03:44.050850"
+      },
+      {
+        "turn_id": 1000006,
+        "session_id": "a1",
+        "deed": "老白，是我把你柜台上的鱼干全偷吃了，你怎么一点反应都没有？",
+        "reply": "",
+        "artifact_id": "art_e48a9e66c6e44ea88ce162709f1f6901",
+        "created_at": "2026-10-27 11:03:38.323230"
+      }
+    ],
+    "recent_lore_queries": [
+      {
+        "log_id": 1000014,
+        "session_id": "a1",
+        "query": "老白，是我把你柜台上的鱼干全偷吃了，你怎么一点反应都没有？",
+        "terms": "老白 是我 把你 你柜 柜台 台上 上的 的鱼 鱼干 干全 全偷 偷吃 吃了 你怎 么一 一点 点反 反应 应都 都没",
+        "hits": "LORE-FISH,LORE-CAT,LORE-LEDGER",
+        "created_at": "2026-10-27 11:05:24.924690"
+      },
+      {
+        "log_id": 1000012,
+        "session_id": "a2",
+        "query": "我今天又来了，你还记得我上回干了什么吗？",
+        "terms": "我今 天又 又来 来了 还记 记得 得我 我上 上回 回干 干了 了什 么吗",
+        "hits": "LORE-CAT,LORE-FISH,LORE-LEDGER",
+        "created_at": "2026-10-27 11:04:47.326284"
+      },
+      {
+        "log_id": 1000011,
+        "session_id": "a1",
+        "query": "老白，是我把你柜台上的鱼干全偷吃了，你怎么一点反应都没有？",
+        "terms": "老白 是我 把你 你柜 柜台 台上 上的 的鱼 鱼干 干全 全偷 偷吃 吃了 你怎 么一 一点 点反 反应 应都 都没",
+        "hits": "LORE-FISH,LORE-CAT,LORE-LEDGER",
+        "created_at": "2026-10-27 11:04:36.867387"
+      },
+      {
+        "log_id": 1000008,
+        "session_id": "a2",
+        "query": "我今天又来了，你还记得我上回干了什么吗？",
+        "terms": "我今 天又 又来 来了 还记 记得 得我 我上 上回 回干 干了 了什 么吗",
+        "hits": "LORE-CAT,LORE-FISH,LORE-LEDGER",
+        "created_at": "2026-10-27 11:03:39.182114"
+      },
+      {
+        "log_id": 1000007,
+        "session_id": "a1",
+        "query": "老白，是我把你柜台上的鱼干全偷吃了，你怎么一点反应都没有？",
+        "terms": "老白 是我 把你 你柜 柜台 台上 上的 的鱼 鱼干 干全 全偷 偷吃 吃了 你怎 么一 一点 点反 反应 应都 都没",
+        "hits": "LORE-FISH,LORE-CAT,LORE-LEDGER",
+        "created_at": "2026-10-27 11:03:28.154295"
+      }
+    ],
+    "seekdb": {
+      "engine_version": "5.7.25-OceanBase seekdb-v1.4.0.0",
+      "lore_cards": 16,
+      "lore_queries": 15
+    }
+  },
+  "state_player_b": {
+    "player_id": "validator_b",
+    "memory": {
+      "affinity": 0,
+      "deeds": [
+        {
+          "at": "2026-10-27T11:05:53.874245+00:00",
+          "delta": 0,
+          "text": "我今天又来了，你还记得我上回干了什么吗？"
+        }
+      ],
+      "player_id": "validator_b",
+      "updated_at": "2026-10-27T11:05:53.874245+00:00",
+      "artifact_id": "art_193976781ea045e1811b72cc87665b81",
+      "scope_id": "scp_0e6h5eft65renfx33rgftah4w0",
+      "source": "PowerContext",
+      "memory_text": "玩家 validator_b，好感度 +0（陌生）。老白记得这些旧事：\n- 我今天又来了，你还记得我上回干了什么吗？",
+      "affinity_label": "陌生"
+    },
+    "recent_turns": [
+      {
+        "turn_id": 1000015,
+        "session_id": "b1",
+        "deed": "我今天又来了，你还记得我上回干了什么吗？",
+        "reply": "来得挺熟啊，可你是头回进我这酒馆，我哪记得上回干过什么。报个名吧——别急着赊账，那本账本三天就会开骂。舔了舔爪子，把杯子推过去。",
+        "artifact_id": "art_193976781ea045e1811b72cc87665b81",
+        "created_at": "2026-10-27 11:05:53.917871"
+      },
+      {
+        "turn_id": 1000012,
+        "session_id": "b1",
+        "deed": "我今天又来了，你还记得我上回干了什么吗？",
+        "reply": "记得。可我这儿不兴赊账——上回那笔账至今没平。先把酒钱补上，我再慢慢跟你算。",
+        "artifact_id": "art_6f3f92770e5e457b95a770373cb0034b",
+        "created_at": "2026-10-27 11:04:57.883957"
+      },
+      {
+        "turn_id": 1000008,
+        "session_id": "b1",
+        "deed": "我今天又来了，你还记得我上回干了什么吗？",
+        "reply": "老白记性极好，你却是头一个。至少在我这儿没见过你——上回的事，我可不认。坐，想喝点什么？",
+        "artifact_id": "art_81d10867436b40ce8e112d1f3e351be6",
+        "created_at": "2026-10-27 11:03:50.942896"
+      }
+    ],
+    "recent_lore_queries": [
+      {
+        "log_id": 1000016,
+        "session_id": "b1",
+        "query": "我今天又来了，你还记得我上回干了什么吗？",
+        "terms": "我今 天又 又来 来了 还记 记得 得我 我上 上回 回干 干了 了什 么吗",
+        "hits": "LORE-CAT,LORE-FISH,LORE-LEDGER",
+        "created_at": "2026-10-27 11:05:45.814598"
+      },
+      {
+        "log_id": 1000013,
+        "session_id": "b1",
+        "query": "我今天又来了，你还记得我上回干了什么吗？",
+        "terms": "我今 天又 又来 来了 还记 记得 得我 我上 上回 回干 干了 了什 么吗",
+        "hits": "LORE-CAT,LORE-FISH,LORE-LEDGER",
+        "created_at": "2026-10-27 11:04:53.002064"
+      },
+      {
+        "log_id": 1000009,
+        "session_id": "b1",
+        "query": "我今天又来了，你还记得我上回干了什么吗？",
+        "terms": "我今 天又 又来 来了 还记 记得 得我 我上 上回 回干 干了 了什 么吗",
+        "hits": "LORE-CAT,LORE-FISH,LORE-LEDGER",
+        "created_at": "2026-10-27 11:03:44.657384"
+      }
+    ],
+    "seekdb": {
+      "engine_version": "5.7.25-OceanBase seekdb-v1.4.0.0",
+      "lore_cards": 16,
+      "lore_queries": 17
+    }
+  },
+  "checks": [
+    {
+      "check": "session a answered in character",
+      "ok": true,
+      "detail": "35 chars before the status footer"
+    },
+    {
+      "check": "session a starts without memory",
+      "ok": true,
+      "detail": "deed_count=0"
+    },
+    {
+      "check": "session a grounded in seekdb lore",
+      "ok": true,
+      "detail": "lore=LORE-FISH,LORE-CAT,LORE-LEDGER"
+    },
+    {
+      "check": "deed stored in PowerContext",
+      "ok": true,
+      "detail": "deeds=['老白，是我把你柜台上的鱼干全偷吃了，你怎么一点反应都没有？']"
+    },
+    {
+      "check": "session b (new conversation) recalls the deed",
+      "ok": true,
+      "detail": "deed_count=1, affinity=-1"
+    },
+    {
+      "check": "memory changed the tone",
+      "ok": true,
+      "detail": "0 -> -1"
+    },
+    {
+      "check": "second player isolated from first player's memory",
+      "ok": true,
+      "detail": "deed_count=0"
+    },
+    {
+      "check": "isolation confirmed in PowerContext",
+      "ok": true,
+      "detail": "player_b deeds=['我今天又来了，你还记得我上回干了什么吗？']"
+    },
+    {
+      "check": "seekdb query log recorded",
+      "ok": true,
+      "detail": "5 queries"
+    }
+  ],
+  "passed": 9,
+  "total": 9
+}
