@@ -1,0 +1,173 @@
+{
+  "timestamp": "20261027T074042Z",
+  "python": "3.12.8 (tags/v3.12.8:2dc476b, Dec  3 2024, 19:30:04) [MSC v.1942 64 bit (AMD64)]",
+  "engine_version": "5.7.25-OceanBase seekdb-v1.4.0.0",
+  "task_id": "TASK-OVERDUE-FILTER",
+  "checks": [
+    {
+      "name": "seekdb reachable",
+      "passed": true,
+      "detail": "5.7.25-OceanBase seekdb-v1.4.0.0"
+    },
+    {
+      "name": "index built in seekdb",
+      "passed": true,
+      "detail": "35 documents"
+    },
+    {
+      "name": "context has required sources",
+      "passed": true,
+      "detail": "[{'id': 'SPEC-LOAN-006', 'title': '兼容性', 'source': 'app/specs/loans.md#SPEC-LOAN-006', 'content': '## SPEC-LOAN-006 兼容性\\n\\n现有调用方不传 `overdue_only` 时，行为必须与 v1 完全一致：排序、分页、`member_id` 筛选和 `status` 校验都不得改变。\\n已归还的借阅即使曾经逾期，也不得出现在 `overdue_only=True` 的结果中。', 'score': 796.0249}, {'id': 'SPEC-LOAN-004', 'title': '逾期筛选', 'source': 'app/specs/loans.md#SPEC-LOAN-004', 'content': '## SPEC-LOAN-004 逾期筛选\\n\\n`list_loans` 必须支持布尔参数 `overdue_only`。\\n当 `overdue_only=True` 时，只返回 `returned_on` 为空且 `due_date` 早于 `as_of` 日期的借阅。\\n当 `overdue_only=False` 时不施加逾期筛选。\\n`as_of` 默认取当天，测试可以注入固定日期以保证结果可重复。', 'score': 768.8983}]"
+    },
+    {
+      "name": "context starts with empty PowerContext state",
+      "passed": true,
+      "detail": "{'task_id': 'TASK-OVERDUE-FILTER', 'done': [], 'todo': [], 'verifications': [], 'source': 'PowerContext (empty)'}"
+    },
+    {
+      "name": "initial spec wording is v1",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "target tests fail before the change",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "before failure is functional, not environmental",
+      "passed": true,
+      "detail": "no import/dependency error"
+    },
+    {
+      "name": "regression tests pass before the change",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "recorded diff applies cleanly",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "patched file matches the after snapshot",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "target tests pass after the change",
+      "passed": true,
+      "detail": ".......                                                                  [100%]\n7 passed in 0.01s\n"
+    },
+    {
+      "name": "regression tests pass after the change",
+      "passed": true,
+      "detail": "...............                                                          [100%]\n15 passed in 0.02s\n"
+    },
+    {
+      "name": "PowerContext state write succeeds",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "state is readable in a new process",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "stored state contains done and verification records",
+      "passed": true,
+      "detail": "{\"task_id\": \"TASK-OVERDUE-FILTER\", \"done\": [\"实现 SPEC-LOAN-004 逾期筛选\", \"目标测试与回归测试通过\"], \"todo\": [\"提交代码与材料\"], \"verifications\": [\"pytest tests/test_loans_overdue.py exit=0\", \"pytest tests/test_loans_regression.py exit=0\"], \"recorded_at\": \"2026-10-27T07:40:51.506370+00:00\", \"artifact_id\": \"art_1bfe0c58ee1"
+    },
+    {
+      "name": "updated spec is used after re-ingest",
+      "passed": true,
+      "detail": "v2 wording present"
+    },
+    {
+      "name": "updated context still has required sources",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "v1 wording restored after re-ingest",
+      "passed": true,
+      "detail": ""
+    }
+  ],
+  "passed": 18,
+  "total": 18,
+  "success": true,
+  "steps": [
+    {
+      "command": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\.venv\\Scripts\\python.exe -m sdd_context context --task C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax\\samples\\task.md --task-id TASK-OVERDUE-FILTER --label app --out C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax\\artifacts\\context\\initial.json",
+      "cwd": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax",
+      "exit_code": 0,
+      "stdout": "{\n  \"task\": \"# 开发任务：为借阅列表增加逾期筛选\\n\\n为 `loanboard` 业务工程实现规格 `SPEC-LOAN-004`。\\n\\n- `LoanService.list_loans` 需要支持 `overdue_only` 参数。\\n- 当 `overdue_only=True` 时，只返回 `returned_on` 为空且 `due_date` 早于 `as_of` 的借阅。\\n- 已归还的借阅即使曾经逾期，也不能出现在结果中。\\n- 不能改变现有排序（`SPEC-LOAN-001`）、分页（`SPEC-LOAN-003`）、会员筛选（`SPEC-LOAN-005`）和兼容性（`SPEC-LOAN-006`）。\\n- 目标测试位于 `tests/test_loans_overdue.py`，回归测试位于 `tests/test_loans_regression.py`。\",\n  \"task_hash\": \"bca3580f5c596d857c0603c2a15f51b4d1013ff7\",\n  \"label\": \"app\",\n  \"specs\": [\n    {\n      \"id\": \"SPEC-LOAN-006\",\n      \"title\": \"兼容性\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-006\",\n      \"content\": \"## SPEC-LOAN-006 兼容性\\n\\n现有调用方不传 `overdue_only` 时，行为必须与 v1 完全一致：排序、分页、`member_id` 筛选和 `status` 校验都不得改变。\\n已归还的借阅即使曾经逾期，也不得出现在 `overdue_only=True` 的结果中。\",\n      \"score\": 796.0249\n    },\n    {\n      \"id\": \"SPEC-LOAN-004\",\n      \"title\": \"逾期筛选\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-004\",\n      \"content\": \"## SPEC-LOAN-004 逾期筛选\\n\\n`list_loans` 必须支持布尔参数 `overdue_only`。\\n当 `overdue_only=True` 时，只返回 `returned_on` 为空且 `due_date` 早于 `as_of` 日期的借阅。\\n当 `overdue_only=False` 时不施加逾期筛选。\\n`as_of` 默认取当天，测试可以注入固定日期以保证结果可重复。\",\n      \"score\": 768.8983\n    },\n    {\n      \"id\": \"SPEC-LOAN-005\",\n      \"title\": \"组合筛选\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-005\",\n      \"content\": \"## SPEC-LOAN-005 组合筛选\\n\\n`member_id` 不为空时只返回该会员的借阅。\\n`member_id`、`status`、`overdue_only` 可以组合使用，筛选条件的书写顺序不得影响结果。\",\n      \"score\": 296.4282\n    },\n    {\n      \"id\": \"SPEC-LOAN-001\",\n      \"title\": \"列表排序\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-001\",\n      \"content\": \"## SPEC-LOAN-001 列表排序\\n\\n借阅列表必须按到期日 `due_date` 升序排列；同一到期日按 `loan_id` 字典序升序排列。\",\n      \"score\": 273.2576\n    },\n    {\n      \"id\": \"SPEC-LOAN-003\",\n      \"title\": \"分页边界\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-003\",\n      \"content\": \"## SPEC-LOAN-003 分页边界\\n\\n`limit` 必须是 1 到 100 之间的整数，`offset` 必须是不小于 0 的整数；越界或类型错误必须抛出 `ValueError`。\\n`limit` 默认值为 50，`offset` 默认值为 0。分页在排序之后执行。\",\n      \"score\": 163.9374\n    }\n  ],\n  \"code\": [\n    {\n      \"path\": \"loanboard/service.py\",\n      \"symbol\": \"LoanService.list_loans\",\n      \"source\": \"app/loanboard/service.py#LoanService.list_loans\",\n      \"score\": 54.5768\n    },\n    {\n      \"path\": \"loanboard/service.py\",\n      \"symbol\": \"LoanService\",\n      \"source\": \"app/loanboard/service.py#LoanService\",\n      \"score\": 53.1761\n    },\n    {\n      \"path\": \"loanboard/models.py\",\n      \"symbol\": \"Loan\",\n      \"source\": \"app/loanboard/models.py#Loan\",\n      \"score\": 25.8901\n    },\n    {\n      \"path\": \"loanboard/cli.py\",\n      \"symbol\": \"main\",\n      \"source\": \"app/loanboard/cli.py#main\",\n      \"score\": 13.6713\n    }\n  ],\n  \"tests\": [\n    {\n      \"path\": \"tests/test_loans_overdue.py\",\n      \"name\": \"test_overdue_only_returns_active_loans_due_before_as_of\",\n      \"source\": \"app/tests/test_loans_overdue.py#test_overdue_only_returns_active_loans_due_before_as_of\",\n      \"score\": 14.6083\n    },\n    {\n      \"path\": \"tests/test_loans_overdue.py\",\n      \"name\": \"test_loan_due_today_is_not_overdue\",\n      \"source\": \"app/tests/test_loans_overdue.py#test_loan_due_today_is_not_overdue\",\n      \"score\": 13.2417\n    },\n    {\n      \"path\": \"tests/test_loans_overdue.py\",\n      \"name\": \"test_as_of_changes_the_cutoff\",\n      \"source\": \"app/tests/test_loans_overdue.py#test_as_of_changes_the_cutoff\",\n      \"score\": 13.0075\n    },\n    {\n      \"path\": \"tests/test_loans_regression.py\",\n      \"name\": \"test_sorts_by_due_date_then_loan_id\",\n      \"source\": \"app/tests/test_loans_regression.py#test_sorts_by_due_date_then_loan_id\",\n      \"score\": 11.7121\n    }\n  ],\n  \"database\": {\n    \"engine\": \"seekdb\",\n    \"documents\": 35,\n    \"postings\": 440,\n    \"query_terms\": [\n      \"001\",\n      \"003\",\n      \"004\",\n      \"005\",\n      \"006\",\n      \"as_of\",\n      \"date\",\n      \"due\",\n      \"due_date\",\n      \"list\",\n      \"list_loans\",\n      \"loan\",\n      \"loanboard\",\n      \"loans\",\n      \"loanservice\",\n      \"only\",\n      \"overdue\",\n      \"overdue_only\",\n      \"py\",\n      \"regression\",\n      \"returned\",\n      \"returned_on\",\n      \"service\",\n      \"spec\",\n      \"test\",\n      \"test_loans_overdue\",\n      \"test_loans_regression\",\n      \"tests\",\n      \"不能\",\n      \"业务\",\n      \"为\",\n      \"为借\",\n      \"为空\",\n      \"为空且\",\n      \"也不\",\n      \"任务\",\n      \"会员\",\n      \"会员筛选\",\n      \"位于\",\n      \"使曾\",\n      \"借阅\",\n      \"兼容\",\n      \"出现\",\n      \"分页\",\n      \"列表\",\n      \"加逾\",\n      \"务工\",\n      \"即使\",\n      \"参数\",\n      \"发任\",\n      \"变现\",\n      \"只返\",\n      \"只返回\",\n      \"员筛\",\n      \"和兼\",\n      \"和兼容性\",\n      \"回归\",\n      \"回归测试位于\",\n      \"在结\",\n      \"增加\"\n    ],\n    \"query_log_id\": 11\n  },\n  \"state\": {\n    \"task_id\": \"TASK-OVERDUE-FILTER\",\n    \"done\": [],\n    \"todo\": [],\n    \"verifications\": [],\n    \"source\": \"PowerContext (empty)\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "command": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\.venv\\Scripts\\python.exe -m pytest -q tests/test_loans_overdue.py",
+      "cwd": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax\\runs\\validation-20261027T074042Z\\app",
+      "exit_code": 1,
+      "stdout": "FFFFF.F                                                                  [100%]\n================================== FAILURES ===================================\n___________ test_overdue_only_returns_active_loans_due_before_as_of ___________\n\n    def test_overdue_only_returns_active_loans_due_before_as_of() -> None:\n        loans = service().list_loans(overdue_only=True, as_of=AS_OF)\n>       assert [loan.loan_id for loan in loans] == [\"L-05\", \"L-01\"]\nE       AssertionError: assert ['L-05', 'L-0...L-02', 'L-03'] == ['L-05', 'L-01']\nE         \nE         At index 1 diff: 'L-04' != 'L-01'\nE         Left contains 3 more items, first extra item: 'L-01'\nE         Use -v to get more diff\n\ntests\\test_loans_overdue.py:28: AssertionError\n_____________________ test_loan_due_today_is_not_overdue ______________________\n\n    def test_loan_due_today_is_not_overdue() -> None:\n        loans = service().list_loans(overdue_only=True, as_of=AS_OF)\n>       assert \"L-02\" not in {loan.loan_id for loan in loans}\nE       AssertionError: assert 'L-02' not in {'L-01', 'L-02', 'L-03', 'L-04', 'L-05'}\n\ntests\\test_loans_overdue.py:33: AssertionError\n_____________________ test_returned_loan_is_never_overdue _____________________\n\n    def test_returned_loan_is_never_overdue() -> None:\n        loans = service().list_loans(overdue_only=True, as_of=AS_OF)\n>       assert \"L-04\" not in {loan.loan_id for loan in loans}\nE       AssertionError: assert 'L-04' not in {'L-01', 'L-02', 'L-03', 'L-04', 'L-05'}\n\ntests\\test_loans_overdue.py:38: AssertionError\n__________________ test_overdue_filter_combines_with_member ___________________\n\n    def test_overdue_filter_combines_with_member() -> None:\n        loans = service().list_loans(member_id=\"M-1\", overdue_only=True, as_of=AS_OF)\n>       assert [loan.loan_id for loan in loans] == [\"L-01\"]\nE       AssertionError: assert ['L-01', 'L-02', 'L-03'] == ['L-01']\nE         \nE         Left contains 2 more items, first extra item: 'L-02'\nE         Use -v to get more diff\n\ntests\\test_loans_overdue.py:43: AssertionError\n______________ test_overdue_filter_combines_with_returned_status ______________\n\n    def test_overdue_filter_combines_with_returned_status() -> None:\n>       assert service().list_loans(status=\"returned\", overdue_only=True, as_of=AS_OF) == []\nE       AssertionError: assert [Loan(loan_id...(2026, 1, 6))] == []\nE         \nE         Left contains one more item: Loan(loan_id='L-04', member_id='M-2', title='D', due_date=datetime.date(2026, 1, 5), returned_on=datetime.date(2026, 1, 6))\nE         Use -v to get more diff\n\ntests\\test_loans_overdue.py:47: AssertionError\n________________________ test_as_of_changes_the_cutoff ________________________\n\n    def test_as_of_changes_the_cutoff() -> None:\n>       assert [loan.loan_id for loan in service().list_loans(overdue_only=True, as_of=date(2026, 1, 11))] == [\n            \"L-05\",\n            \"L-01\",\n        ]\nE       AssertionError: assert ['L-05', 'L-0...L-02', 'L-03'] == ['L-05', 'L-01']\nE         \nE         At index 1 diff: 'L-04' != 'L-01'\nE         Left contains 3 more items, first extra item: 'L-01'\nE         Use -v to get more diff\n\ntests\\test_loans_overdue.py:56: AssertionError\n=========================== short test summary info ===========================\nFAILED tests/test_loans_overdue.py::test_overdue_only_returns_active_loans_due_before_as_of\nFAILED tests/test_loans_overdue.py::test_loan_due_today_is_not_overdue - Asse...\nFAILED tests/test_loans_overdue.py::test_returned_loan_is_never_overdue - Ass...\nFAILED tests/test_loans_overdue.py::test_overdue_filter_combines_with_member\nFAILED tests/test_loans_overdue.py::test_overdue_filter_combines_with_returned_status\nFAILED tests/test_loans_overdue.py::test_as_of_changes_the_cutoff - Assertion...\n6 failed, 1 passed in 0.25s\n",
+      "stderr": ""
+    },
+    {
+      "command": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\.venv\\Scripts\\python.exe -m pytest -q tests/test_loans_regression.py",
+      "cwd": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax\\runs\\validation-20261027T074042Z\\app",
+      "exit_code": 0,
+      "stdout": "...............                                                          [100%]\n15 passed in 0.02s\n",
+      "stderr": ""
+    },
+    {
+      "command": "patch -p1 --no-backup-if-mismatch",
+      "cwd": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax\\runs\\validation-20261027T074042Z\\app",
+      "exit_code": 0,
+      "stdout": "(Stripping trailing CRs from patch; use --binary to disable.)\npatching file loanboard/service.py\n",
+      "stderr": ""
+    },
+    {
+      "command": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\.venv\\Scripts\\python.exe -m pytest -q tests/test_loans_overdue.py",
+      "cwd": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax\\runs\\validation-20261027T074042Z\\app",
+      "exit_code": 0,
+      "stdout": ".......                                                                  [100%]\n7 passed in 0.01s\n",
+      "stderr": ""
+    },
+    {
+      "command": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\.venv\\Scripts\\python.exe -m pytest -q tests/test_loans_regression.py",
+      "cwd": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax\\runs\\validation-20261027T074042Z\\app",
+      "exit_code": 0,
+      "stdout": "...............                                                          [100%]\n15 passed in 0.02s\n",
+      "stderr": ""
+    },
+    {
+      "command": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\.venv\\Scripts\\python.exe -m sdd_context record --task-id TASK-OVERDUE-FILTER --task-hash bca3580f5c596d857c0603c2a15f51b4d1013ff7 --done 实现 SPEC-LOAN-004 逾期筛选 --done 目标测试与回归测试通过 --verification pytest tests/test_loans_overdue.py exit=0 --verification pytest tests/test_loans_regression.py exit=0 --todo 提交代码与材料",
+      "cwd": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax",
+      "exit_code": 0,
+      "stdout": "{\n  \"artifact_id\": \"art_1bfe0c58ee144a3ab8bce0504da9a311\",\n  \"scope_id\": \"scp_1n6cvvwvhk30y055ygcf6qx6qh\",\n  \"task_id\": \"TASK-OVERDUE-FILTER\",\n  \"done\": [\n    \"实现 SPEC-LOAN-004 逾期筛选\",\n    \"目标测试与回归测试通过\"\n  ],\n  \"todo\": [\n    \"提交代码与材料\"\n  ],\n  \"verifications\": [\n    \"pytest tests/test_loans_overdue.py exit=0\",\n    \"pytest tests/test_loans_regression.py exit=0\"\n  ],\n  \"task_hash\": \"bca3580f5c596d857c0603c2a15f51b4d1013ff7\",\n  \"recorded_at\": \"2026-10-27T07:40:51.506370+00:00\"\n}\n",
+      "stderr": ""
+    },
+    {
+      "command": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\.venv\\Scripts\\python.exe -m sdd_context status --task-id TASK-OVERDUE-FILTER",
+      "cwd": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax",
+      "exit_code": 0,
+      "stdout": "{\n  \"task_id\": \"TASK-OVERDUE-FILTER\",\n  \"done\": [\n    \"实现 SPEC-LOAN-004 逾期筛选\",\n    \"目标测试与回归测试通过\"\n  ],\n  \"todo\": [\n    \"提交代码与材料\"\n  ],\n  \"verifications\": [\n    \"pytest tests/test_loans_overdue.py exit=0\",\n    \"pytest tests/test_loans_regression.py exit=0\"\n  ],\n  \"recorded_at\": \"2026-10-27T07:40:51.506370+00:00\",\n  \"artifact_id\": \"art_1bfe0c58ee144a3ab8bce0504da9a311\",\n  \"source\": \"PowerContext\"\n}\n",
+      "stderr": ""
+    },
+    {
+      "command": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\.venv\\Scripts\\python.exe -m sdd_context context --task C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax\\samples\\task.md --task-id TASK-OVERDUE-FILTER --label app --out C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax\\artifacts\\context\\spec-v2.json",
+      "cwd": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax",
+      "exit_code": 0,
+      "stdout": "{\n  \"task\": \"# 开发任务：为借阅列表增加逾期筛选\\n\\n为 `loanboard` 业务工程实现规格 `SPEC-LOAN-004`。\\n\\n- `LoanService.list_loans` 需要支持 `overdue_only` 参数。\\n- 当 `overdue_only=True` 时，只返回 `returned_on` 为空且 `due_date` 早于 `as_of` 的借阅。\\n- 已归还的借阅即使曾经逾期，也不能出现在结果中。\\n- 不能改变现有排序（`SPEC-LOAN-001`）、分页（`SPEC-LOAN-003`）、会员筛选（`SPEC-LOAN-005`）和兼容性（`SPEC-LOAN-006`）。\\n- 目标测试位于 `tests/test_loans_overdue.py`，回归测试位于 `tests/test_loans_regression.py`。\",\n  \"task_hash\": \"bca3580f5c596d857c0603c2a15f51b4d1013ff7\",\n  \"label\": \"app\",\n  \"specs\": [\n    {\n      \"id\": \"SPEC-LOAN-006\",\n      \"title\": \"兼容性\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-006\",\n      \"content\": \"## SPEC-LOAN-006 兼容性\\n\\n现有调用方不传 `overdue_only` 时，行为必须与 v1 完全一致：排序、分页、`member_id` 筛选和 `status` 校验都不得改变。\\n已归还的借阅即使曾经逾期，也不得出现在 `overdue_only=True` 的结果中。\",\n      \"score\": 796.0249\n    },\n    {\n      \"id\": \"SPEC-LOAN-004\",\n      \"title\": \"逾期筛选\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-004\",\n      \"content\": \"## SPEC-LOAN-004 逾期筛选\\n\\n`list_loans` 必须支持布尔参数 `overdue_only`。\\n当 `overdue_only=True` 时，只返回 `returned_on` 为空且 `due_date` 严格早于 `as_of` 日期的借阅；到期当天不计入逾期，即不含到期当天。\\n当 `overdue_only=False` 时不施加逾期筛选。\\n`as_of` 默认取当天，测试可以注入固定日期以保证结果可重复。\",\n      \"score\": 754.6851\n    },\n    {\n      \"id\": \"SPEC-LOAN-005\",\n      \"title\": \"组合筛选\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-005\",\n      \"content\": \"## SPEC-LOAN-005 组合筛选\\n\\n`member_id` 不为空时只返回该会员的借阅。\\n`member_id`、`status`、`overdue_only` 可以组合使用，筛选条件的书写顺序不得影响结果。\",\n      \"score\": 296.4282\n    },\n    {\n      \"id\": \"SPEC-LOAN-001\",\n      \"title\": \"列表排序\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-001\",\n      \"content\": \"## SPEC-LOAN-001 列表排序\\n\\n借阅列表必须按到期日 `due_date` 升序排列；同一到期日按 `loan_id` 字典序升序排列。\",\n      \"score\": 273.2576\n    },\n    {\n      \"id\": \"SPEC-LOAN-003\",\n      \"title\": \"分页边界\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-003\",\n      \"content\": \"## SPEC-LOAN-003 分页边界\\n\\n`limit` 必须是 1 到 100 之间的整数，`offset` 必须是不小于 0 的整数；越界或类型错误必须抛出 `ValueError`。\\n`limit` 默认值为 50，`offset` 默认值为 0。分页在排序之后执行。\",\n      \"score\": 163.9374\n    }\n  ],\n  \"code\": [\n    {\n      \"path\": \"loanboard/service.py\",\n      \"symbol\": \"LoanService.list_loans\",\n      \"source\": \"app/loanboard/service.py#LoanService.list_loans\",\n      \"score\": 54.5768\n    },\n    {\n      \"path\": \"loanboard/service.py\",\n      \"symbol\": \"LoanService\",\n      \"source\": \"app/loanboard/service.py#LoanService\",\n      \"score\": 53.1761\n    },\n    {\n      \"path\": \"loanboard/models.py\",\n      \"symbol\": \"Loan\",\n      \"source\": \"app/loanboard/models.py#Loan\",\n      \"score\": 25.8901\n    },\n    {\n      \"path\": \"loanboard/cli.py\",\n      \"symbol\": \"main\",\n      \"source\": \"app/loanboard/cli.py#main\",\n      \"score\": 13.6713\n    }\n  ],\n  \"tests\": [\n    {\n      \"path\": \"tests/test_loans_overdue.py\",\n      \"name\": \"test_overdue_only_returns_active_loans_due_before_as_of\",\n      \"source\": \"app/tests/test_loans_overdue.py#test_overdue_only_returns_active_loans_due_before_as_of\",\n      \"score\": 14.6083\n    },\n    {\n      \"path\": \"tests/test_loans_overdue.py\",\n      \"name\": \"test_loan_due_today_is_not_overdue\",\n      \"source\": \"app/tests/test_loans_overdue.py#test_loan_due_today_is_not_overdue\",\n      \"score\": 13.2417\n    },\n    {\n      \"path\": \"tests/test_loans_overdue.py\",\n      \"name\": \"test_as_of_changes_the_cutoff\",\n      \"source\": \"app/tests/test_loans_overdue.py#test_as_of_changes_the_cutoff\",\n      \"score\": 13.0075\n    },\n    {\n      \"path\": \"tests/test_loans_regression.py\",\n      \"name\": \"test_sorts_by_due_date_then_loan_id\",\n      \"source\": \"app/tests/test_loans_regression.py#test_sorts_by_due_date_then_loan_id\",\n      \"score\": 11.7121\n    }\n  ],\n  \"database\": {\n    \"engine\": \"seekdb\",\n    \"documents\": 35,\n    \"postings\": 440,\n    \"query_terms\": [\n      \"001\",\n      \"003\",\n      \"004\",\n      \"005\",\n      \"006\",\n      \"as_of\",\n      \"date\",\n      \"due\",\n      \"due_date\",\n      \"list\",\n      \"list_loans\",\n      \"loan\",\n      \"loanboard\",\n      \"loans\",\n      \"loanservice\",\n      \"only\",\n      \"overdue\",\n      \"overdue_only\",\n      \"py\",\n      \"regression\",\n      \"returned\",\n      \"returned_on\",\n      \"service\",\n      \"spec\",\n      \"test\",\n      \"test_loans_overdue\",\n      \"test_loans_regression\",\n      \"tests\",\n      \"不能\",\n      \"业务\",\n      \"为\",\n      \"为借\",\n      \"为空\",\n      \"为空且\",\n      \"也不\",\n      \"任务\",\n      \"会员\",\n      \"会员筛选\",\n      \"位于\",\n      \"使曾\",\n      \"借阅\",\n      \"兼容\",\n      \"出现\",\n      \"分页\",\n      \"列表\",\n      \"加逾\",\n      \"务工\",\n      \"即使\",\n      \"参数\",\n      \"发任\",\n      \"变现\",\n      \"只返\",\n      \"只返回\",\n      \"员筛\",\n      \"和兼\",\n      \"和兼容性\",\n      \"回归\",\n      \"回归测试位于\",\n      \"在结\",\n      \"增加\"\n    ],\n    \"query_log_id\": 12\n  },\n  \"state\": {\n    \"task_id\": \"TASK-OVERDUE-FILTER\",\n    \"done\": [\n      \"实现 SPEC-LOAN-004 逾期筛选\",\n      \"目标测试与回归测试通过\"\n    ],\n    \"todo\": [\n      \"提交代码与材料\"\n    ],\n    \"verifications\": [\n      \"pytest tests/test_loans_overdue.py exit=0\",\n      \"pytest tests/test_loans_regression.py exit=0\"\n    ],\n    \"recorded_at\": \"2026-10-27T07:40:51.506370+00:00\",\n    \"artifact_id\": \"art_1bfe0c58ee144a3ab8bce0504da9a311\",\n    \"source\": \"PowerContext\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "command": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\.venv\\Scripts\\python.exe -m sdd_context context --task C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax\\samples\\task.md --task-id TASK-OVERDUE-FILTER --label app --out C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax\\artifacts\\context\\restored.json",
+      "cwd": "C:\\Users\\鄭昊\\Desktop\\1026\\PowerContext\\minimax",
+      "exit_code": 0,
+      "stdout": "{\n  \"task\": \"# 开发任务：为借阅列表增加逾期筛选\\n\\n为 `loanboard` 业务工程实现规格 `SPEC-LOAN-004`。\\n\\n- `LoanService.list_loans` 需要支持 `overdue_only` 参数。\\n- 当 `overdue_only=True` 时，只返回 `returned_on` 为空且 `due_date` 早于 `as_of` 的借阅。\\n- 已归还的借阅即使曾经逾期，也不能出现在结果中。\\n- 不能改变现有排序（`SPEC-LOAN-001`）、分页（`SPEC-LOAN-003`）、会员筛选（`SPEC-LOAN-005`）和兼容性（`SPEC-LOAN-006`）。\\n- 目标测试位于 `tests/test_loans_overdue.py`，回归测试位于 `tests/test_loans_regression.py`。\",\n  \"task_hash\": \"bca3580f5c596d857c0603c2a15f51b4d1013ff7\",\n  \"label\": \"app\",\n  \"specs\": [\n    {\n      \"id\": \"SPEC-LOAN-006\",\n      \"title\": \"兼容性\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-006\",\n      \"content\": \"## SPEC-LOAN-006 兼容性\\n\\n现有调用方不传 `overdue_only` 时，行为必须与 v1 完全一致：排序、分页、`member_id` 筛选和 `status` 校验都不得改变。\\n已归还的借阅即使曾经逾期，也不得出现在 `overdue_only=True` 的结果中。\",\n      \"score\": 796.0249\n    },\n    {\n      \"id\": \"SPEC-LOAN-004\",\n      \"title\": \"逾期筛选\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-004\",\n      \"content\": \"## SPEC-LOAN-004 逾期筛选\\n\\n`list_loans` 必须支持布尔参数 `overdue_only`。\\n当 `overdue_only=True` 时，只返回 `returned_on` 为空且 `due_date` 早于 `as_of` 日期的借阅。\\n当 `overdue_only=False` 时不施加逾期筛选。\\n`as_of` 默认取当天，测试可以注入固定日期以保证结果可重复。\",\n      \"score\": 768.8983\n    },\n    {\n      \"id\": \"SPEC-LOAN-005\",\n      \"title\": \"组合筛选\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-005\",\n      \"content\": \"## SPEC-LOAN-005 组合筛选\\n\\n`member_id` 不为空时只返回该会员的借阅。\\n`member_id`、`status`、`overdue_only` 可以组合使用，筛选条件的书写顺序不得影响结果。\",\n      \"score\": 296.4282\n    },\n    {\n      \"id\": \"SPEC-LOAN-001\",\n      \"title\": \"列表排序\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-001\",\n      \"content\": \"## SPEC-LOAN-001 列表排序\\n\\n借阅列表必须按到期日 `due_date` 升序排列；同一到期日按 `loan_id` 字典序升序排列。\",\n      \"score\": 273.2576\n    },\n    {\n      \"id\": \"SPEC-LOAN-003\",\n      \"title\": \"分页边界\",\n      \"source\": \"app/specs/loans.md#SPEC-LOAN-003\",\n      \"content\": \"## SPEC-LOAN-003 分页边界\\n\\n`limit` 必须是 1 到 100 之间的整数，`offset` 必须是不小于 0 的整数；越界或类型错误必须抛出 `ValueError`。\\n`limit` 默认值为 50，`offset` 默认值为 0。分页在排序之后执行。\",\n      \"score\": 163.9374\n    }\n  ],\n  \"code\": [\n    {\n      \"path\": \"loanboard/service.py\",\n      \"symbol\": \"LoanService.list_loans\",\n      \"source\": \"app/loanboard/service.py#LoanService.list_loans\",\n      \"score\": 54.5768\n    },\n    {\n      \"path\": \"loanboard/service.py\",\n      \"symbol\": \"LoanService\",\n      \"source\": \"app/loanboard/service.py#LoanService\",\n      \"score\": 53.1761\n    },\n    {\n      \"path\": \"loanboard/models.py\",\n      \"symbol\": \"Loan\",\n      \"source\": \"app/loanboard/models.py#Loan\",\n      \"score\": 25.8901\n    },\n    {\n      \"path\": \"loanboard/cli.py\",\n      \"symbol\": \"main\",\n      \"source\": \"app/loanboard/cli.py#main\",\n      \"score\": 13.6713\n    }\n  ],\n  \"tests\": [\n    {\n      \"path\": \"tests/test_loans_overdue.py\",\n      \"name\": \"test_overdue_only_returns_active_loans_due_before_as_of\",\n      \"source\": \"app/tests/test_loans_overdue.py#test_overdue_only_returns_active_loans_due_before_as_of\",\n      \"score\": 14.6083\n    },\n    {\n      \"path\": \"tests/test_loans_overdue.py\",\n      \"name\": \"test_loan_due_today_is_not_overdue\",\n      \"source\": \"app/tests/test_loans_overdue.py#test_loan_due_today_is_not_overdue\",\n      \"score\": 13.2417\n    },\n    {\n      \"path\": \"tests/test_loans_overdue.py\",\n      \"name\": \"test_as_of_changes_the_cutoff\",\n      \"source\": \"app/tests/test_loans_overdue.py#test_as_of_changes_the_cutoff\",\n      \"score\": 13.0075\n    },\n    {\n      \"path\": \"tests/test_loans_regression.py\",\n      \"name\": \"test_sorts_by_due_date_then_loan_id\",\n      \"source\": \"app/tests/test_loans_regression.py#test_sorts_by_due_date_then_loan_id\",\n      \"score\": 11.7121\n    }\n  ],\n  \"database\": {\n    \"engine\": \"seekdb\",\n    \"documents\": 35,\n    \"postings\": 440,\n    \"query_terms\": [\n      \"001\",\n      \"003\",\n      \"004\",\n      \"005\",\n      \"006\",\n      \"as_of\",\n      \"date\",\n      \"due\",\n      \"due_date\",\n      \"list\",\n      \"list_loans\",\n      \"loan\",\n      \"loanboard\",\n      \"loans\",\n      \"loanservice\",\n      \"only\",\n      \"overdue\",\n      \"overdue_only\",\n      \"py\",\n      \"regression\",\n      \"returned\",\n      \"returned_on\",\n      \"service\",\n      \"spec\",\n      \"test\",\n      \"test_loans_overdue\",\n      \"test_loans_regression\",\n      \"tests\",\n      \"不能\",\n      \"业务\",\n      \"为\",\n      \"为借\",\n      \"为空\",\n      \"为空且\",\n      \"也不\",\n      \"任务\",\n      \"会员\",\n      \"会员筛选\",\n      \"位于\",\n      \"使曾\",\n      \"借阅\",\n      \"兼容\",\n      \"出现\",\n      \"分页\",\n      \"列表\",\n      \"加逾\",\n      \"务工\",\n      \"即使\",\n      \"参数\",\n      \"发任\",\n      \"变现\",\n      \"只返\",\n      \"只返回\",\n      \"员筛\",\n      \"和兼\",\n      \"和兼容性\",\n      \"回归\",\n      \"回归测试位于\",\n      \"在结\",\n      \"增加\"\n    ],\n    \"query_log_id\": 13\n  },\n  \"state\": {\n    \"task_id\": \"TASK-OVERDUE-FILTER\",\n    \"done\": [\n      \"实现 SPEC-LOAN-004 逾期筛选\",\n      \"目标测试与回归测试通过\"\n    ],\n    \"todo\": [\n      \"提交代码与材料\"\n    ],\n    \"verifications\": [\n      \"pytest tests/test_loans_overdue.py exit=0\",\n      \"pytest tests/test_loans_regression.py exit=0\"\n    ],\n    \"recorded_at\": \"2026-10-27T07:40:51.506370+00:00\",\n    \"artifact_id\": \"art_1bfe0c58ee144a3ab8bce0504da9a311\",\n    \"source\": \"PowerContext\"\n  }\n}\n",
+      "stderr": ""
+    }
+  ]
+}

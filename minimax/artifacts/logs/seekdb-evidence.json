@@ -1,0 +1,52 @@
+{
+  "engine_version": "5.7.25-OceanBase seekdb-v1.4.0.0",
+  "docs_rows": 35,
+  "terms_rows": 1373,
+  "ingest_runs_rows": 13,
+  "query_log_rows": 13,
+  "documents_by_kind": {
+    "code": 12,
+    "spec": 6,
+    "test": 17
+  },
+  "recent_queries": [
+    {
+      "log_id": 13,
+      "task_hash": "bca3580f5c596d857c0603c2a15f51b4d1013ff7",
+      "candidates": 35,
+      "query_text": "# 开发任务：为借阅列表增加逾期筛选\n\n为 `loanboard` 业务工程实现规格 `SPEC-LOAN-004`。\n\n- `LoanService.list_loans` 需要支持 `overdue_only` 参数。\n- 当 `overdue_only=True` 时，只返回 `returned_on` 为空且 `due_date` 早于 `as_of` 的借阅。\n- 已归还的借阅即使曾经逾期，也不能出现在结果中。\n- 不能改变现有排序（`SPEC-LOAN-001`）、分页（`SPEC-LOAN-003`）、会员筛选（`SPEC-LOAN-005`）和兼容性（`SPEC-LOAN-006`）。\n- 目标测试位于 `tests/test_loans_overdue.py`，回归测试位于 `tests/test_loans_regression.py`。\n"
+    },
+    {
+      "log_id": 12,
+      "task_hash": "bca3580f5c596d857c0603c2a15f51b4d1013ff7",
+      "candidates": 35,
+      "query_text": "# 开发任务：为借阅列表增加逾期筛选\n\n为 `loanboard` 业务工程实现规格 `SPEC-LOAN-004`。\n\n- `LoanService.list_loans` 需要支持 `overdue_only` 参数。\n- 当 `overdue_only=True` 时，只返回 `returned_on` 为空且 `due_date` 早于 `as_of` 的借阅。\n- 已归还的借阅即使曾经逾期，也不能出现在结果中。\n- 不能改变现有排序（`SPEC-LOAN-001`）、分页（`SPEC-LOAN-003`）、会员筛选（`SPEC-LOAN-005`）和兼容性（`SPEC-LOAN-006`）。\n- 目标测试位于 `tests/test_loans_overdue.py`，回归测试位于 `tests/test_loans_regression.py`。\n"
+    },
+    {
+      "log_id": 11,
+      "task_hash": "bca3580f5c596d857c0603c2a15f51b4d1013ff7",
+      "candidates": 35,
+      "query_text": "# 开发任务：为借阅列表增加逾期筛选\n\n为 `loanboard` 业务工程实现规格 `SPEC-LOAN-004`。\n\n- `LoanService.list_loans` 需要支持 `overdue_only` 参数。\n- 当 `overdue_only=True` 时，只返回 `returned_on` 为空且 `due_date` 早于 `as_of` 的借阅。\n- 已归还的借阅即使曾经逾期，也不能出现在结果中。\n- 不能改变现有排序（`SPEC-LOAN-001`）、分页（`SPEC-LOAN-003`）、会员筛选（`SPEC-LOAN-005`）和兼容性（`SPEC-LOAN-006`）。\n- 目标测试位于 `tests/test_loans_overdue.py`，回归测试位于 `tests/test_loans_regression.py`。\n"
+    }
+  ],
+  "recent_ingest_runs": [
+    {
+      "run_id": "2366b02b-2a5d-4d52-a02f-2b3f67a459cb",
+      "label": "app",
+      "doc_count": 35,
+      "status": "succeeded"
+    },
+    {
+      "run_id": "5a107663-f369-40f7-a5b9-6ab86b541f31",
+      "label": "app",
+      "doc_count": 35,
+      "status": "succeeded"
+    },
+    {
+      "run_id": "21f7fc7b-5ef2-4113-bc98-98a11c78572b",
+      "label": "app",
+      "doc_count": 35,
+      "status": "succeeded"
+    }
+  ]
+}

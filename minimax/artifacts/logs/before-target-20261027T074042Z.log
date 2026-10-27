@@ -1,0 +1,73 @@
+FFFFF.F                                                                  [100%]
+================================== FAILURES ===================================
+___________ test_overdue_only_returns_active_loans_due_before_as_of ___________
+
+    def test_overdue_only_returns_active_loans_due_before_as_of() -> None:
+        loans = service().list_loans(overdue_only=True, as_of=AS_OF)
+>       assert [loan.loan_id for loan in loans] == ["L-05", "L-01"]
+E       AssertionError: assert ['L-05', 'L-0...L-02', 'L-03'] == ['L-05', 'L-01']
+E         
+E         At index 1 diff: 'L-04' != 'L-01'
+E         Left contains 3 more items, first extra item: 'L-01'
+E         Use -v to get more diff
+
+tests\test_loans_overdue.py:28: AssertionError
+_____________________ test_loan_due_today_is_not_overdue ______________________
+
+    def test_loan_due_today_is_not_overdue() -> None:
+        loans = service().list_loans(overdue_only=True, as_of=AS_OF)
+>       assert "L-02" not in {loan.loan_id for loan in loans}
+E       AssertionError: assert 'L-02' not in {'L-01', 'L-02', 'L-03', 'L-04', 'L-05'}
+
+tests\test_loans_overdue.py:33: AssertionError
+_____________________ test_returned_loan_is_never_overdue _____________________
+
+    def test_returned_loan_is_never_overdue() -> None:
+        loans = service().list_loans(overdue_only=True, as_of=AS_OF)
+>       assert "L-04" not in {loan.loan_id for loan in loans}
+E       AssertionError: assert 'L-04' not in {'L-01', 'L-02', 'L-03', 'L-04', 'L-05'}
+
+tests\test_loans_overdue.py:38: AssertionError
+__________________ test_overdue_filter_combines_with_member ___________________
+
+    def test_overdue_filter_combines_with_member() -> None:
+        loans = service().list_loans(member_id="M-1", overdue_only=True, as_of=AS_OF)
+>       assert [loan.loan_id for loan in loans] == ["L-01"]
+E       AssertionError: assert ['L-01', 'L-02', 'L-03'] == ['L-01']
+E         
+E         Left contains 2 more items, first extra item: 'L-02'
+E         Use -v to get more diff
+
+tests\test_loans_overdue.py:43: AssertionError
+______________ test_overdue_filter_combines_with_returned_status ______________
+
+    def test_overdue_filter_combines_with_returned_status() -> None:
+>       assert service().list_loans(status="returned", overdue_only=True, as_of=AS_OF) == []
+E       AssertionError: assert [Loan(loan_id...(2026, 1, 6))] == []
+E         
+E         Left contains one more item: Loan(loan_id='L-04', member_id='M-2', title='D', due_date=datetime.date(2026, 1, 5), returned_on=datetime.date(2026, 1, 6))
+E         Use -v to get more diff
+
+tests\test_loans_overdue.py:47: AssertionError
+________________________ test_as_of_changes_the_cutoff ________________________
+
+    def test_as_of_changes_the_cutoff() -> None:
+>       assert [loan.loan_id for loan in service().list_loans(overdue_only=True, as_of=date(2026, 1, 11))] == [
+            "L-05",
+            "L-01",
+        ]
+E       AssertionError: assert ['L-05', 'L-0...L-02', 'L-03'] == ['L-05', 'L-01']
+E         
+E         At index 1 diff: 'L-04' != 'L-01'
+E         Left contains 3 more items, first extra item: 'L-01'
+E         Use -v to get more diff
+
+tests\test_loans_overdue.py:56: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_loans_overdue.py::test_overdue_only_returns_active_loans_due_before_as_of
+FAILED tests/test_loans_overdue.py::test_loan_due_today_is_not_overdue - Asse...
+FAILED tests/test_loans_overdue.py::test_returned_loan_is_never_overdue - Ass...
+FAILED tests/test_loans_overdue.py::test_overdue_filter_combines_with_member
+FAILED tests/test_loans_overdue.py::test_overdue_filter_combines_with_returned_status
+FAILED tests/test_loans_overdue.py::test_as_of_changes_the_cutoff - Assertion...
+6 failed, 1 passed in 0.25s

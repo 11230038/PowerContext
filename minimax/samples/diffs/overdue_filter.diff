@@ -1,0 +1,49 @@
+diff --git a/loanboard/service.py b/loanboard/service.py
+index 037f6f4..22bdeb4 100644
+--- a/loanboard/service.py
++++ b/loanboard/service.py
+@@ -1,8 +1,7 @@
+ """Loan listing rules described by ``specs/loans.md``.
+ 
+-Snapshot of ``app/loanboard/service.py`` before SPEC-LOAN-004 was implemented.
+-``overdue_only`` and ``as_of`` are accepted so callers can already pass the new
+-arguments, but the filter itself is not implemented yet.
++The service supports member and status filters, optional overdue filtering,
++deterministic sorting, and paging.
+ """
+ 
+ from __future__ import annotations
+@@ -33,7 +32,12 @@ class LoanService:
+         limit: int = 50,
+         offset: int = 0,
+     ) -> list[Loan]:
+-        """Return loans filtered by member, status and (not yet) overdue state."""
++        """Return loans filtered by member, status, and optional overdue state.
++
++        When ``overdue_only`` is true, only loans that have not been returned
++        and whose due date is before ``as_of`` are returned. ``as_of`` defaults
++        to the current date.
++        """
+ 
+         _validate_status(status)
+         _validate_paging(limit, offset)
+@@ -42,6 +46,8 @@ class LoanService:
+         if as_of is not None and not isinstance(as_of, date):
+             raise ValueError("as_of must be a date")
+ 
++        cutoff = as_of if as_of is not None else date.today()
++
+         selected: list[Loan] = []
+         for loan in self._loans:
+             if member_id is not None and loan.member_id != member_id:
+@@ -50,6 +56,10 @@ class LoanService:
+                 continue
+             if status == "returned" and loan.returned_on is None:
+                 continue
++            if overdue_only and (
++                loan.returned_on is not None or loan.due_date >= cutoff
++            ):
++                continue
+             selected.append(loan)
+ 
+         selected.sort(key=lambda loan: (loan.due_date, loan.loan_id))

@@ -1,0 +1,19 @@
+{
+  "task_id": "TASK-OVERDUE-FILTER",
+  "required_spec_ids": [
+    "SPEC-LOAN-004",
+    "SPEC-LOAN-006"
+  ],
+  "required_code_sources": [
+    "app/loanboard/service.py#LoanService.list_loans"
+  ],
+  "required_test_source_contains": [
+    "test_loans_overdue.py"
+  ],
+  "required_state_fields": [
+    "done",
+    "todo",
+    "verifications"
+  ],
+  "spec_update_marker": "不含到期当天"
+}
