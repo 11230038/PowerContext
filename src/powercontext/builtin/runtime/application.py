@@ -249,6 +249,7 @@ from powercontext.builtin.runtime.recall_sufficiency import (
     build_recall_candidates,
     recall_effort,
 )
+from powercontext.builtin.runtime.source_lifecycle import ScopedSourceLifecycle, SourceLifecycleService
 from powercontext.builtin.runtime.statistics import RelationalScopedStatistics, overview_selection
 from powercontext.builtin.scope import ScopeApplication, ScopeDescriptor, ScopeSelection
 from powercontext.builtin.scope.subject_sources import SubjectSourceService
@@ -2641,6 +2642,19 @@ class MemoryApplication:
         return ScopedMemoryApplication(self._runtime, scope_id)
 
 
+class LifecycleApplication:
+    """Select the evidence-lifecycle service for one scope."""
+
+    def __init__(self, runtime: BuiltinRuntime) -> None:
+        self._runtime = runtime
+
+    def for_scope(self, scope_id: str, /) -> ScopedSourceLifecycle:
+        service = self._runtime._source_lifecycle
+        if service is None:
+            raise _RuntimeStateError("source-lifecycle")
+        return service.for_scope(scope_id)
+
+
 class ScopedTopicMemoryApplication:
     """Search, exactly read, and request processing for Topic Memory in one scope."""
 
@@ -3030,6 +3044,7 @@ class BuiltinRuntime:
         skill_usage_recorder: SkillUsageRecorder | None = None,
         experience_incubator: ExperienceIncubator | None = None,
         topic_memory_search: TopicMemorySearch | None = None,
+        source_lifecycle: SourceLifecycleService | None = None,
         topic_memory_get: TopicMemoryGet | None = None,
         topic_memory_browse: TopicMemoryBrowse | None = None,
         topic_memory_flush: TopicMemoryFlush | None = None,
@@ -3087,6 +3102,7 @@ class BuiltinRuntime:
         self._skill_usage_recorder = skill_usage_recorder
         self._experience_incubator = experience_incubator
         self._topic_memory_search = topic_memory_search
+        self._source_lifecycle = source_lifecycle
         self._topic_memory_get = topic_memory_get
         self._topic_memory_browse = topic_memory_browse
         self._topic_memory_flush = topic_memory_flush
@@ -3141,6 +3157,7 @@ class BuiltinRuntime:
         self.work = WorkApplication(self)
         self.memory = MemoryApplication(self)
         self.topic_memory = TopicMemoryApplication(self)
+        self.lifecycle = LifecycleApplication(self)
         self.records = RecordApplication(self)
         self.prompts = PromptApplication(self)
         self.review = ReviewApplication(self)
