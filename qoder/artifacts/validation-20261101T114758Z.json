@@ -1,0 +1,190 @@
+{
+  "generated_at": "20261101T114758Z",
+  "mcp_url": "http://127.0.0.1:8765/mcp/",
+  "scope_id": "scp_4zks2ppc7fk2w26t40m0szqckn",
+  "created_scope": {
+    "scope_id": "scp_4zks2ppc7fk2w26t40m0szqckn",
+    "title": "Qoder MCP acceptance",
+    "summary": "Independent acceptance scope for the Qoder native MCP integration.",
+    "parent_scope_id": null,
+    "context_references": [],
+    "external_references": [],
+    "version": 1
+  },
+  "tool_count": 56,
+  "required_tools": [
+    "create_scope",
+    "get_artifact",
+    "remember_memory",
+    "search_memory"
+  ],
+  "writes": [
+    {
+      "changed": true,
+      "records": [
+        {
+          "artifact": {
+            "family": "atomic-memory",
+            "artifact_id": "art_55475c1edf964e1ea2fcd34889813faf",
+            "revision": 1
+          },
+          "kind": "workflow",
+          "text": "Qoder workflow: before changing repository code, run the smallest targeted tests first; after the change, run the targeted tests and then the regression suite.",
+          "state": "active",
+          "state_version": 0,
+          "merged_into_id": null
+        }
+      ]
+    },
+    {
+      "changed": true,
+      "records": [
+        {
+          "artifact": {
+            "family": "atomic-memory",
+            "artifact_id": "art_c1b06d1a19184412b228772c64544be9",
+            "revision": 1
+          },
+          "kind": "decision",
+          "text": "Qoder project decision: preserve the existing API contract unless the task explicitly requests a breaking change.",
+          "state": "active",
+          "state_version": 0,
+          "merged_into_id": null
+        }
+      ]
+    },
+    {
+      "changed": true,
+      "records": [
+        {
+          "artifact": {
+            "family": "atomic-memory",
+            "artifact_id": "art_e5a55b436cad451aa5da2243b8a3dea7",
+            "revision": 1
+          },
+          "kind": "convention",
+          "text": "Qoder coding convention: prefer focused edits, keep public functions documented, and do not add dependencies when the Python standard library is sufficient.",
+          "state": "active",
+          "state_version": 0,
+          "merged_into_id": null
+        }
+      ]
+    }
+  ],
+  "search": {
+    "mode": "text",
+    "hits": [
+      {
+        "memory": {
+          "artifact": {
+            "family": "atomic-memory",
+            "artifact_id": "art_e5a55b436cad451aa5da2243b8a3dea7",
+            "revision": 1
+          },
+          "kind": "convention",
+          "text": "Qoder coding convention: prefer focused edits, keep public functions documented, and do not add dependencies when the Python standard library is sufficient.",
+          "state": "active",
+          "state_version": 0,
+          "merged_into_id": null
+        },
+        "score": 0.01639344262295082,
+        "matched_by": [
+          "text"
+        ]
+      },
+      {
+        "memory": {
+          "artifact": {
+            "family": "atomic-memory",
+            "artifact_id": "art_c1b06d1a19184412b228772c64544be9",
+            "revision": 1
+          },
+          "kind": "decision",
+          "text": "Qoder project decision: preserve the existing API contract unless the task explicitly requests a breaking change.",
+          "state": "active",
+          "state_version": 0,
+          "merged_into_id": null
+        },
+        "score": 0.016129032258064516,
+        "matched_by": [
+          "text"
+        ]
+      },
+      {
+        "memory": {
+          "artifact": {
+            "family": "atomic-memory",
+            "artifact_id": "art_55475c1edf964e1ea2fcd34889813faf",
+            "revision": 1
+          },
+          "kind": "workflow",
+          "text": "Qoder workflow: before changing repository code, run the smallest targeted tests first; after the change, run the targeted tests and then the regression suite.",
+          "state": "active",
+          "state_version": 0,
+          "merged_into_id": null
+        },
+        "score": 0.015873015873015872,
+        "matched_by": [
+          "text"
+        ]
+      }
+    ]
+  },
+  "artifact_read": {
+    "artifact": {
+      "scope_id": "scp_4zks2ppc7fk2w26t40m0szqckn",
+      "family": "atomic-memory",
+      "artifact_id": "art_55475c1edf964e1ea2fcd34889813faf",
+      "revision": 1,
+      "content": {
+        "schema": "powercontext.atomic-memory.v1",
+        "kind": "workflow",
+        "text": "Qoder workflow: before changing repository code, run the smallest targeted tests first; after the change, run the targeted tests and then the regression suite.",
+        "creation": null
+      },
+      "sources": [
+        {
+          "source_type": "content",
+          "source_id": "src_f075dd9061754d7ca432f3b45b9b47df"
+        }
+      ],
+      "artifacts": [],
+      "content_digest": "sha256:6ca57b169a2e5a5cdc8b4af69f8cd7b837beac57253bdaedb2921acc9bfc1196",
+      "created_at": "2026-11-01T11:47:58.283100Z",
+      "created_by": null,
+      "restored_from_revision": null,
+      "reason": null
+    },
+    "etag": "\"revision:1\"",
+    "status_code": 200
+  },
+  "checks": [
+    {
+      "check": "native PowerContext MCP tools discovered",
+      "ok": true,
+      "detail": "all required tools available"
+    },
+    {
+      "check": "scope selected for the Qoder session",
+      "ok": true,
+      "detail": "scope_id=scp_4zks2ppc7fk2w26t40m0szqckn"
+    },
+    {
+      "check": "explicit memories persisted through MCP",
+      "ok": true,
+      "detail": "records=3, artifacts=[{'family': 'atomic-memory', 'artifact_id': 'art_55475c1edf964e1ea2fcd34889813faf', 'revision': 1}, {'family': 'atomic-memory', 'artifact_id': 'art_c1b06d1a19184412b228772c64544be9', 'revision': 1}, {'family': 'atomic-memory', 'artifact_id': 'art_e5a55b436cad451aa5da2243b8a3dea7', 'revision': 1}]"
+    },
+    {
+      "check": "cross-session memory search returns project guidance",
+      "ok": true,
+      "detail": "hits=3"
+    },
+    {
+      "check": "exact Atomic Memory Artifact can be inspected",
+      "ok": true,
+      "detail": "status=200, etag=\"revision:1\""
+    }
+  ],
+  "passed": 5,
+  "total": 5
+}
