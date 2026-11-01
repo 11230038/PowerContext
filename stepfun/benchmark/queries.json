@@ -1,0 +1,8 @@
+[
+  {"id":"q01","query":"浏览器不支持 WebGPU 时怎么办","relevantSources":["01-webgpu-fallback.md"]},
+  {"id":"q02","query":"新增文档什么时候能够被搜索到","relevantSources":["02-index-refresh.md"]},
+  {"id":"q03","query":"混合检索结果在哪里融合","relevantSources":["03-hybrid-search.md"]},
+  {"id":"q04","query":"为什么查询文本要添加 query 前缀","relevantSources":["04-e5-prefix.md"]},
+  {"id":"q05","query":"如何避免重复导入同一段内容","relevantSources":["05-incremental-import.md"]},
+  {"id":"q06","query":"怎样正确对比量化前后的检索质量","relevantSources":["06-benchmark.md"]}
+]

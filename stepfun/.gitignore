@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.data/
+.env
+*.log
+coverage/
+benchmark/results/*.json
+public/models/
+!public/models/.gitkeep
+.edge-profile*/
+preview*.png
+tmp/
